@@ -1,0 +1,175 @@
+/* 代码与高亮（Task 10）：行内代码/代码块/复制按钮 + highlight.js token 配色。
+   token 色值做成 CSS 变量（--hljs-*），由 light.css / dark.css 按 data-theme 提供，
+   本文件只做「hljs class → 变量」的映射（T1 carry-forward：不跨文件级联字面量色值）。 */
+
+pre,
+code,
+kbd,
+samp {
+  font-family: var(--font-mono);
+}
+
+code {
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  background: var(--inline-code-bg);
+  font-size: 0.9em;
+}
+
+pre {
+  font-size: 0.9em;
+  line-height: 1.55;
+}
+
+pre code {
+  padding: 0;
+  background: none;
+  font-size: 1em;
+}
+
+/* 围栏代码块（T6 结构：div.code-wrap > pre > code.hljs + button.copy） */
+.code-wrap {
+  margin: 16px auto;
+}
+
+.code-wrap pre {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  color: var(--code-fg);
+}
+
+.code-wrap .copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--code-border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 24px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.code-wrap:hover .copy,
+.code-wrap .copy:focus-visible {
+  opacity: 1;
+}
+
+.code-wrap .copy[data-copied='1'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.code-wrap .copy[data-failed='1'] {
+  color: #cf222e;
+  border-color: #cf222e;
+  opacity: 1;
+}
+
+/* highlight.js token → CSS 变量 */
+.hljs {
+  color: var(--hljs-fg);
+  background: transparent;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--hljs-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-formula {
+  color: var(--hljs-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-char.escape_ {
+  color: var(--hljs-string);
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: var(--hljs-number);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-title.class_.inherited__ {
+  color: var(--hljs-title);
+}
+
+.hljs-built_in,
+.hljs-builtin-name {
+  color: var(--hljs-built-in);
+}
+
+.hljs-literal {
+  color: var(--hljs-literal);
+}
+
+.hljs-type,
+.hljs-class .hljs-title {
+  color: var(--hljs-type);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property {
+  color: var(--hljs-attr);
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params {
+  color: var(--hljs-variable);
+}
+
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--hljs-tag);
+}
+
+.hljs-section {
+  color: var(--hljs-section);
+}
+
+.hljs-meta {
+  color: var(--hljs-meta);
+}
+
+.hljs-addition {
+  color: var(--hljs-addition-fg);
+  background: var(--hljs-addition-bg);
+}
+
+.hljs-deletion {
+  color: var(--hljs-deletion-fg);
+  background: var(--hljs-deletion-bg);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}

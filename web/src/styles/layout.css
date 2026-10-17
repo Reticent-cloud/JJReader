@@ -1,0 +1,364 @@
+/* 布局（Task 10）：三栏网格（TOC + 正文滚动列）、侧栏折叠、顶部悬浮工具条、
+   正文行宽居中、Aa 排版面板、内联 [TOC]、图片占位框、front matter 属性块、toast。
+   只负责结构与间距，颜色全部走变量（light.css / dark.css）。 */
+
+#app {
+  position: relative;
+  display: grid;
+  /* 单行铺满视口高度：minmax(0,1fr) + 子项 min-height:0 才能让 #toc / #content 各自内部滚动 */
+  grid-template-columns: var(--toc-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 侧栏折叠（Ctrl+B / 工具条「目录」）：保持 DOM，切回不重建 TOC */
+#app[data-toc='hidden'] {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+#app[data-toc='hidden'] #toc {
+  display: none;
+}
+
+/* 顶部悬浮工具条：固定在视口顶部并浮在正文之上（显示/隐藏逻辑归 Task 12，本任务只给样式） */
+#toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--toolbar-height);
+  padding: 0 12px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--toolbar-border);
+  backdrop-filter: blur(8px);
+}
+
+#toolbar .toolbar-spacer {
+  flex: 1;
+}
+
+#toolbar .tool {
+  appearance: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 26px;
+  cursor: pointer;
+}
+
+#toolbar .tool:hover {
+  background: var(--bg-muted);
+}
+
+#toolbar .tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+#toolbar .tool[aria-pressed='false'] {
+  color: var(--fg-muted);
+}
+
+#toolbar .tool.active {
+  color: var(--accent);
+}
+
+/* 左侧大纲侧栏（独立滚动，不抢正文滚动） */
+#toc {
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--toolbar-height) + 12px) 12px 32px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+#toc nav.toc {
+  margin: 0;
+}
+
+#toc nav.toc ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#toc nav.toc li {
+  margin: 1px 0;
+}
+
+#toc nav.toc a {
+  display: block;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--toc-fg);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#toc nav.toc a:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+#toc nav.toc a.active {
+  background: var(--toc-active-bg);
+  color: var(--toc-active-fg);
+  font-weight: 600;
+}
+
+/* 层级缩进：h1 不缩进，h2–h6 每级 +12px */
+#toc nav.toc li[data-level='2'] a {
+  padding-left: 20px;
+}
+
+#toc nav.toc li[data-level='3'] a {
+  padding-left: 32px;
+}
+
+#toc nav.toc li[data-level='4'] a {
+  padding-left: 44px;
+}
+
+#toc nav.toc li[data-level='5'] a {
+  padding-left: 56px;
+}
+
+#toc nav.toc li[data-level='6'] a {
+  padding-left: 68px;
+}
+
+#toc .toc-empty {
+  margin: 4px 0;
+  padding: 4px 8px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+/* 正文滚动列：标题锚点跳转预留工具条高度（scroll-padding-top），子元素统一居中到行宽 */
+#content {
+  grid-column: 2;
+  position: relative; /* 让标题元素的 offsetTop 相对正文滚动列（TOC 滚动联动采集 top 用） */
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--toolbar-height) + 40px);
+  padding: calc(var(--toolbar-height) + 16px) 28px 96px;
+}
+
+#content > * {
+  max-width: var(--content-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* 代码块横向滚动：超长行不撑破正文列（具体配色/复制按钮在 code.css） */
+.code-wrap {
+  position: relative;
+}
+
+.code-wrap pre {
+  overflow-x: auto;
+}
+
+/* 内联 [TOC]（T9 结构：nav.toc-inline > ol > li[data-level] > a） */
+nav.toc-inline {
+  margin: 16px auto;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+  font-size: 0.92em;
+}
+
+nav.toc-inline ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+nav.toc-inline a {
+  color: var(--fg-muted);
+}
+
+nav.toc-inline a:hover {
+  color: var(--accent);
+}
+
+nav.toc-inline li[data-level='2'] {
+  padding-left: 1.1em;
+}
+
+nav.toc-inline li[data-level='3'] {
+  padding-left: 2.2em;
+}
+
+nav.toc-inline li[data-level='4'] {
+  padding-left: 3.3em;
+}
+
+nav.toc-inline li[data-level='5'] {
+  padding-left: 4.4em;
+}
+
+nav.toc-inline li[data-level='6'] {
+  padding-left: 5.5em;
+}
+
+/* 图片占位（T9 结构：span.img-placeholder；加载失败/离线时不破版） */
+.img-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin: 16px auto;
+  padding: 8px;
+  border: 1px dashed var(--img-placeholder-border);
+  border-radius: var(--radius);
+  background: var(--img-placeholder-bg);
+  color: var(--fg-muted);
+  font-size: 13px;
+  text-align: center;
+  overflow: hidden;
+}
+
+/* front matter 属性块（T9 结构：details.frontmatter > summary + table） */
+#content .frontmatter {
+  margin: 16px auto;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+  font-size: 0.92em;
+}
+
+#content .frontmatter summary {
+  color: var(--fg-muted);
+}
+
+#content .frontmatter table {
+  display: table;
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: collapse;
+}
+
+#content .frontmatter th,
+#content .frontmatter td {
+  padding: 2px 0;
+  border: 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+#content .frontmatter th {
+  width: 9em;
+  padding-right: 12px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+/* Aa 排版面板（浮层） */
+.aa-panel {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 6px);
+  right: 12px;
+  z-index: 40;
+  display: grid;
+  gap: 10px;
+  width: 264px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  box-shadow: var(--panel-shadow);
+}
+
+/* [hidden] 必须显式压过上面的 display: grid（UA 样式表优先级不够） */
+.aa-panel[hidden] {
+  display: none;
+}
+
+.aa-row {
+  display: grid;
+  grid-template-columns: 4.5em 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.aa-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.aa-row select {
+  grid-column: 2 / 4;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.aa-value {
+  width: 2.6em;
+  color: var(--fg-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* toast 容器（T4 结构：div#toast > div.toast[data-level]） */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+}
+
+#toast[hidden] {
+  display: none;
+}
+
+#toast .toast {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--toast-bg);
+  color: var(--toast-fg);
+  font-size: 13px;
+  box-shadow: var(--panel-shadow);
+}
+
+#toast .toast[data-level='warn'] {
+  background: #9a6700;
+  color: #ffffff;
+}
+
+#toast .toast[data-level='error'] {
+  background: #cf222e;
+  color: #ffffff;
+}

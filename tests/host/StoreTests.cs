@@ -175,6 +175,21 @@ public class StoreTests
         Assert.Contains("\"lineHeight\": 1.7", json);
         Assert.Contains("\"tocWidth\": 240", json);
         Assert.Contains("\"window\": null", json);
+        Assert.Contains("\"monoFont\": \"consolas\"", json);
         Assert.False(File.Exists(target + ".tmp")); // 原子写完成后不留临时文件
+    }
+
+    [Fact]
+    public void Settings_roundtrip_includes_mono_font()
+    {
+        var dir = TestDir();
+        var store = new Store(dir);
+
+        // 默认值来自 record 位置参数默认值（spec §5.5 / §6.3：代码字体默认 consolas）
+        Assert.Equal("consolas", store.LoadSettings().MonoFont);
+
+        store.SaveSettings(new AppSettings(MonoFont: "Cascadia Mono"));
+        Assert.Equal("Cascadia Mono", new Store(dir).LoadSettings().MonoFont);
+        Assert.Equal("system", new Store(dir).LoadSettings().CjkFont); // 相邻字体字段不受影响
     }
 }

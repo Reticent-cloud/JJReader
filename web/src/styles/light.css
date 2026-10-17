@@ -1,0 +1,66 @@
+/* 浅色主题（Task 10）：:root 兜底（首屏 data-theme 尚未写入时）与 html[data-theme='light'] 共用一套色值。
+   正文 --fg 与 --bg 对比度约 15.9:1（spec §5.4：正文对比 ≥ 4.5:1，满足 WCAG AA）。
+   代码 token 颜色变量由 code.css 的 .hljs-* 规则读取。 */
+
+:root,
+html[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-muted: #f6f8fa;
+  --fg: #1f2328;
+  --fg-muted: #59636e;
+  --border: #d1d9e0;
+  --link: #0969da;
+  --link-hover: #0349b4;
+  --accent: #0969da;
+  --selection-bg: #b6ddff;
+
+  --code-bg: #f6f8fa;
+  --code-fg: #1f2328;
+  --code-border: #d1d9e0;
+  --inline-code-bg: rgba(27, 31, 36, 0.07);
+
+  --blockquote-border: #d1d9e0;
+  --blockquote-fg: #59636e;
+  --table-border: #d1d9e0;
+  --table-head-bg: #f6f8fa;
+  --mark-bg: #fff8c5;
+  --hr-bg: #d1d9e0;
+  --scrollbar-thumb: rgba(31, 35, 40, 0.25);
+
+  --img-placeholder-bg: #f6f8fa;
+  --img-placeholder-border: #d1d9e0;
+
+  --toc-fg: #59636e;
+  --toc-active-fg: #0969da;
+  --toc-active-bg: rgba(9, 105, 218, 0.08);
+
+  --toolbar-bg: rgba(255, 255, 255, 0.86);
+  --toolbar-border: #d1d9e0;
+  --panel-bg: #ffffff;
+  --panel-shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
+  --toast-bg: #1f2328;
+  --toast-fg: #ffffff;
+
+  /* highlight.js token（浅色） */
+  --hljs-fg: #1f2328;
+  --hljs-comment: #6e7781;
+  --hljs-keyword: #cf222e;
+  --hljs-string: #0a3069;
+  --hljs-number: #0550ae;
+  --hljs-title: #8250df;
+  --hljs-built-in: #6639ba;
+  --hljs-literal: #0550ae;
+  --hljs-type: #953800;
+  --hljs-attr: #0550ae;
+  --hljs-variable: #953800;
+  --hljs-tag: #116329;
+  --hljs-section: #0550ae;
+  --hljs-meta: #6e7781;
+  --hljs-addition-bg: #dafbe1;
+  --hljs-addition-fg: #116329;
+  --hljs-deletion-bg: #ffebe9;
+  --hljs-deletion-fg: #cf222e;
+}

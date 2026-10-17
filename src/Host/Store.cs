@@ -18,7 +18,9 @@ public sealed record AppSettings(
     string CjkFont = "system",
     bool TocVisible = true,
     int TocWidth = 240,
-    WindowGeometry? Window = null);
+    WindowGeometry? Window = null,
+    // T2 Ruling：spec §5.5/§6.3 的 monoFont（代码字体）补在 record 末尾，位置参数带默认值保持向后兼容。
+    string MonoFont = "consolas");
 
 /// <summary>最近文件条目，持久化到 recent.json（最多 20 条，最新在前）。</summary>
 public sealed record RecentEntry(string Path, string OpenedAt, long Size);

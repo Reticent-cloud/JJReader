@@ -1,12 +1,17 @@
 // 鲸鲸阅读器前端引擎入口：装配 engine/shell 并暴露 window.JJ（后续任务往 install 的 API 上逐个加成员）。
 // 当前成员：version、mountShell、renderMarkdown、extractHeadings、slugify（标题锚点 id 生成）、
 // extractFrontmatter（front matter 解析，T8）、highlight（代码高亮）、enhance（渲染后增强：复制按钮/外链）、
-// sanitizeHtml（T7 清洗出口）；浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
+// sanitizeHtml（T7 清洗出口）；Task 10 起加 TOC 侧栏（buildToc/createScrollSpy）、
+// 主题（applyTheme）、排版（applySettings/settingsPatch）与 applyCss（T4 carry-forward：CSS 注入共用）。
+// 浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
 import { extractFrontmatter, extractHeadings, renderMarkdown, slugify } from './engine.js';
 import { enhance } from './enhance.js';
 import { highlight } from './highlight.js';
 import { sanitizeHtml } from './sanitize.js';
+import { applySettings, settingsPatch } from './settings.js';
 import { mountShell } from './shell/main.js';
+import { applyTheme } from './theme.js';
+import { buildToc, createScrollSpy } from './toc.js';
 
 const STYLE_ATTR = 'data-jj';
 
@@ -43,6 +48,14 @@ export function install(target = {}) {
     highlight,
     enhance,
     sanitizeHtml,
+    // Task 10：TOC 侧栏与滚动联动、主题三态、排版调节
+    buildToc,
+    createScrollSpy,
+    applyTheme,
+    applySettings,
+    settingsPatch,
+    // T4 carry-forward：CSS 注入与 shell 共用同一实现（浏览器 boot 时已调用一次）
+    applyCss,
   };
   target.JJ = api;
   applyCss(globalThis.window?.__JJ_CSS_TEXT__);

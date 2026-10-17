@@ -1,0 +1,81 @@
+/* 深色主题（Task 10）：html[data-theme='dark'] 覆盖颜色变量与代码 token 配色。
+   正文 --fg #e6edf3 与 --bg #0d1117 对比度约 14.7:1（spec §5.4：正文对比 ≥ 4.5:1）。
+   末尾 @media 兜底：系统深色但 applyTheme 尚未写入 data-theme 的首屏，避免白闪。 */
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0d1117;
+  --bg-elevated: #161b22;
+  --bg-muted: #161b22;
+  --fg: #e6edf3;
+  --fg-muted: #9198a1;
+  --border: #30363d;
+  --link: #4493f8;
+  --link-hover: #79b8ff;
+  --accent: #4493f8;
+  --selection-bg: #264f78;
+
+  --code-bg: #161b22;
+  --code-fg: #e6edf3;
+  --code-border: #30363d;
+  --inline-code-bg: rgba(110, 118, 129, 0.4);
+
+  --blockquote-border: #30363d;
+  --blockquote-fg: #9198a1;
+  --table-border: #30363d;
+  --table-head-bg: #161b22;
+  --mark-bg: #3b2300;
+  --hr-bg: #30363d;
+  --scrollbar-thumb: rgba(110, 118, 129, 0.5);
+
+  --img-placeholder-bg: #161b22;
+  --img-placeholder-border: #30363d;
+
+  --toc-fg: #9198a1;
+  --toc-active-fg: #4493f8;
+  --toc-active-bg: rgba(68, 147, 248, 0.15);
+
+  --toolbar-bg: rgba(13, 17, 23, 0.86);
+  --toolbar-border: #30363d;
+  --panel-bg: #161b22;
+  --panel-shadow: 0 8px 24px rgba(1, 4, 9, 0.8);
+  --toast-bg: #e6edf3;
+  --toast-fg: #0d1117;
+
+  /* highlight.js token（深色） */
+  --hljs-fg: #e6edf3;
+  --hljs-comment: #9198a1;
+  --hljs-keyword: #ff7b72;
+  --hljs-string: #a5d6ff;
+  --hljs-number: #79c0ff;
+  --hljs-title: #d2a8ff;
+  --hljs-built-in: #ffa657;
+  --hljs-literal: #79c0ff;
+  --hljs-type: #ffa657;
+  --hljs-attr: #79c0ff;
+  --hljs-variable: #ffa657;
+  --hljs-tag: #7ee787;
+  --hljs-section: #79c0ff;
+  --hljs-meta: #9198a1;
+  --hljs-addition-bg: #12261e;
+  --hljs-addition-fg: #7ee787;
+  --hljs-deletion-bg: #2d1214;
+  --hljs-deletion-fg: #ffa198;
+}
+
+/* 首屏兜底：theme.js 写入 data-theme 之前，系统深色时先用深色底（切换无白闪，spec §5.4） */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --bg-muted: #161b22;
+    --border: #30363d;
+    --toolbar-bg: rgba(13, 17, 23, 0.86);
+    --toolbar-border: #30363d;
+    --panel-bg: #161b22;
+    --toast-bg: #e6edf3;
+    --toast-fg: #0d1117;
+  }
+}
