@@ -210,6 +210,7 @@ MDReader/
 | 打开文件夹 | `Ctrl+Shift+O` | 选择目录作为浏览根 |
 | 大纲开关 | `Ctrl+B` | 折叠/展开侧栏 |
 | 主题切换 | — | 浅色 / 深色 / 跟随系统（三态循环） |
+| 界面风格 | — | 工具条「🐳 主题」或 Aa 面板下拉：阅读器风 ↔ 鲸鱼娘（`uiStyle`） |
 | 字号+/- | `Ctrl+=` / `Ctrl+-` | 14–24，步进 1 |
 | 字号重置 | `Ctrl+0` | 回到 16 |
 | 排版面板 | `Ctrl+,` | 字号、行距、行宽、字体 |
@@ -229,7 +230,12 @@ MDReader/
 
 ### 5.4 主题
 
-- 三态：`light` / `dark` / `system`（默认 `system`，监听 `prefers-color-scheme` 实时切换）。
+- 三态配色：`light` / `dark` / `system`（默认 `system`，监听 `prefers-color-scheme` 实时切换）。
+- 界面风格（`uiStyle`，与配色正交的第二个视觉维度）：`reader`（阅读器风，默认）/ `whale`（鲸鱼娘主题）。
+  - `reader`：参考常见 Markdown 阅读器的克制排版——标题层级、引用浅底、表格斑马纹、行内代码、代码块顶栏、TOC 当前项强调条、卡片 hover；正文区不加装饰。
+  - `whale`：浅蓝→白（暗色下深蓝→近黑）渐变背景、低透明度气泡/浪花装饰层（`pointer-events:none`、`aria-hidden`）、卡片化组件、鲸尾列表符号、右下角水印；mascot 出现在空状态/工具栏/关于面板。
+  - 两套风格都与 `light` / `dark` / `system` 组合生效；切换即时应用并持久化到 `settings.json` 的 `uiStyle`，未知值回退 `reader`。
+  - 打印模式（PDF 导出）下两套风格一律纯白背景并隐藏装饰层与 mascot。
 - 代码块、行内代码、表格、引用块、任务清单各有专属配色，深色下对比度不低于 WCAG AA（正文对比 ≥ 4.5:1）。
 - 切换无白闪（先改 CSS 变量再重绘）。
 
@@ -370,7 +376,7 @@ MDReader/
 - 默认发布形态：单文件 apphost exe（`JingjingReader.exe`）+ `WebView2Loader.dll` + `runtimes/`（WebView2 原生加载器
   不是单文件的一部分，分发时必须复制整个目录）；依赖系统 .NET 10 运行时。自包含形态在同样结构上再带 .NET 运行时 DLL。
 - 版本信息：产品名与文件说明（FileDescription）均为 `鲸鲸阅读器`，版本 `0.1.0`；关于面板显示版本、.NET、WebView2、
-  OS、数据目录与 `.md` 关联状态。图标使用 `scripts/gen-icon.py` 生成的占位鲸鱼图标（16/32/48/256），正式图标待设计（Q1）。
+  OS、数据目录与 `.md` 关联状态。图标使用 `scripts/gen-icon.py` 生成的原创鲸鱼女仆娘多尺寸图标（16/32/48/256），关于面板显示同一形象的 256×256 透明 PNG（`AboutMascot.png`）。
 - 分发内容：`out\`（或 `out-selfcontained\`）整个目录即分发包，含 exe、`install.ps1`、`uninstall.ps1`、`README.md`；
   install/uninstall 默认优先使用同目录的 exe（源码树中回退到 `..\out\JingjingReader.exe`）。`scripts/verify.ps1`
   增加「分发包完整性」检查（四项均存在）。
@@ -488,7 +494,7 @@ TDD：先写测试，再写实现。
 | 可执行文件 | `JingjingReader.exe`（ASCII，脚本与注册表更稳） |
 | 数据目录 | `%APPDATA%\JingjingReader\` |
 | ProgID | `JingjingReader.md` |
-| 图标 | v1 使用临时占位图标（`app.ico`），M5 前替换为鲸鱼图形；尺寸需含 16/32/48/256 |
+| 图标 | 原创「鲸鱼女仆娘」多尺寸图标（`app.ico`，16/32/48/256；16/32 剪影版保证可辨）；关于面板 256×256 透明 PNG（`AboutMascot.png`）；均由 `scripts/gen-icon.py` 生成，不使用网络同人图 |
 
 ---
 
@@ -496,7 +502,7 @@ TDD：先写测试，再写实现。
 
 | 编号 | 问题 | 处理 |
 |---|---|---|
-| Q1 | 正式图标设计（鲸鱼造型风格） | M5 前定；v1 先用占位，不阻塞开发 |
+| Q1 | 正式图标设计（鲸鱼造型风格） | **已解决（界面美化波）**：采用原创「鲸鱼女仆娘」形象（DeepSeek 蓝系 #4D6BFE / #1B2A6B + 鲸尾 + 白色荷叶边女仆头饰 + 气泡/浪花），`scripts/gen-icon.py` 生成 16/32/48/256 图标与 256 透明 PNG；前端同源 mascot 见 `web/src/mascot.js` |
 | Q2 | 是否需要页内搜索（`Ctrl+F`） | 本期不做，列为 v1.1 候选 |
 | Q3 | 是否需要多标签页 | 本期不做，最近文件切换替代 |
 | Q4 | 是否需要便携模式（配置随 exe 走，不写 AppData） | 本期不做；若需要，后续读取同目录 `portable.flag` 即可 |

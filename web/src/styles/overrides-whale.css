@@ -1,0 +1,465 @@
+/* 界面美化波 · 风格 B「鲸鱼娘主题」（data-ui-style="whale"）：
+   浅蓝→白（暗色下深蓝→近黑）背景 + 低透明度气泡/水印装饰层 + 卡片化组件 + 鲸尾列表符号。
+   约束：装饰层 position:fixed / pointer-events:none / aria-hidden（DOM 在 main.js），正文列 z-index 高于装饰；
+   prefers-reduced-motion 下取消浮动动画与 hover 上浮；打印模式由 print.css 统一回落纯白并隐藏装饰。
+   文件名以 overrides- 开头：构建按文件名字母序拼接，保证本文件在 light/dark/layout 之后、print.css 之前。 */
+
+html[data-ui-style='whale'] {
+  --ui-accent: #4d6bfe;
+  --ui-accent-strong: #3a55e8;
+  --ui-link: #3a55e8;
+  --ui-link-hover: #2438b8;
+  --ui-selection: rgba(77, 107, 254, 0.2);
+  --ui-quote-bg: rgba(77, 107, 254, 0.06);
+  --ui-zebra: rgba(77, 107, 254, 0.035);
+  --ui-table-head: rgba(77, 107, 254, 0.08);
+  --ui-code-head: #f0f4ff;
+  --ui-inline-code: #eef3ff;
+  --whale-ink: #1b2a6b;
+  --whale-card: rgba(255, 255, 255, 0.78);
+  --whale-border: rgba(77, 107, 254, 0.18);
+  --whale-shadow: 0 10px 30px rgba(46, 74, 160, 0.12);
+  --ui-card-shadow: 0 10px 30px rgba(46, 74, 160, 0.12);
+}
+
+html[data-theme='dark'][data-ui-style='whale'] {
+  --ui-accent: #8ea4ff;
+  --ui-accent-strong: #b3c2ff;
+  --ui-link: #93a8ff;
+  --ui-link-hover: #c0ccff;
+  --ui-selection: rgba(142, 164, 255, 0.32);
+  --ui-quote-bg: rgba(142, 164, 255, 0.07);
+  --ui-zebra: rgba(142, 164, 255, 0.04);
+  --ui-table-head: rgba(142, 164, 255, 0.1);
+  --ui-code-head: #16203a;
+  --ui-inline-code: rgba(110, 118, 129, 0.3);
+  --whale-ink: #dce5ff;
+  --whale-card: rgba(19, 28, 56, 0.72);
+  --whale-border: rgba(142, 164, 255, 0.22);
+  --whale-shadow: 0 14px 38px rgba(0, 0, 0, 0.55);
+  --ui-card-shadow: 0 14px 38px rgba(0, 0, 0, 0.55);
+}
+
+/* ── 背景：浅蓝 → 白（暗色：深蓝 → 近黑），打印模式排除 ── */
+html[data-ui-style='whale'] body:not(.print-mode) {
+  background-color: #f7faff;
+  background-image:
+    radial-gradient(1100px 620px at 12% -8%, rgba(77, 107, 254, 0.16), rgba(77, 107, 254, 0) 62%),
+    radial-gradient(900px 520px at 96% 104%, rgba(143, 211, 255, 0.24), rgba(143, 211, 255, 0) 58%),
+    linear-gradient(165deg, #f7faff 0%, #ffffff 48%, #f0f6ff 100%);
+  background-attachment: fixed;
+}
+
+html[data-theme='dark'][data-ui-style='whale'] body:not(.print-mode) {
+  background-color: #070d19;
+  background-image:
+    radial-gradient(1100px 620px at 10% -8%, rgba(77, 107, 254, 0.3), rgba(77, 107, 254, 0) 62%),
+    radial-gradient(900px 520px at 96% 104%, rgba(47, 134, 214, 0.18), rgba(47, 134, 214, 0) 60%),
+    linear-gradient(165deg, #071022 0%, #0b1020 55%, #060b16 100%);
+}
+
+/* 装饰层在正文之下：装饰 z-index:0，正文列/侧栏 z-index:1（工具条/浮层本来就有更高 z-index） */
+html[data-ui-style='whale'] #toc,
+html[data-ui-style='whale'] #content {
+  position: relative;
+  z-index: 1;
+}
+
+#ui-decor {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  display: none;
+}
+
+html[data-ui-style='whale'] #ui-decor {
+  display: block;
+}
+
+.bubble-field {
+  position: absolute;
+  inset: 0;
+}
+
+.jj-bubble {
+  position: absolute;
+  border: 1px solid rgba(122, 183, 255, 0.35);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 30%,
+    rgba(255, 255, 255, 0.95),
+    rgba(155, 216, 255, 0.38) 48%,
+    rgba(77, 107, 254, 0.16) 78%
+  );
+  opacity: 0.5;
+  pointer-events: none;
+  animation-name: jj-bubble-float;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+html[data-theme='dark'] .jj-bubble {
+  border-color: rgba(142, 164, 255, 0.28);
+  opacity: 0.28;
+}
+
+@keyframes jj-bubble-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(6px, -18px, 0) scale(1.06);
+  }
+}
+
+/* 右下角水印：低透明度、不拦截鼠标、位于正文之下 */
+.ui-watermark {
+  position: absolute;
+  right: 26px;
+  bottom: 18px;
+  width: 132px;
+  height: 132px;
+  opacity: 0.13;
+  pointer-events: none;
+}
+
+html[data-theme='dark'] .ui-watermark {
+  opacity: 0.17;
+}
+
+.ui-watermark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── 工具条与侧栏：半透明玻璃 + 卡片化 ── */
+html[data-ui-style='whale'] #toolbar {
+  border-bottom: 1px solid var(--whale-border);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 26px rgba(46, 74, 160, 0.1);
+}
+
+html[data-theme='dark'][data-ui-style='whale'] #toolbar {
+  background: rgba(10, 16, 36, 0.72);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+}
+
+html[data-ui-style='whale'] #toolbar .toolbar-mascot {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  flex: none;
+}
+
+html[data-ui-style='whale'] #toolbar .toolbar-mascot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+html[data-ui-style='whale'] #toolbar .tool {
+  border-radius: 10px;
+  transition:
+    transform 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease;
+}
+
+html[data-ui-style='whale'] #toolbar .tool:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 4px 12px rgba(77, 107, 254, 0.16);
+}
+
+html[data-theme='dark'][data-ui-style='whale'] #toolbar .tool:hover {
+  background: rgba(142, 164, 255, 0.14);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+html[data-ui-style='whale'] #toolbar .tool:active {
+  transform: translateY(0);
+}
+
+html[data-ui-style='whale'] #toolbar .tool.active {
+  background: var(--toc-active-bg);
+  color: var(--ui-accent);
+}
+
+html[data-ui-style='whale'] #toolbar .tool:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+
+html[data-ui-style='whale'] #toc {
+  border-right: 1px solid var(--whale-border);
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(8px);
+}
+
+html[data-theme='dark'][data-ui-style='whale'] #toc {
+  background: rgba(9, 14, 30, 0.45);
+}
+
+html[data-ui-style='whale'] #toc nav.toc {
+  padding: 8px;
+  border: 1px solid var(--whale-border);
+  border-radius: 16px;
+  background: var(--whale-card);
+  box-shadow: var(--whale-shadow);
+}
+
+html[data-ui-style='whale'] #toc nav.toc a {
+  position: relative;
+  border-radius: 10px;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+html[data-ui-style='whale'] #toc nav.toc a:hover {
+  background: var(--toc-active-bg);
+  color: var(--ui-accent);
+}
+
+html[data-ui-style='whale'] #toc nav.toc a.active {
+  background: var(--toc-active-bg);
+  color: var(--ui-accent);
+  font-weight: 700;
+}
+
+html[data-ui-style='whale'] #toc nav.toc a.active::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 2px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--ui-accent);
+}
+
+/* ── 最近文件 / 浮层：卡片化 + hover 轻抬 ── */
+html[data-ui-style='whale'] .recent-panel .recent-item {
+  padding: 12px 16px;
+  border-color: var(--whale-border);
+  border-radius: 14px;
+  background: var(--whale-card);
+  box-shadow: 0 4px 16px rgba(46, 74, 160, 0.08);
+  backdrop-filter: blur(6px);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+html[data-ui-style='whale'] .recent-panel .recent-item:hover,
+html[data-ui-style='whale'] .recent-panel .recent-item:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--ui-accent);
+  box-shadow: 0 12px 28px rgba(77, 107, 254, 0.2);
+}
+
+html[data-ui-style='whale'] .recent-panel .recent-open {
+  border-radius: 999px;
+  background: var(--whale-card);
+  transition:
+    transform 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+html[data-ui-style='whale'] .recent-panel .recent-open:hover,
+html[data-ui-style='whale'] .recent-panel .recent-open:focus-visible {
+  transform: translateY(-1px);
+  background: var(--toc-active-bg);
+  box-shadow: 0 6px 16px rgba(77, 107, 254, 0.18);
+}
+
+html[data-ui-style='whale'] #recent-menu,
+html[data-ui-style='whale'] .aa-panel {
+  border-color: var(--whale-border);
+  border-radius: 16px;
+  background: var(--whale-card);
+  box-shadow: var(--whale-shadow);
+  backdrop-filter: blur(12px);
+}
+
+html[data-ui-style='whale'] .aa-panel select {
+  border-radius: 9px;
+}
+
+html[data-ui-style='whale'] .aa-row input[type='range'] {
+  accent-color: var(--ui-accent);
+}
+
+html[data-ui-style='whale'] #toast .toast {
+  border-radius: 999px;
+  box-shadow: var(--whale-shadow);
+}
+
+html[data-ui-style='whale'] #back-to-top {
+  border-color: var(--whale-border);
+  background: var(--whale-card);
+  box-shadow: var(--whale-shadow);
+  backdrop-filter: blur(8px);
+}
+
+/* 空状态：220px 吉祥物主角；工具条最近菜单里缩小避免溢出 */
+html[data-ui-style='whale'] #content .recent-mascot {
+  width: 220px;
+  height: 220px;
+  margin: 0 auto 4px;
+}
+
+html[data-ui-style='whale'] #recent-menu .recent-mascot {
+  width: 120px;
+  height: 120px;
+  margin-bottom: 4px;
+}
+
+/* ── 正文（保持可读：颜色对比足够，装饰只在背景层） ── */
+html[data-ui-style='whale'] ::selection {
+  background: var(--ui-selection);
+}
+
+html[data-ui-style='whale'] #content a {
+  color: var(--ui-link);
+  text-decoration: none;
+}
+
+html[data-ui-style='whale'] #content a:hover {
+  color: var(--ui-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+html[data-ui-style='whale'] #content h1 {
+  padding-bottom: 0.4em;
+  border-bottom: 2px solid rgba(77, 107, 254, 0.35);
+  font-size: 2em;
+  font-weight: 700;
+}
+
+html[data-theme='dark'][data-ui-style='whale'] #content h1 {
+  border-bottom-color: rgba(142, 164, 255, 0.4);
+}
+
+html[data-ui-style='whale'] #content h2 {
+  border-bottom: 0;
+  font-size: 1.45em;
+  font-weight: 650;
+}
+
+html[data-ui-style='whale'] #content h3 {
+  font-size: 1.18em;
+  font-weight: 700;
+}
+
+html[data-ui-style='whale'] #content blockquote {
+  padding: 0.6em 1em;
+  border: 1px solid var(--whale-border);
+  border-left: 4px solid var(--ui-accent);
+  border-radius: 4px 14px 14px 4px;
+  background: var(--whale-card);
+  color: var(--blockquote-fg);
+  box-shadow: 0 4px 14px rgba(46, 74, 160, 0.07);
+}
+
+html[data-ui-style='whale'] #content table {
+  border: 1px solid var(--whale-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 12px;
+}
+
+html[data-ui-style='whale'] #content th,
+html[data-ui-style='whale'] #content td {
+  border: 0;
+  border-right: 1px solid var(--whale-border);
+  border-bottom: 1px solid var(--whale-border);
+}
+
+html[data-ui-style='whale'] #content th {
+  background: var(--ui-table-head);
+  font-weight: 600;
+}
+
+html[data-ui-style='whale'] #content tr > :last-child {
+  border-right: 0;
+}
+
+html[data-ui-style='whale'] #content tbody tr:last-child > td {
+  border-bottom: 0;
+}
+
+html[data-ui-style='whale'] #content tbody tr:nth-child(even) > td {
+  background: var(--ui-zebra);
+}
+
+html[data-ui-style='whale'] #content :not(pre) > code {
+  padding: 0.14em 0.38em;
+  border: 1px solid var(--whale-border);
+  border-radius: 7px;
+  background: var(--ui-inline-code);
+  font-size: 0.88em;
+}
+
+html[data-ui-style='whale'] #content hr {
+  height: 2px;
+  margin: 2.2em 0;
+  border: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(77, 107, 254, 0), rgba(77, 107, 254, 0.35), rgba(77, 107, 254, 0));
+}
+
+html[data-ui-style='whale'] #content input[type='checkbox'] {
+  width: 1em;
+  height: 1em;
+  accent-color: var(--ui-accent);
+  vertical-align: -0.12em;
+}
+
+/* 一级无序列表：鲸尾小图标（mask + data URI；空 content 的 ::before 不进入可访问性文本流） */
+html[data-ui-style='whale'] #content > ul:not(.contains-task-list) > li {
+  position: relative;
+  list-style: none;
+}
+
+html[data-ui-style='whale'] #content > ul:not(.contains-task-list) > li::before {
+  content: '';
+  position: absolute;
+  top: 0.55em;
+  left: -1.15em;
+  width: 0.72em;
+  height: 0.72em;
+  background-color: var(--ui-accent);
+  opacity: 0.72;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 22C9 20 5 16 4 11 3 7 5 5 7 7 9 9 11 13 12 16 13 13 15 9 17 7 19 5 21 7 20 11 19 16 15 20 12 22Z' fill='%23000'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 22C9 20 5 16 4 11 3 7 5 5 7 7 9 9 11 13 12 16 13 13 15 9 17 7 19 5 21 7 20 11 19 16 15 20 12 22Z' fill='%23000'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* 动效偏好：减少动态时取消气泡漂浮与 hover 上浮 */
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui-style='whale'] .jj-bubble {
+    animation: none;
+  }
+
+  html[data-ui-style='whale'] #toolbar .tool:hover,
+  html[data-ui-style='whale'] #toolbar .tool:active,
+  html[data-ui-style='whale'] .recent-panel .recent-item:hover,
+  html[data-ui-style='whale'] .recent-panel .recent-item:focus-visible,
+  html[data-ui-style='whale'] .recent-panel .recent-open:hover,
+  html[data-ui-style='whale'] .recent-panel .recent-open:focus-visible {
+    transform: none;
+  }
+}

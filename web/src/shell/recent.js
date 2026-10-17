@@ -1,5 +1,8 @@
 // 最近文件面板（Task 12）：空白启动页展示 + 键盘导航，供 main.js 的空白页与（后续）工具条菜单共用。
 // 安全约束：路径/文件名/目录都是不可信文本——只用 textContent / dataset 写入，绝不拼 HTML 字符串。
+// 界面美化波：空状态插入自绘的鲸鱼女仆娘插画（常量 SVG，装饰性 aria-hidden；非用户内容）。
+
+import { MASCOT_LARGE_SVG } from '../mascot.js';
 
 /** 最近文件条数上限（Global Constraints：20 条）。 */
 export const MAX_RECENT = 20;
@@ -216,6 +219,12 @@ export function renderRecent(items, { onOpen, onClose, onPickFile } = {}) {
   }
 
   if (buttons.length === 0) {
+    // 空状态：鲸鱼女仆娘插画（reader 风小尺寸、whale 风 220px 主角，尺寸由 CSS 决定）。
+    const mascot = document.createElement('div');
+    mascot.className = 'recent-mascot';
+    mascot.setAttribute('aria-hidden', 'true');
+    mascot.innerHTML = MASCOT_LARGE_SVG;
+    panel.prepend(mascot);
     const empty = document.createElement('p');
     empty.className = 'recent-empty';
     empty.textContent = '还没有打开过文档';

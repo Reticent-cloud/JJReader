@@ -26,7 +26,7 @@ public class ProtocolTests
     [Fact]
     public void Load_payload_contains_path_key_markdown_settings_and_position()
     {
-        var settings = new AppSettings(Theme: "dark", FontSize: 20);
+        var settings = new AppSettings(Theme: "dark", FontSize: 20, UiStyle: "whale");
         var json = Protocol.Load(@"C:\笔记 目录\a.md", "k1", "https://md.local/", "# 标题", settings, 0.42);
 
         using var doc = JsonDocument.Parse(json);
@@ -38,6 +38,7 @@ public class ProtocolTests
         // AppSettings 按 camelCase 序列化，与持久化格式一致（前端按 settings.fontSize 等读取）
         Assert.Equal("dark", payload.GetProperty("settings").GetProperty("theme").GetString());
         Assert.Equal(20, payload.GetProperty("settings").GetProperty("fontSize").GetInt32());
+        Assert.Equal("whale", payload.GetProperty("settings").GetProperty("uiStyle").GetString());
     }
 
     [Fact]

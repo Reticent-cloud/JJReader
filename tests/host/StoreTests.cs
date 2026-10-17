@@ -176,6 +176,7 @@ public class StoreTests
         Assert.Contains("\"tocWidth\": 240", json);
         Assert.Contains("\"window\": null", json);
         Assert.Contains("\"monoFont\": \"consolas\"", json);
+        Assert.Contains("\"uiStyle\": \"reader\"", json); // 界面美化波：界面风格默认 reader
         Assert.False(File.Exists(target + ".tmp")); // 原子写完成后不留临时文件
     }
 
@@ -191,6 +192,23 @@ public class StoreTests
         store.SaveSettings(new AppSettings(MonoFont: "Cascadia Mono"));
         Assert.Equal("Cascadia Mono", new Store(dir).LoadSettings().MonoFont);
         Assert.Equal("system", new Store(dir).LoadSettings().CjkFont); // 相邻字体字段不受影响
+    }
+
+    [Fact]
+    public void Settings_roundtrip_includes_ui_style()
+    {
+        var dir = TestDir();
+        var store = new Store(dir);
+
+        // 界面美化波：默认 reader；whale 落盘后能读回，且不影响相邻字段。
+        Assert.Equal("reader", store.LoadSettings().UiStyle);
+
+        store.SaveSettings(new AppSettings(UiStyle: "whale", MonoFont: "Cascadia Mono"));
+
+        var reloaded = new Store(dir).LoadSettings();
+        Assert.Equal("whale", reloaded.UiStyle);
+        Assert.Equal("Cascadia Mono", reloaded.MonoFont);
+        Assert.Contains("\"uiStyle\": \"whale\"", File.ReadAllText(Path.Combine(dir, "settings.json")));
     }
 
     [Fact]

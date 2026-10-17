@@ -20,7 +20,9 @@ public sealed record AppSettings(
     int TocWidth = 240,
     WindowGeometry? Window = null,
     // T2 Ruling：spec §5.5/§6.3 的 monoFont（代码字体）补在 record 末尾，位置参数带默认值保持向后兼容。
-    string MonoFont = "consolas");
+    string MonoFont = "consolas",
+    // 界面美化波：界面风格（reader 阅读器风 / whale 鲸鱼娘主题），默认阅读器风；前端负责未知值回退。
+    string UiStyle = "reader");
 
 /// <summary>最近文件条目，持久化到 recent.json（最多 20 条，最新在前）。</summary>
 public sealed record RecentEntry(string Path, string OpenedAt, long Size);

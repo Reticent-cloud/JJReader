@@ -15,7 +15,7 @@ public class SettingsPatchTests
 
         var merged = SettingsPatch.Apply(
             current,
-            """{"theme":"dark","fontSize":20,"lineHeight":1.9,"contentWidth":640,"cjkFont":"Microsoft YaHei","monoFont":"Cascadia Mono","tocVisible":false,"tocWidth":300}""");
+            """{"theme":"dark","fontSize":20,"lineHeight":1.9,"contentWidth":640,"cjkFont":"Microsoft YaHei","monoFont":"Cascadia Mono","tocVisible":false,"tocWidth":300,"uiStyle":"whale"}""");
 
         Assert.Equal("dark", merged.Theme);
         Assert.Equal(20, merged.FontSize);
@@ -25,6 +25,7 @@ public class SettingsPatchTests
         Assert.Equal("Cascadia Mono", merged.MonoFont);
         Assert.False(merged.TocVisible);
         Assert.Equal(300, merged.TocWidth);
+        Assert.Equal("whale", merged.UiStyle); // 界面美化波：uiStyle 参与 patch 合并
     }
 
     [Fact]
@@ -53,6 +54,23 @@ public class SettingsPatchTests
     }
 
     [Fact]
+    public void Apply_merges_ui_style_and_keeps_it_when_patch_omits_it()
+    {
+        // 界面美化波：whale 合并成功；后续只改字号的 patch 不能把风格重置回 reader。
+        var current = new AppSettings();
+        var switched = SettingsPatch.Apply(current, """{"uiStyle":"whale"}""");
+        Assert.Equal("whale", switched.UiStyle);
+
+        var afterFont = SettingsPatch.Apply(switched, """{"fontSize":18}""");
+        Assert.Equal(18, afterFont.FontSize);
+        Assert.Equal("whale", afterFont.UiStyle);
+
+        // 宿主不做白名单校验（前端负责未知值回退 reader），字符串值原样透传。
+        var unknown = SettingsPatch.Apply(current, """{"uiStyle":"future-style"}""");
+        Assert.Equal("future-style", unknown.UiStyle);
+    }
+
+    [Fact]
     public void Apply_ignores_unknown_fields()
     {
         var current = new AppSettings();
@@ -73,6 +91,9 @@ public class SettingsPatchTests
     [InlineData("""{"theme":null}""")]
     [InlineData("""{"cjkFont":[]}""")]
     [InlineData("""{"monoFont":{}}""")]
+    [InlineData("""{"uiStyle":5}""")]
+    [InlineData("""{"uiStyle":null}""")]
+    [InlineData("""{"uiStyle":[]}""")]
     [InlineData("""{"tocWidth":"240"}""")]
     [InlineData("""{"contentWidth":1.5}""")]
     public void Apply_ignores_type_mismatched_fields(string patchJson)

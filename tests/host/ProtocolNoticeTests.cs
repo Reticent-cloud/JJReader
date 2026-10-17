@@ -39,7 +39,7 @@ public class ProtocolNoticeTests
     [Fact]
     public void Settings_serializes_camel_case_app_settings()
     {
-        var settings = new AppSettings(Theme: "dark", FontSize: 18, TocVisible: false);
+        var settings = new AppSettings(Theme: "dark", FontSize: 18, TocVisible: false, UiStyle: "whale");
 
         var root = Parse(Protocol.Settings(settings));
 
@@ -49,6 +49,8 @@ public class ProtocolNoticeTests
         Assert.Equal(18, payload.GetProperty("fontSize").GetInt32());
         Assert.False(payload.GetProperty("tocVisible").GetBoolean());
         Assert.Equal(1.7, payload.GetProperty("lineHeight").GetDouble());
+        // 界面美化波：settings 消息自然带出 uiStyle（空白启动页也要应用界面风格）
+        Assert.Equal("whale", payload.GetProperty("uiStyle").GetString());
     }
 
     [Fact]

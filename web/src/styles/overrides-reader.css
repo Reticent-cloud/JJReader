@@ -1,0 +1,359 @@
+/* 界面美化波 · 风格 A「阅读器风」（默认 data-ui-style="reader"）：
+   参考 Typora / Obsidian 的克制排版——标题层级、引用、表格斑马纹、行内代码、代码块顶栏、
+   TOC 当前项强调条、工具条状态、Aa 面板、最近文件卡片、toast 与细滚动条。
+   只覆盖样式：不改变布局结构、DOM 顺序与任何交互；颜色全部走变量，与 light/dark 组合生效。
+   文件名以 overrides- 开头是为了在构建（按文件名字母序拼接）中排在 light/dark/layout 之后、
+   print.css 之前：本文件的视觉覆盖不会压过打印样式。 */
+
+/* ── 颜色令牌（link 用加深一档的 #3A55E8 保证正文链接对比度 ≥ 4.5:1；强调色仍是 DeepSeek 蓝 #4D6BFE） ── */
+html[data-ui-style='reader'] {
+  --ui-accent: #4d6bfe;
+  --ui-accent-strong: #3a55e8;
+  --ui-link: #3a55e8;
+  --ui-link-hover: #2438b8;
+  --ui-selection: rgba(77, 107, 254, 0.18);
+  --ui-quote-bg: #f6f8ff;
+  --ui-zebra: #fafbfd;
+  --ui-table-head: #f2f5fc;
+  --ui-code-head: #f1f4fa;
+  --ui-inline-code: #f2f5fb;
+  --ui-card-shadow: 0 6px 20px rgba(32, 48, 96, 0.08);
+}
+
+html[data-theme='dark'][data-ui-style='reader'] {
+  --ui-accent: #8ea4ff;
+  --ui-accent-strong: #b3c2ff;
+  --ui-link: #93a8ff;
+  --ui-link-hover: #c0ccff;
+  --ui-selection: rgba(142, 164, 255, 0.3);
+  --ui-quote-bg: rgba(77, 107, 254, 0.08);
+  --ui-zebra: rgba(255, 255, 255, 0.025);
+  --ui-table-head: rgba(142, 164, 255, 0.1);
+  --ui-code-head: #1b2230;
+  --ui-inline-code: rgba(110, 118, 129, 0.28);
+  --ui-card-shadow: 0 8px 24px rgba(1, 4, 9, 0.55);
+}
+
+/* ── 正文排版 ── */
+html[data-ui-style='reader'] ::selection {
+  background: var(--ui-selection);
+}
+
+html[data-ui-style='reader'] #content a {
+  color: var(--ui-link);
+  text-decoration: none;
+}
+
+html[data-ui-style='reader'] #content a:hover {
+  color: var(--ui-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+/* h1：层级最大 + 短强调线（3.2em）+ 一条淡下边框；h2 去掉边框弱化；h3 加粗 */
+html[data-ui-style='reader'] #content h1 {
+  padding-bottom: 0.45em;
+  border-bottom: 1px solid var(--border);
+  background-image: linear-gradient(90deg, var(--ui-accent), var(--ui-accent));
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  background-size: 3.2em 2px;
+  font-size: 1.9em;
+  font-weight: 700;
+}
+
+html[data-ui-style='reader'] #content h2 {
+  padding-bottom: 0;
+  border-bottom: 0;
+  font-size: 1.38em;
+  font-weight: 600;
+}
+
+html[data-ui-style='reader'] #content h3 {
+  font-size: 1.16em;
+  font-weight: 700;
+}
+
+html[data-ui-style='reader'] #content p {
+  margin: 1em 0;
+}
+
+/* 引用块：3px 强调色左边线 + 浅底 + 右侧圆角 */
+html[data-ui-style='reader'] #content blockquote {
+  padding: 0.55em 1em;
+  border-left: 3px solid var(--ui-accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--ui-quote-bg);
+  color: var(--blockquote-fg);
+}
+
+/* 表格：圆角 + 表头浅底 + 斑马纹（front matter 表格由 layout.css 的更高优先级规则保持原样） */
+html[data-ui-style='reader'] #content table {
+  border: 1px solid var(--border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 8px;
+}
+
+html[data-ui-style='reader'] #content th,
+html[data-ui-style='reader'] #content td {
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+html[data-ui-style='reader'] #content th {
+  background: var(--ui-table-head);
+  font-weight: 600;
+}
+
+html[data-ui-style='reader'] #content tr > :last-child {
+  border-right: 0;
+}
+
+html[data-ui-style='reader'] #content tbody tr:last-child > td {
+  border-bottom: 0;
+}
+
+html[data-ui-style='reader'] #content tbody tr:nth-child(even) > td {
+  background: var(--ui-zebra);
+}
+
+/* 行内代码：浅底 + 圆角 + 细边（pre > code 不受影响） */
+html[data-ui-style='reader'] #content :not(pre) > code {
+  padding: 0.14em 0.38em;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--ui-inline-code);
+  font-size: 0.88em;
+}
+
+/* 代码块：统一的「顶栏」视觉（语言标签 DOM 在渲染管线里不存在，保持不改渲染；顶栏只承载复制按钮） */
+@media screen {
+  html[data-ui-style='reader'] #content .code-wrap,
+  html[data-ui-style='whale'] #content .code-wrap {
+    overflow: hidden;
+    border: 1px solid var(--code-border);
+    border-radius: 10px;
+    background: var(--code-bg);
+  }
+
+  html[data-ui-style='reader'] #content .code-wrap::before,
+  html[data-ui-style='whale'] #content .code-wrap::before {
+    content: '';
+    display: block;
+    height: 32px;
+    border-bottom: 1px solid var(--code-border);
+    background: var(--ui-code-head);
+  }
+
+  html[data-ui-style='reader'] #content .code-wrap pre,
+  html[data-ui-style='whale'] #content .code-wrap pre {
+    border: 0;
+    border-radius: 0;
+  }
+
+  html[data-ui-style='reader'] #content .code-wrap .copy,
+  html[data-ui-style='whale'] #content .code-wrap .copy {
+    top: 4px;
+    right: 8px;
+    height: 24px;
+    border-radius: 6px;
+    line-height: 22px;
+    opacity: 0.7;
+  }
+
+  html[data-ui-style='reader'] #content .code-wrap:hover .copy,
+  html[data-ui-style='whale'] #content .code-wrap:hover .copy,
+  html[data-ui-style='reader'] #content .code-wrap .copy:focus-visible,
+  html[data-ui-style='whale'] #content .code-wrap .copy:focus-visible {
+    opacity: 1;
+  }
+}
+
+/* hr：细线 */
+html[data-ui-style='reader'] #content hr {
+  height: 1px;
+  margin: 2em 0;
+  border: 0;
+  background: var(--border);
+}
+
+/* 任务清单：复选框用强调色 */
+html[data-ui-style='reader'] #content input[type='checkbox'] {
+  width: 1em;
+  height: 1em;
+  accent-color: var(--ui-accent);
+  vertical-align: -0.12em;
+}
+
+/* ── 组件 ── */
+html[data-ui-style='reader'] #toolbar .tool {
+  border-radius: 7px;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+html[data-ui-style='reader'] #toolbar .tool:hover {
+  background: var(--bg-muted);
+}
+
+html[data-ui-style='reader'] #toolbar .tool:active {
+  background: var(--border);
+}
+
+html[data-ui-style='reader'] #toolbar .tool.active {
+  background: var(--toc-active-bg);
+  color: var(--ui-accent);
+}
+
+html[data-ui-style='reader'] #toolbar .tool:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+
+html[data-ui-style='reader'] #toolbar .tool.ui-style-toggle {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+html[data-ui-style='reader'] #toolbar .tool-mascot,
+html[data-ui-style='whale'] #toolbar .tool-mascot {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+html[data-ui-style='reader'] #toolbar .tool-mascot svg,
+html[data-ui-style='whale'] #toolbar .tool-mascot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 工具栏左侧小吉祥物：阅读器风不显示（正文区不加装饰） */
+html[data-ui-style='reader'] #toolbar .toolbar-mascot {
+  display: none;
+}
+
+/* Aa 面板：圆角 + 阴影 + 统一的控件圆角 */
+html[data-ui-style='reader'] .aa-panel {
+  border-radius: 12px;
+  box-shadow: var(--ui-card-shadow);
+}
+
+html[data-ui-style='reader'] .aa-panel select {
+  border-radius: 7px;
+}
+
+html[data-ui-style='reader'] .aa-row input[type='range'] {
+  accent-color: var(--ui-accent);
+}
+
+/* TOC：当前项左侧强调条 */
+html[data-ui-style='reader'] #toc nav.toc a {
+  position: relative;
+  border-radius: 6px;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+html[data-ui-style='reader'] #toc nav.toc a.active {
+  background: var(--toc-active-bg);
+  color: var(--ui-accent);
+}
+
+html[data-ui-style='reader'] #toc nav.toc a.active::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--ui-accent);
+}
+
+/* 最近文件卡片：hover 轻抬 + 强调色边框 */
+html[data-ui-style='reader'] .recent-panel .recent-item {
+  border-radius: 10px;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+html[data-ui-style='reader'] .recent-panel .recent-item:hover,
+html[data-ui-style='reader'] .recent-panel .recent-item:focus-visible {
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-card-shadow);
+  transform: translateY(-1px);
+}
+
+/* toast：圆角 + 阴影 */
+html[data-ui-style='reader'] #toast .toast {
+  border-radius: 12px;
+  box-shadow: var(--ui-card-shadow);
+}
+
+/* 细窄滚动条（WebKit / WebView2） */
+html[data-ui-style='reader'] ::-webkit-scrollbar,
+html[data-ui-style='whale'] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html[data-ui-style='reader'] ::-webkit-scrollbar-track,
+html[data-ui-style='whale'] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html[data-ui-style='reader'] ::-webkit-scrollbar-thumb,
+html[data-ui-style='whale'] ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+html[data-ui-style='reader'] ::-webkit-scrollbar-thumb:hover,
+html[data-ui-style='whale'] ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--fg-muted);
+  background-clip: content-box;
+}
+
+/* 空状态吉祥物（阅读器风：小尺寸点缀；whale 风在 overrides-whale.css 放大为主角） */
+html[data-ui-style='reader'] .recent-mascot {
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 6px;
+}
+
+html[data-ui-style='reader'] #recent-menu .recent-mascot {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 2px;
+}
+
+.recent-mascot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 阅读器风没有装饰层 */
+html[data-ui-style='reader'] #ui-decor {
+  display: none;
+}
+
+/* 动效偏好：减少动态时不位移（只保留颜色/阴影变化） */
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui-style='reader'] .recent-panel .recent-item:hover,
+  html[data-ui-style='reader'] .recent-panel .recent-item:focus-visible {
+    transform: none;
+  }
+}

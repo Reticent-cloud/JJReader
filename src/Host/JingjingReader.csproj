@@ -28,4 +28,9 @@
     <EmbeddedResource Include="Resources\*" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 界面美化波：关于面板的原创鲸鱼女仆娘 mascot（scripts/gen-icon.py 生成的 256×256 透明 PNG，WPF 资源）。 -->
+    <Resource Include="AboutMascot.png" />
+  </ItemGroup>
+
 </Project>

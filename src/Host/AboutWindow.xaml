@@ -15,12 +15,30 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Margin="0,0,0,12">
-            <TextBlock Text="鲸鲸阅读器" FontSize="22" FontWeight="SemiBold" />
-            <TextBlock Text="Windows 上的 Markdown 阅读器"
-                       Margin="0,4,0,0"
-                       Foreground="#666666" />
-        </StackPanel>
+        <!-- 界面美化波：原创鲸鱼女仆娘 mascot（scripts/gen-icon.py 生成的 256×256 透明 PNG，csproj 以 Resource 打包）。 -->
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Image Grid.Column="0"
+                   Source="AboutMascot.png"
+                   Width="96"
+                   Height="96"
+                   Margin="0,0,16,0"
+                   Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="HighQuality" />
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="鲸鲸阅读器" FontSize="22" FontWeight="SemiBold" />
+                <TextBlock Text="Windows 上的 Markdown 阅读器"
+                           Margin="0,4,0,0"
+                           Foreground="#666666" />
+                <TextBlock Text="界面风格：阅读器风 / 鲸鱼娘（工具条「🐳 主题」切换）"
+                           Margin="0,4,0,0"
+                           Foreground="#666666"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+        </Grid>
 
         <!-- 诊断信息：只读、可选中复制；内容由 AboutInfo.BuildText 生成（版本/环境/数据目录/关联状态）。 -->
         <TextBox x:Name="InfoText"

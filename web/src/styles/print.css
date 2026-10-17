@@ -86,3 +86,43 @@ body.print-mode a {
   color: inherit;
   text-decoration: underline;
 }
+
+/* ── 界面美化波：打印 / PDF 导出时两套界面风格一律回落为纸面样式 ──
+   装饰层、吉祥物、水印、代码块顶栏全部隐藏；背景纯白；斑马纹/引用底/卡片阴影不进入纸面。 */
+body.print-mode #ui-decor,
+body.print-mode .toolbar-mascot,
+body.print-mode .ui-watermark,
+body.print-mode .recent-mascot,
+body.print-mode .code-wrap::before {
+  display: none !important;
+}
+
+html[data-ui-style] body.print-mode {
+  background: #ffffff !important;
+  background-image: none !important;
+}
+
+html[data-ui-style] body.print-mode #app,
+body.print-mode #toc,
+body.print-mode #content {
+  background: #ffffff !important;
+}
+
+body.print-mode #content h1 {
+  background-image: none !important;
+}
+
+body.print-mode #content blockquote,
+body.print-mode #content table,
+body.print-mode #content th,
+body.print-mode #content td,
+body.print-mode #content tbody tr:nth-child(even) > td {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+body.print-mode #content .code-wrap {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}

@@ -69,6 +69,12 @@ public static class SettingsPatch
                 merged = merged with { MonoFont = monoFont };
             }
 
+            // 界面美化波：界面风格（reader / whale）；合法性由前端归一，宿主只做类型校验。
+            if (TryString(root, "uiStyle", out var uiStyle))
+            {
+                merged = merged with { UiStyle = uiStyle };
+            }
+
             if (TryBool(root, "tocVisible", out var tocVisible))
             {
                 merged = merged with { TocVisible = tocVisible };
