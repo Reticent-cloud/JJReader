@@ -1,0 +1,13 @@
+# build outputs
+bin/
+obj/
+out/
+web/dist/
+web/node_modules/
+*.user
+
+# local artifacts
+*.log
+*.pdf
+.DS_Store
+Thumbs.db
