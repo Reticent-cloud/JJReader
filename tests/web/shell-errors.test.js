@@ -220,6 +220,66 @@ describe('§5.11 空白启动与大文件横幅', () => {
     expect(posted.some((message) => message.type === 'pickFile')).toBe(true);
   });
 
+  it('键盘 Enter 不误开最近文件：焦点在「打开文件…」按钮时发 pickFile', () => {
+    const { root, shell, posted } = mount();
+    shell.onMessage({
+      type: 'recent',
+      payload: { items: [{ path: 'C:\\a.md', name: 'a.md', dir: 'C:\\', openedAt: '' }] },
+    });
+    const pick = root.querySelector('#content .recent-open');
+    pick.focus();
+
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    pick.dispatchEvent(enter);
+    // 面板不 preventDefault：浏览器随后把 Enter 转成按钮 click；也绝不能打开最近第一条
+    expect(enter.defaultPrevented).toBe(false);
+    expect(posted.some((message) => message.type === 'openRecent')).toBe(false);
+    pick.click();
+    expect(posted.filter((message) => message.type === 'pickFile')).toHaveLength(1);
+    expect(posted.some((message) => message.type === 'openRecent')).toBe(false);
+
+    // 焦点在最近项上按 Enter：打开该项
+    const item = root.querySelector('#content [data-path]');
+    item.focus();
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(posted.filter((message) => message.type === 'openRecent').at(-1).payload).toEqual({ path: 'C:\\a.md' });
+  });
+
+  it('无最近项时「打开文件…」按钮上的 Enter 仍可正常激活（发 pickFile）', () => {
+    const { root, posted } = mount();
+    const pick = root.querySelector('#content .recent-open');
+    pick.focus();
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    pick.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(false);
+    pick.click();
+    expect(posted.filter((message) => message.type === 'pickFile')).toHaveLength(1);
+  });
+
+  it('通知条随内容显隐（无通知时不占行高；错误条/大文件横幅都算通知）', () => {
+    const { root, shell } = mount();
+    const stack = root.querySelector('#notice-stack');
+    expect(stack).toBeTruthy();
+    expect(stack.hidden).toBe(true);
+
+    shell.onMessage({ type: 'notice', payload: { text: '打不开', level: 'error', persistent: true } });
+    expect(stack.hidden).toBe(false);
+    expect(root.querySelector('#error-bar').getAttribute('role')).toBe('alert');
+    root.querySelector('#error-bar .notice-close').click();
+    expect(stack.hidden).toBe(true);
+
+    const originalIsHuge = JJ.isHuge;
+    JJ.isHuge = () => true;
+    try {
+      load(shell, { markdown: '# 大文件' });
+    } finally {
+      JJ.isHuge = originalIsHuge;
+    }
+    expect(stack.hidden).toBe(false); // 大文件横幅同样是通知
+    root.querySelector('#huge-banner .notice-close').click();
+    expect(stack.hidden).toBe(true);
+  });
+
   it('大文件模式显示常驻横幅，可关闭；普通文档自动隐藏', () => {
     const { root, shell } = mount();
     const originalIsHuge = JJ.isHuge;

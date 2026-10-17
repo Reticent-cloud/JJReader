@@ -144,10 +144,12 @@ export function mountShell({ root, post } = {}) {
   toast.id = 'toast';
   toast.hidden = true;
 
-  // 修复波 B-§5.11：内容顶部通知栈（错误条 + 大文件横幅）。
-  // 固定定位在工具条下方（z-index 低于工具条 30，不遮挡工具条），可关闭、持久显示。
+  // 修复波 B-§5.11 / 波 E：内容顶部通知栈（错误条 + 大文件横幅）。
+  // 作为 #app 内容列第一行的网格项：有通知时挤占高度、不覆盖正文/TOC；无通知时 hidden（整行 0 高）。
+  // 可关闭、持久显示（role=alert 在 errorBar 上，暗色由 light/dark 变量适配）。
   const noticeStack = document.createElement('div');
   noticeStack.id = 'notice-stack';
+  noticeStack.hidden = true;
   const errorBar = document.createElement('div');
   errorBar.id = 'error-bar';
   errorBar.hidden = true;
@@ -202,6 +204,11 @@ export function mountShell({ root, post } = {}) {
   // 悬浮工具条默认隐藏：鼠标进顶部 40px 或按 Alt 才显示（隐藏时键盘快捷键照常可用）。
   root.dataset.toolbar = 'hidden';
 
+  /** 通知条容器随内容显隐：两条都隐藏时整行高度为 0（不再用 fixed 覆盖正文/TOC 顶部）。 */
+  function syncNoticeStack() {
+    noticeStack.hidden = errorBar.hidden && hugeBanner.hidden;
+  }
+
   /**
    * 显示持久错误条（spec §5.11：文件打不开/编码异常/渲染异常）。可关闭；不自动消失。
    * @param {string} text
@@ -215,18 +222,22 @@ export function mountShell({ root, post } = {}) {
     errorBarText.textContent = value;
     errorBar.dataset.level = level;
     errorBar.hidden = false;
+    syncNoticeStack();
   }
 
   function hideErrorBar() {
     errorBar.hidden = true;
+    syncNoticeStack();
   }
 
   function showHugeBanner() {
     hugeBanner.hidden = false;
+    syncNoticeStack();
   }
 
   function hideHugeBanner() {
     hugeBanner.hidden = true;
+    syncNoticeStack();
   }
 
   // TOC/标题 id 控制器：持有标题快照、滚动联动 spy 与 TOC 高亮（实现见 headings.js）。
@@ -1177,6 +1188,17 @@ export function mountShell({ root, post } = {}) {
   content.addEventListener('load', onContentResourceSettled, true);
   content.addEventListener('error', onContentResourceSettled, true);
 
+  // <details> 展开/折叠会改变正文高度（图片同理）。toggle 事件不冒泡，只能在 #content 捕获阶段收到；
+  // 展开会让后续标题整体下移，因此同样合并到下一帧重采集标题 top。
+  function onContentToggle(event) {
+    const target = event && event.target;
+    if (!target || target.tagName !== 'DETAILS') {
+      return;
+    }
+    scheduleRefreshHeadingTops();
+  }
+  content.addEventListener('toggle', onContentToggle, true);
+
   // 窗口尺寸变化 / 图片撑开正文都会改 #content 尺寸：ResizeObserver 可用时订阅（jsdom 无该 API，守卫跳过）。
   let contentResizeObserver = null;
   if (typeof globalThis.ResizeObserver === 'function') {
@@ -1204,6 +1226,7 @@ export function mountShell({ root, post } = {}) {
     toolbar.removeEventListener('mouseleave', onToolbarLeave);
     content.removeEventListener('load', onContentResourceSettled, true);
     content.removeEventListener('error', onContentResourceSettled, true);
+    content.removeEventListener('toggle', onContentToggle, true);
     if (contentResizeObserver) {
       contentResizeObserver.disconnect();
       contentResizeObserver = null;
@@ -1211,7 +1234,8 @@ export function mountShell({ root, post } = {}) {
     aaPanel.removeEventListener('input', onAaControlChange);
     aaPanel.removeEventListener('change', onAaControlChange);
     aaPanel.removeEventListener('mouseleave', flushSettingsSave);
-    flushSettingsSave();
+    // 设置落盘器：解绑 pagehide/visibilitychange 并补发 pending patch（原先只 flush，监听会泄漏）
+    settingsSaver.destroy();
     recentToggle.removeEventListener('click', toggleRecentMenu);
     errorBarClose.removeEventListener('click', hideErrorBar);
     hugeBannerClose.removeEventListener('click', hideHugeBanner);

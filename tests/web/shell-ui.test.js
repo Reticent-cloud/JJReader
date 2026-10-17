@@ -1149,3 +1149,34 @@ it('图片加载失败换占位后刷新标题位置，高亮跟随', async () =
     restore();
   }
 });
+
+it('details 展开/折叠（toggle 不冒泡）后也刷新标题位置', async () => {
+  const restore = stubHeadingTops({ H1: 0, H2: 400 });
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubScrollTop(content, 0);
+    load(shell, { markdown: '# 甲\n\n## 乙' });
+
+    scroll.set(900);
+    content.dispatchEvent(new Event('scroll'));
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('乙');
+
+    // 在乙前插入一个 details：展开后正文整体下移（jsdom 无布局，用 offsetTop 桩模拟）
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = '折叠块';
+    details.append(summary);
+    const h2 = root.querySelector('#content h2');
+    h2.before(details);
+    defineTop(h2, 1200);
+
+    // details 的 toggle 不冒泡：#content 必须在捕获阶段收到并刷新标题 top 快照
+    details.dispatchEvent(new Event('toggle'));
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('甲');
+  } finally {
+    restore();
+  }
+});

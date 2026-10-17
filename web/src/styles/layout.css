@@ -5,9 +5,10 @@
 #app {
   position: relative;
   display: grid;
-  /* 单行铺满视口高度：minmax(0,1fr) + 子项 min-height:0 才能让 #toc / #content 各自内部滚动 */
+  /* 两行：第一行是通知条（无通知时高度为 0），第二行铺满剩余视口高度。
+     minmax(0,1fr) + 子项 min-height:0 才能让 #toc / #content 各自内部滚动（修复波 E：通知条不再 fixed 覆盖正文）。 */
   grid-template-columns: var(--toc-width) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
@@ -84,9 +85,10 @@
   color: var(--accent);
 }
 
-/* 左侧大纲侧栏（独立滚动，不抢正文滚动） */
+/* 左侧大纲侧栏（独立滚动，不抢正文滚动）：跨通知行与正文行，通知条只在内容列挤占空间 */
 #toc {
   grid-column: 1;
+  grid-row: 1 / -1;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
@@ -214,6 +216,7 @@ body.jj-resizing * {
 /* 正文滚动列：标题锚点跳转预留工具条高度（scroll-padding-top），子元素统一居中到行宽 */
 #content {
   grid-column: 2;
+  grid-row: 2; /* 通知条占第一行；无通知时第一行高度为 0 */
   position: relative; /* 让标题元素的 offsetTop 相对正文滚动列（TOC 滚动联动采集 top 用） */
   min-width: 0;
   min-height: 0;
@@ -752,24 +755,31 @@ nav.toc-inline li[data-level='6'] {
   font-size: 13px;
 }
 
-/* ── 修复波 B-§5.11：内容顶部通知栈（错误条 + 大文件横幅）与渲染兜底 ──
-   固定定位在工具条下方（z-index 28 低于工具条 30，工具条显示时不会被遮挡），
+/* ── 修复波 B-§5.11 / 波 E：内容顶部通知栈（错误条 + 大文件横幅）与渲染兜底 ──
+   不再用 fixed 覆盖层压住正文与 TOC 顶部：作为 #app 内容列第一行的网格项，
+   有通知时占据高度把正文整体下移（可见时挤占空间而非覆盖），无通知时 [hidden] 让整行高度为 0。
+   TOC 跨两行，不被通知挤占也不被遮挡；顶部留白与工具条同高（工具条是 fixed 悬浮层，不压住通知）。
    不自动消失；右侧「关闭」按钮由 shell 绑定。 */
 #notice-stack {
-  position: fixed;
-  top: calc(var(--toolbar-height) + 8px);
-  left: 50%;
+  grid-column: 2;
+  grid-row: 1;
   z-index: 28;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: min(760px, calc(100vw - 32px));
-  transform: translateX(-50%);
+  min-width: 0;
+  padding: calc(var(--toolbar-height) + 8px) 28px 0;
+  /* 容器不拦截滚动/框选，只有通知条本体（含关闭按钮）可交互 */
   pointer-events: none;
 }
 
 #notice-stack > * {
   pointer-events: auto;
+}
+
+/* [hidden] 必须显式压过上面的 display: flex（UA 样式表优先级不够） */
+#notice-stack[hidden] {
+  display: none;
 }
 
 #error-bar,

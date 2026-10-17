@@ -5,6 +5,23 @@
 /** 模块级活动打印状态：同一时间只有一份（页面只打印当前文档）。 */
 let activePrintState = null;
 
+/** 打印前被临时改为 eager 的图片恢复函数（退出打印模式时执行一次；没有则为 null）。 */
+let activeImageRestore = null;
+
+/** 执行并清空图片 loading 恢复（幂等：无恢复 / 恢复失败都不影响退出流程）。 */
+function restorePrintImages() {
+  const restore = activeImageRestore;
+  activeImageRestore = null;
+  if (typeof restore !== 'function') {
+    return;
+  }
+  try {
+    restore();
+  } catch {
+    // DOM 已销毁/属性只读：恢复失败不影响主题与 class 的清理
+  }
+}
+
 /** 安全的日志输出（无 console 的环境直接忽略）。 */
 function log(message) {
   try {
@@ -70,6 +87,8 @@ export function enterPrintMode({ document: doc } = {}) {
         // 滚动容器已销毁/只读：恢复失败不影响主题与 class 的清理
       }
     }
+    // 修复波 E：退出后把打印前改成 eager 的图片 loading 还原，避免导出一次后所有图片永久 eager。
+    restorePrintImages();
   };
   state.exit = exit;
   activePrintState = state;
@@ -158,14 +177,50 @@ export async function waitForPrintAssets({ document: doc = globalThis.document, 
   const deadline = Date.now() + limit;
 
   const images = typeof doc.querySelectorAll === 'function' ? Array.from(doc.querySelectorAll('img')) : [];
+  // 修复波 E：记录每张被改图片的原值，退出打印模式时恢复（否则一次导出后所有图片永久 eager）。
+  const imageRestores = [];
   for (const image of images) {
     try {
+      if (image.loading === 'eager') {
+        continue; // 原本就是 eager：没有被改，不需要恢复
+      }
+      const record = {
+        image,
+        hadAttribute: typeof image.hasAttribute === 'function' ? image.hasAttribute('loading') : false,
+        attributeValue: typeof image.getAttribute === 'function' ? image.getAttribute('loading') : null,
+        loadingValue: image.loading,
+      };
       // 打印前不让浏览器继续延迟加载：lazy 图片可能根本没开始请求
       image.loading = 'eager';
+      imageRestores.push(record);
     } catch {
       // 只读/不支持 loading 的环境忽略
     }
   }
+  activeImageRestore =
+    imageRestores.length > 0
+      ? () => {
+          for (const record of imageRestores) {
+            const { image } = record;
+            try {
+              // 浏览器里 loading 属性会反射到 IDL：写回属性即可；原本没有属性就移除
+              if (record.hadAttribute && typeof image.setAttribute === 'function') {
+                image.setAttribute('loading', record.attributeValue);
+              } else if (typeof image.removeAttribute === 'function') {
+                image.removeAttribute('loading');
+              }
+              // 不反射属性的环境（如 jsdom）：IDL 值也还原；原本没有值则删除
+              if (record.loadingValue === undefined || record.loadingValue === null) {
+                delete image.loading;
+              } else {
+                image.loading = record.loadingValue;
+              }
+            } catch {
+              // 单张图片恢复失败不影响其它图片
+            }
+          }
+        }
+      : null;
 
   const remaining = () => Math.max(0, deadline - Date.now());
   if (images.length > 0) {

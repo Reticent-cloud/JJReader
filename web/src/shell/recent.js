@@ -259,15 +259,6 @@ export function renderRecent(items, { onOpen, onClose, onPickFile } = {}) {
     return -1;
   }
 
-  /** 当前项（键盘 Enter 优先用实际焦点，其次用维护的下标，最后回退第一项）。 */
-  function currentIndex() {
-    const index = focusedIndex();
-    if (index >= 0) {
-      return index;
-    }
-    return activeIndex >= 0 ? activeIndex : 0;
-  }
-
   panel.addEventListener('keydown', (event) => {
     if (!event) {
       return;
@@ -287,11 +278,15 @@ export function renderRecent(items, { onOpen, onClose, onPickFile } = {}) {
       return;
     }
     if (key === 'Enter') {
-      if (buttons.length === 0) {
+      // 只拦截「最近项」上的 Enter（复评 Important：「打开文件…」按钮也是面板子节点）：
+      // 焦点在按钮时放行默认行为（浏览器把 Enter 转成 click → pickFile），
+      // 否则键盘用户按 Enter 会误开最近第一条而不是文件对话框。
+      const target = event.target;
+      const item = target && typeof target.closest === 'function' ? target.closest('[data-path]') : null;
+      if (!item) {
         return;
       }
       event.preventDefault();
-      const item = buttons[currentIndex()];
       open(item.dataset.path);
       return;
     }

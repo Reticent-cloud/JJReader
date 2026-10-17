@@ -25,6 +25,7 @@ function repoFileSize(relativePath) {
 const readerCss = readRepoFile('web/src/styles/overrides-reader.css');
 const whaleCss = readRepoFile('web/src/styles/overrides-whale.css');
 const printCss = readRepoFile('web/src/styles/print.css');
+const layoutCss = readRepoFile('web/src/styles/layout.css');
 const indexHtml = readRepoFile('src/Host/Resources/index.html');
 
 /** 取出选择器首次出现处的声明块（测试内只用于本文件里的简单单行选择器）。 */
@@ -113,6 +114,29 @@ describe('打印 / PDF 回落（评审 Important 1、Minor 3/4/9）', () => {
     const cellRule = ruleBody(printCss, 'body.print-mode #content .frontmatter th');
     expect(cellRule).toContain('border: 0 !important;');
     expect(cellRule).toContain('background: transparent !important;');
+  });
+
+  it('通知条（#notice-stack）不进入纸面', () => {
+    expect(printCss).toMatch(/body\.print-mode #notice-stack[^{]*\{[^}]*display: none !important;/s);
+  });
+});
+
+describe('通知条不覆盖正文/TOC（修复波 E）', () => {
+  it('#notice-stack 是内容列上方的网格行，不再 fixed 覆盖', () => {
+    const body = ruleBody(layoutCss, '#notice-stack');
+    expect(body).toContain('grid-column: 2;');
+    expect(body).toContain('grid-row: 1;');
+    expect(body).not.toMatch(/position:\s*fixed/);
+    expect(body).toContain('pointer-events: none;');
+  });
+
+  it('#content 位于通知行下方，#toc 跨两行不被挤占', () => {
+    expect(ruleBody(layoutCss, '\n#content {')).toContain('grid-row: 2;');
+    expect(ruleBody(layoutCss, '\n#toc {')).toContain('grid-row: 1 / -1;');
+  });
+
+  it('无通知时整行不占高度（hidden 压过 display: flex）', () => {
+    expect(layoutCss).toMatch(/#notice-stack\[hidden\]\s*\{[^}]*display: none;/s);
   });
 });
 

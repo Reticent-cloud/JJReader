@@ -391,8 +391,8 @@ TDD：先写测试，再写实现。
 
 - **语法矩阵逐条覆盖**：一个用例对应 5.7 表格的一行，断言生成 DOM 的结构与关键属性（不测样式）。
 - **清洗安全用例**：`<script>`、`<iframe>`、`onclick`、`javascript:` 链接、`<style>` 注入均被移除；合法 `<details>`、`<img align>`、`<kbd>` 保留。
-- **快照用例（已 descope）**：原计划用 5 篇真实风格 README（AI 生成风格、徽章、居中头部、折叠块）做整体快照；实际改用结构断言替代（更稳、可读，不随清洗/高亮版本脆弱漂移），详见 `progress.md` 与 `docs/acceptance-traceability.md`。
-- **性能冒烟**：生成 5 万行 Markdown，断言分块模式被触发、首块渲染耗时在 jsdom 下 < 300 ms（宽阈值防抖动）。
+- **快照用例（已 descope）**：原计划用 5 篇真实风格 README（AI 生成风格、徽章、居中头部、折叠块）做整体快照；实际改用结构断言替代（更稳、可读，不随清洗/高亮版本脆弱漂移），descope 记录见 SDD ledger `progress.md` 与 `docs/acceptance-traceability.md`。
+- **性能冒烟**：生成 5 万行 Markdown，断言分块模式被触发、切块/预扫描耗时在 jsdom 下 < 300 ms（宽阈值防抖动）；首屏渲染当前实现以「前 256 KB 一次性 render < 1000 ms」作为冒烟护栏（`tests/web/perf.test.js`），真实首屏预算由 `verify.ps1` 的端到端项（`--verify-render` 的 `elapsedMs` 与 `Process.Start → READY` 墙钟）覆盖，不在单测里冒充预算门禁。
 - **TOC 生成**：标题层级、重复标题去重 id、`[TOC]` 内联。
 - **位置/设置消息**：断言 shell 发出的消息结构与节流行为（fake timers）。
 

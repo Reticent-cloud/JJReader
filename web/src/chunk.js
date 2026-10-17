@@ -43,8 +43,29 @@ const QUOTE_PREFIX_RE = /^ {0,3}>[ \t]?/;
 const LIST_ITEM_PREFIX_RE = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/;
 /** 任务清单前缀：列表项内容开头的 `[ ] ` / `[x] `。 */
 const TASK_PREFIX_RE = /^\[[ xX]\][ \t]+/;
-/** 无前导 `|` 的表格分隔行：`--- | ---`、`:---: | ---:`（至少一个 `|`；有前导 `|` 也命中）。 */
-const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{3,}/;
+/** markdown-it 表格分隔行单元格：`^:?-+:?$`（一个横线也合法，冒号表示对齐）。 */
+const TABLE_SEPARATOR_CELL_RE = /^:?-+:?$/;
+
+/**
+ * 是否 GFM 表格分隔行（与 markdown-it table rule 同口径）：按 `|` 拆单元格后逐格校验 `^:?-+:?$`，
+ * 允许首尾可选 `|`；行内至少一个 `|`（单独一行 `---` 是 setext 下划线/分隔线，不是表格分隔行）。
+ * 修复波 E：原实现要求 ≥3 个横线，会把 `- | -` / `:-- | --:` 这类合法表格当普通段落切碎。
+ */
+function isTableSeparatorLine(line) {
+  const text = String(line ?? '').trim();
+  if (text === '' || !text.includes('|')) {
+    return false;
+  }
+  let body = text;
+  if (body.startsWith('|')) {
+    body = body.slice(1);
+  }
+  if (body.endsWith('|')) {
+    body = body.slice(0, -1);
+  }
+  const cells = body.split('|');
+  return cells.length > 0 && cells.every((cell) => TABLE_SEPARATOR_CELL_RE.test(cell.trim()));
+}
 /** 块级 HTML 开标签：从该行起直到空行整块不切（与 CommonMark HTML block 的常见形态一致）。 */
 const HTML_BLOCK_OPEN_RE =
   /^ {0,3}<(?:address|article|aside|audio|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|section|source|style|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|video)(?=[\s/>]|$)/i;
@@ -213,7 +234,7 @@ function analyzeLines(lines, skipLines = 0) {
     if (!inFence) {
       const trimmed = structural.trim();
       rowPipe[i] = trimmed !== '' && trimmed.includes('|') ? 1 : 0;
-      separator[i] = rowPipe[i] === 1 && TABLE_SEPARATOR_RE.test(structural) ? 1 : 0;
+      separator[i] = rowPipe[i] === 1 && isTableSeparatorLine(structural) ? 1 : 0;
     }
   }
 

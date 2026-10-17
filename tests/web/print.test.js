@@ -450,3 +450,27 @@ it('图片在等待窗口内完成时立即发 readyToPrint（不必等满 2s）
     vi.useRealTimers();
   }
 });
+
+it('退出打印模式恢复被临时改为 eager 的图片 loading（lazy 恢复原值 / 无属性移除）', async () => {
+  document.body.innerHTML = '<main id="content"></main>';
+  const content = document.getElementById('content');
+  const lazy = document.createElement('img');
+  lazy.setAttribute('loading', 'lazy');
+  Object.defineProperty(lazy, 'complete', { configurable: true, get: () => true });
+  const plain = document.createElement('img');
+  Object.defineProperty(plain, 'complete', { configurable: true, get: () => true });
+  content.append(lazy, plain);
+  JJ.__post = () => {};
+
+  await JJ.enterPrintModeForPdf();
+  // 打印前统一改 eager（lazy 图片可能根本没开始请求）
+  expect(lazy.loading).toBe('eager');
+  expect(plain.loading).toBe('eager');
+
+  JJ.exitPrintModeForPdf();
+  // 退出后恢复原状：lazy 属性回到 lazy；原本没有 loading 属性的移除属性
+  expect(lazy.getAttribute('loading')).toBe('lazy');
+  expect(lazy.loading).not.toBe('eager');
+  expect(plain.hasAttribute('loading')).toBe(false);
+  expect(plain.loading).not.toBe('eager');
+});

@@ -22,7 +22,7 @@ body.print-mode #app {
   overflow: visible;
 }
 
-/* 隐藏所有界面 chrome（工具条/侧栏/进度条/回到顶部/toast/浮层/分隔条/代码复制按钮） */
+/* 隐藏所有界面 chrome（工具条/侧栏/进度条/回到顶部/toast/浮层/通知条/分隔条/代码复制按钮） */
 body.print-mode #toolbar,
 body.print-mode #toc,
 body.print-mode #toc-nav,
@@ -30,6 +30,7 @@ body.print-mode #file-tree,
 body.print-mode #progress,
 body.print-mode #back-to-top,
 body.print-mode #toast,
+body.print-mode #notice-stack,
 body.print-mode #recent-menu,
 body.print-mode #aa-panel,
 body.print-mode .toc-resizer,

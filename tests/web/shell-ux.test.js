@@ -247,7 +247,9 @@ it('最近文件面板 ↑↓ 移动焦点、Enter/点击打开、Esc 触发关�
   expect(document.activeElement).toBe(buttons[0]);
   el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
   expect(document.activeElement).toBe(buttons[1]);
-  el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  // Enter 必须在真实焦点项上触发（浏览器里 keydown 的 target 就是被聚焦的按钮）：
+  // 面板只在 target 属于 [data-path] 时拦截 Enter，避免误吃「打开文件…」按钮的默认激活。
+  buttons[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   expect(opened).toEqual(['C:\\b.md']);
 
   el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
@@ -259,16 +261,60 @@ it('最近文件面板 ↑↓ 移动焦点、Enter/点击打开、Esc 触发关�
   expect(closed).toHaveLength(1);
 });
 
-it('最近文件键盘事件直接派发在面板上（不冒泡）也能处理', () => {
+it('最近文件键盘事件直接派发在面板上（不冒泡）也能处理，Enter 只认焦点项', () => {
   // 计划里的原始用例写法：new KeyboardEvent('keydown', { key }) 直接派发到容器
   const opened = [];
   const el = JJ.renderRecent([recentItem('C:\\a.md', 'a.md'), recentItem('C:\\b.md', 'b.md')], {
     onOpen: (path) => opened.push(path),
   });
+  document.body.append(el); // focus() 只有在文档内才会更新 activeElement
   expect(el.querySelectorAll('[data-path]')).toHaveLength(2);
   el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
-  el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+  expect(document.activeElement).toBe(el.querySelector('[data-path]'));
+  // Enter 走真实焦点项（bubbles:true 才能从按钮冒泡到面板监听）
+  document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   expect(opened).toEqual(['C:\\a.md']);
+});
+
+it('「打开文件…」按钮上的 Enter 不被面板拦截，最近项上的 Enter 才打开', () => {
+  const opened = [];
+  const picked = [];
+  const el = JJ.renderRecent([recentItem('C:\\a.md', 'a.md')], {
+    onOpen: (path) => opened.push(path),
+    onPickFile: () => picked.push(1),
+  });
+  document.body.append(el);
+  const pick = el.querySelector('.recent-open');
+  pick.focus();
+
+  const onButton = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  pick.dispatchEvent(onButton);
+  // 未 preventDefault：浏览器随后把 Enter 转成按钮 click（这里是放行默认行为的判据）
+  expect(onButton.defaultPrevented).toBe(false);
+  expect(opened).toEqual([]);
+  expect(picked).toEqual([]);
+  // 模拟浏览器默认激活：点击按钮 → 交给 onPickFile（不是打开最近第一条）
+  pick.click();
+  expect(picked).toEqual([1]);
+  expect(opened).toEqual([]);
+
+  const item = el.querySelector('[data-path]');
+  item.focus();
+  item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  expect(opened).toEqual(['C:\\a.md']);
+});
+
+it('无最近项时面板不拦截 Enter（「打开文件…」按钮仍可正常激活）', () => {
+  const picked = [];
+  const el = JJ.renderRecent([], { onPickFile: () => picked.push(1) });
+  document.body.append(el);
+  const pick = el.querySelector('.recent-open');
+  pick.focus();
+  const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  pick.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(false);
+  pick.click();
+  expect(picked).toEqual([1]);
 });
 
 // ── 位置追踪 ──
@@ -1016,6 +1062,46 @@ it('Aa 面板滑杆落盘防抖 300ms：连续拖动只发一次 patch，关闭�
   const flushed = posted.filter((message) => message.type === 'saveSettings');
   expect(flushed).toHaveLength(2);
   expect(flushed.at(-1).payload.patch).toEqual({ fontSize: 20 });
+  vi.useRealTimers();
+});
+
+it('pagehide / 页面隐藏时立即 flush 防抖中的设置 patch（与位置追踪同口径）', () => {
+  vi.useFakeTimers();
+  const { root, shell, posted } = mount();
+  load(shell);
+  root.querySelector('#aa-toggle').click();
+  const slider = root.querySelector('#aa-panel [data-setting="fontSize"]');
+  const savePatches = () =>
+    posted.filter((message) => message.type === 'saveSettings').map((message) => message.payload.patch);
+
+  // pagehide：关窗前把 pending 的滑杆 patch 落盘（不等 300ms）
+  slider.value = '21';
+  slider.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(savePatches()).toEqual([]);
+  window.dispatchEvent(new Event('pagehide'));
+  expect(savePatches()).toEqual([{ fontSize: 21 }]);
+
+  // visibilitychange(hidden)：切到后台同样要落盘
+  slider.value = '22';
+  slider.dispatchEvent(new Event('input', { bubbles: true }));
+  const restoreHidden = stubVisibility('hidden');
+  try {
+    document.dispatchEvent(new Event('visibilitychange'));
+  } finally {
+    restoreHidden();
+  }
+  expect(savePatches().at(-1)).toEqual({ fontSize: 22 });
+
+  // visible：不 flush（避免无意义落盘）
+  slider.value = '23';
+  slider.dispatchEvent(new Event('input', { bubbles: true }));
+  const restoreVisible = stubVisibility('visible');
+  try {
+    document.dispatchEvent(new Event('visibilitychange'));
+  } finally {
+    restoreVisible();
+  }
+  expect(savePatches()).toHaveLength(2);
   vi.useRealTimers();
 });
 

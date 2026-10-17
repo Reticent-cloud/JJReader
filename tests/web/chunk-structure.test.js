@@ -94,4 +94,22 @@ describe('分块结构保护（修复波 B）', () => {
     expect(blocks.some((block) => block.includes('a | b\n--- | ---\n1 | 2'))).toBe(true);
     expect(blocks.some((block) => block.includes('c | d\n--- | ---\n3 | 4'))).toBe(true);
   });
+
+  it('markdown-it 口径的单横线分隔行 `- | -` 同样保护 100KB 表格不被切', () => {
+    // markdown-it 的表格分隔行单元格是 `^:?-+:?$`：一个横线也合法（对齐冒号可有可无）。
+    const table = '列一 | 列二\n' + '- | -\n' + '甲 | 乙\n'.repeat(9000);
+    const { blocks } = JJ.splitBlocks(table, { maxBlockBytes: 512 });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].startsWith('列一 | 列二')).toBe(true);
+    expect(blocks.join('')).toBe(table);
+  });
+
+  it('带对齐单横线分隔行（`:-- | --:`）也整块保留', () => {
+    const table = '左 | 右\n' + ':-- | --:\n' + '甲 | 乙\n'.repeat(9000);
+    const { blocks } = JJ.splitBlocks(table, { maxBlockBytes: 512 });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks.join('')).toBe(table);
+  });
 });
