@@ -126,10 +126,14 @@
 | 宿主→前端 | `load` | `{path, key, baseUrl, markdown, settings, position}`；`key` = `sha1(路径|大小|修改时间)`，前端用它回传 `savePosition` |
 | 宿主→前端 | `toast` | `{text, level}` |
 | 宿主→前端 | `assocState` | `{registered, isDefault}` |
+| 宿主→前端 | `dirListing` | `{path, entries:[{name, isDir, relPath}]}`（文件树子级） |
 | 前端→宿主 | `openFile` | `{relPath}`（相对当前文档目录；TOC 内跨文件跳转） |
+| 前端→宿主 | `pickFile` | `{}`（`Ctrl+O` 打开文件对话框） |
 | 前端→宿主 | `pickFolder` | `{}` |
+| 前端→宿主 | `listDir` | `{path}`（请求文件树子级） |
 | 前端→宿主 | `savePosition` | `{key, ratio}`（`key` 由 `load` 下发，宿主据此定位 positions 记录） |
 | 前端→宿主 | `saveSettings` | `{patch}`（部分更新） |
+| 前端→宿主 | `readyToPrint` | `{}`（已进入打印模式，可调用 `PrintToPdfAsync`） |
 | 前端→宿主 | `exportPdf` | `{suggestedName}` |
 | 前端→宿主 | `showInFolder` | `{path}` |
 | 前端→宿主 | `renderDone` | `{path, elapsedMs, tocCount, bytes}`（性能日志与验收用） |
@@ -142,7 +146,7 @@
 3. **宿主编译不依赖 Node**：前端产物 `md-engine.js`（含 CSS 字符串）入库到 `src/Host/Resources/`，作为 `EmbeddedResource` 打进 exe。只有修改前端才需要 `npm ci && node build.mjs`。
 4. **编码探测顺序**：UTF-8 BOM → 严格 UTF-8 校验 → GB18030 → 兜底 UTF-8（有替换字符则提示"编码可能有问题"）。检测到 NUL 字节视为二进制文件并拒绝渲染。
 5. **单实例**：`Mutex("Global\\JingjingReader")`；第二实例把命令行路径通过命名管道发给第一实例后退出，第一实例在原窗口打开新文件（不新开窗口）。
-6. **安全模型**：所有 Markdown 内嵌 HTML 经 DOMPurify 清洗后才进入 DOM；WebView2 关闭开发者工具与外部导航（`NavigationStarting` 拦截非 `md.local`/`http(s)` 图片之外的导航）；开启 `IsWebMessageEnabled`，其余保持默认安全设置。
+6. **安全模型**：所有 Markdown 内嵌 HTML 经 DOMPurify 清洗后才进入 DOM；WebView2 关闭开发者工具与外部导航（`NavigationStarting` 拦截非 `md.local`/`http(s)` 图片之外的导航）；`AreBrowserAcceleratorKeysEnabled=false`（快捷键由前端 keydown 统一处理，避免浏览器自身快捷键抢键）；开启 `IsWebMessageEnabled`，其余保持默认安全设置。
 
 ### 4.6 仓库结构
 
@@ -283,6 +287,14 @@ MDReader/
 | WebView2 运行时缺失 | 原生对话框说明 + 打开官方下载页按钮 |
 | 文件被外部修改（重新打开或 F5） | 按新内容渲染；若位置键变化则回到顶部并提示 |
 
+### 5.12 文件夹浏览
+
+- `Ctrl+Shift+O` 或工具条「打开文件夹」选择目录后，该目录成为**浏览根**；侧栏切换为**文件树**模式（可一键切回大纲模式）。
+- 文件树只列子目录与 `.md/.markdown/.mdown/.txt` 文件；目录在前、按名称排序，隐藏项与不可读项跳过。
+- 子目录**惰性加载**：首次展开时请求 `listDir`，收到 `dirListing` 后填充；已加载节点不重复请求。
+- 点击文件在当前窗口打开并在树中高亮；文件树内路径访问一律限制在浏览根内（越界拒绝）。
+- 关闭目录浏览或打开新的单文件时，侧栏恢复大纲模式。
+
 ---
 
 ## 6. 数据流
@@ -365,12 +377,17 @@ TDD：先写测试，再写实现。
 
 ### 9.3 集成验收（`scripts/verify.ps1`）
 
+宿主提供以下验收用 CLI（`verify.ps1` 调用，正常使用不受影响）：
+- `JingjingReader.exe --verify-render <file>`：隐藏窗口渲染后向 stdout 输出一行 JSON（`{ready, path, elapsedMs, tocCount}`）。
+- `JingjingReader.exe --verify-pdf <file> <out.pdf>`：导出 PDF 后退出，退出码 0 表示成功。
+
 1. 构建成功（前端 + 宿主）
 2. 全部单测通过
-3. 启动 `JingjingReader.exe samples/full-syntax.md`，从 `debug.log` 读取 `renderDone.elapsedMs`，断言 ≤ 1000 ms
-4. 打开 `samples/huge-50k-lines.md`，断言首屏 ≤ 1500 ms 且内存峰值 ≤ 150 MB（进程树采样）
-5. 导出 PDF 到临时目录，断言文件存在且页数 > 0
-6. 输出验收报告 `out/verify-report.md`
+3. `--verify-render samples/full-syntax.md`，断言 `elapsedMs` ≤ 1000 ms
+4. `--verify-render samples/huge-50k-lines.md`，断言首屏 ≤ 1500 ms 且内存峰值 ≤ 150 MB（进程树采样）
+5. `--verify-pdf` 导出到临时目录，断言文件存在且体积 > 5 KB
+6. 并发启动两个实例，断言宿主进程数 = 1
+7. 输出验收报告 `out/verify-report.md`
 
 ### 9.4 手动验收
 
