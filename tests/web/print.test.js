@@ -49,6 +49,18 @@ function press(key, modifiers = {}) {
   return event;
 }
 
+/** jsdom 默认 scrollTop 恒为 0：桩成可读写变量，模拟打印模式切换前后的正文滚动位置。 */
+function stubScrollTop(element, initial = 0) {
+  let value = initial;
+  Object.defineProperty(element, 'scrollTop', {
+    configurable: true,
+    get: () => value,
+    set: (next) => {
+      value = next;
+    },
+  });
+}
+
 /** IntersectionObserver 桩：有观察器时首屏只渲染预算内块、其余留哨兵（jsdom 缺该 API 时会兜底 renderAll）。 */
 function installObserverStub() {
   const previous = globalThis.IntersectionObserver;
@@ -178,6 +190,20 @@ it('退出打印模式恢复原主题（原深色时）', () => {
   expect(document.body.classList.contains('print-mode')).toBe(false);
 });
 
+it('退出打印模式后恢复 #content 的 scrollTop（print.css 的 overflow:visible 会丢滚动位置）', () => {
+  document.body.innerHTML = '<main id="content">x</main>';
+  const content = document.getElementById('content');
+  stubScrollTop(content, 640);
+
+  const exit = JJ.enterPrintMode({ document });
+  expect(content.scrollTop).toBe(640);
+
+  // 打印模式把 #content 改成 overflow:visible 后，滚动容器的位置会被清掉
+  content.scrollTop = 0;
+  exit();
+  expect(content.scrollTop).toBe(640);
+});
+
 it('消息通道缺失时不抛，只打日志', () => {
   document.body.innerHTML = '<main id="content">x</main>';
   document.documentElement.dataset.theme = 'dark';
@@ -246,6 +272,25 @@ it('无当前文档时 Ctrl+E 不发送 exportPdf，并提示先打开文档', (
   expect(toast.textContent).toContain('请先打开文档');
 });
 
+it('输入框内 Ctrl+E 不触发导出（快捷键交还给输入控件）', () => {
+  const { shell, posted } = mount();
+  load(shell, { path: 'D:\\资料\\a.md' });
+  const input = document.createElement('input');
+  document.body.append(input);
+  input.focus();
+
+  const event = new KeyboardEvent('keydown', {
+    key: 'e',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(event);
+
+  expect(event.defaultPrevented).toBe(false);
+  expect(posted.some((item) => item.type === 'exportPdf')).toBe(false);
+});
+
 // ── 分块大文档导出全文（Task 15 修复：原来只导出已渲染块） ──
 
 it('分块未渲染完成时：先同步渲染全文，再回报 readyToPrint', () => {
@@ -262,28 +307,38 @@ it('分块未渲染完成时：先同步渲染全文，再回报 readyToPrint', 
     expect(content.querySelector('.chunk-sentinel')).toBeTruthy();
 
     const order = [];
-    const originalEnsure = JJ.__ensureAllRendered;
-    expect(typeof originalEnsure).toBe('function');
-    JJ.__ensureAllRendered = () => {
-      order.push('ensure');
-      return originalEnsure();
-    };
-    const originalPost = JJ.__post;
-    JJ.__post = (type, payload) => {
-      if (type === 'readyToPrint') {
-        order.push('readyToPrint');
+    // enterPrintMode 是 print.js 内部调用，无法从 JJ 外层包裹；改为在 body.classList.add('print-mode') 时记一拍
+    const bodyClassList = document.body.classList;
+    const originalAdd = bodyClassList.add;
+    bodyClassList.add = (...tokens) => {
+      if (tokens.includes('print-mode')) {
+        order.push('enter');
       }
-      return originalPost(type, payload);
+      return originalAdd.apply(bodyClassList, tokens);
     };
+    const originalEnsure = JJ.__ensureAllRendered;
+    const originalPost = JJ.__post;
     try {
+      expect(typeof originalEnsure).toBe('function');
+      JJ.__ensureAllRendered = () => {
+        order.push('ensure');
+        return originalEnsure();
+      };
+      JJ.__post = (type, payload) => {
+        if (type === 'readyToPrint') {
+          order.push('readyToPrint');
+        }
+        return originalPost(type, payload);
+      };
       JJ.enterPrintModeForPdf();
     } finally {
+      bodyClassList.add = originalAdd;
       JJ.__ensureAllRendered = originalEnsure;
       JJ.__post = originalPost;
     }
 
-    // 调用顺序：先 renderAll，后 readyToPrint（宿主收到 readyToPrint 才打印）
-    expect(order).toEqual(['ensure', 'readyToPrint']);
+    // 调用顺序：先同步渲染全文，再进入打印模式，最后 readyToPrint（宿主收到 readyToPrint 才打印）
+    expect(order).toEqual(['ensure', 'enter', 'readyToPrint']);
     // 全文都已渲染：哨兵移除、最后一块的正文进入 DOM
     expect(content.querySelector('.chunk-sentinel')).toBeNull();
     expect(content.textContent).toContain('第四段');

@@ -39,25 +39,36 @@ export function enterPrintMode({ document: doc } = {}) {
   const root = targetDoc.documentElement ?? null;
   const previousTheme = root && typeof root.getAttribute === 'function' ? root.getAttribute('data-theme') : null;
 
+  // print.css 把 #content 改为 overflow:visible 后滚动位置会丢：进入前记下，退出时恢复（评审加固 4）。
+  const content = typeof targetDoc.getElementById === 'function' ? targetDoc.getElementById('content') : null;
+  const previousScrollTop = content ? Number(content.scrollTop) || 0 : 0;
+
   targetDoc.body.classList.add('print-mode');
   if (root) {
     root.dataset.theme = 'light';
   }
 
-  const state = { doc: targetDoc, root, previousTheme, exit: null };
+  const state = { doc: targetDoc, root, previousTheme, content, previousScrollTop, exit: null };
   const exit = () => {
     if (activePrintState !== state) {
       return;
     }
     activePrintState = null;
     state.doc.body.classList.remove('print-mode');
-    if (!state.root) {
-      return;
+    if (state.root) {
+      if (state.previousTheme === null) {
+        state.root.removeAttribute('data-theme');
+      } else {
+        state.root.setAttribute('data-theme', state.previousTheme);
+      }
     }
-    if (state.previousTheme === null) {
-      state.root.removeAttribute('data-theme');
-    } else {
-      state.root.setAttribute('data-theme', state.previousTheme);
+    if (state.content) {
+      try {
+        // class 已移除（overflow 恢复成滚动容器）后再写回导出前的滚动位置
+        state.content.scrollTop = state.previousScrollTop;
+      } catch {
+        // 滚动容器已销毁/只读：恢复失败不影响主题与 class 的清理
+      }
     }
   };
   state.exit = exit;

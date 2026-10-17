@@ -1,10 +1,12 @@
+using System.Diagnostics;
 using Xunit;
 
 namespace JingjingReader.Tests;
 
 /// <summary>
-/// PdfExport（Task 15）：A4/12mm 默认值、英寸换算的纯函数，以及 readyToPrint 通知在无导出时的安全性。
-/// CoreWebView2 只能由 WebView2 运行时创建，单测不构造它——导出主流程由 <c>--verify-pdf</c> 集成实测覆盖。
+/// PdfExport（Task 15）：A4/12mm 默认值、英寸换算的纯函数、readyToPrint 通知安全性，
+/// 以及本次评审修复的路径校验/导出状态复位与 PrintToPdf 超时。
+/// CoreWebView2 只能由 WebView2 运行时创建，单测不构造它——用 internal 的 IPrintHost 假宿主覆盖导出流程。
 /// </summary>
 public class PdfExportTests
 {
@@ -54,10 +56,84 @@ public class PdfExportTests
     }
 
     [Fact]
-    public void ReadyTimeout_covers_synchronous_render_all_for_large_documents()
+    public async Task Invalid_output_path_returns_false_without_leaving_export_state()
     {
-        // >512 KB 的分块文档进入打印模式前要先同步 renderAll 全文，5 s 不够；放宽到 10 s（--verify-pdf 外层 60 s 不变）。
+        foreach (var invalidPath in new[] { "", "   ", "bad\0path" })
+        {
+            var host = new FakePrintHost();
+
+            // 非法路径必须在置 _exporting / 碰 WebView 之前被拒：返回 false，不抛异常。
+            Assert.False(await PdfExport.ExportAsync(host, invalidPath), $"非法路径应返回 false：{invalidPath}");
+            Assert.Empty(host.Scripts);
+
+            // 没有残留 _exporting=true/_readyToPrint：紧接着的正常路径仍能走完整个导出流程。
+            Assert.True(await PdfExport.ExportAsync(host, "after-invalid.pdf"));
+            Assert.Equal(2, host.Scripts.Count);
+            Assert.Contains("enterPrintModeForPdf", host.Scripts[0]);
+            Assert.Contains("exitPrintModeForPdf", host.Scripts[1]);
+            Assert.EndsWith("after-invalid.pdf", host.PrintedPath);
+        }
+    }
+
+    [Fact]
+    public async Task Print_timeout_returns_false_and_restores_state_for_next_export()
+    {
+        var host = new FakePrintHost { PrintNeverCompletes = true };
+        var elapsed = Stopwatch.StartNew();
+
+        Assert.False(await PdfExport.ExportAsync(host, "timeout.pdf", readyTimeoutMs: 1_000, printTimeoutMs: 100));
+
+        elapsed.Stop();
+        Assert.True(
+            elapsed.Elapsed < TimeSpan.FromSeconds(5),
+            $"PrintToPdf 超时应在约 100 ms 返回，实际 {elapsed.ElapsedMilliseconds} ms");
+
+        // 超时也必须走 finally：退出打印模式，_exporting/_readyToPrint 复位后下一次导出能正常开始。
+        Assert.Equal(2, host.Scripts.Count);
+        Assert.Contains("exitPrintModeForPdf", host.Scripts[1]);
+
+        host.PrintNeverCompletes = false;
+        Assert.True(await PdfExport.ExportAsync(host, "after-timeout.pdf"));
+        Assert.Equal(4, host.Scripts.Count);
+    }
+
+    [Fact]
+    public void Timeouts_pin_the_waiting_and_printing_budgets()
+    {
+        // readyToPrint 等待 10 s：前端进入打印模式前要同步 renderAll 大文档（>512 KB）未渲染块。
         Assert.Equal(10_000, PdfExport.ReadyTimeoutMilliseconds);
-        Assert.True(PdfExport.ReadyTimeoutMilliseconds > 5_000);
+        // PrintToPdfAsync 自身 60 s：UI 侧没有外层保护，必须由 ExportAsync 兜住永不返回的打印任务。
+        Assert.Equal(60_000, PdfExport.PrintTimeoutMilliseconds);
+        Assert.True(PdfExport.PrintTimeoutMilliseconds > PdfExport.ReadyTimeoutMilliseconds);
+    }
+
+    /// <summary>
+    /// 假打印宿主：执行“进入打印模式”脚本时同步回报 readyToPrint（真实流程由 MainWindow 消息分派触发），
+    /// 打印按开关立即成功或永不完成，并记录调用顺序供断言。
+    /// </summary>
+    private sealed class FakePrintHost : PdfExport.IPrintHost
+    {
+        public List<string> Scripts { get; } = new();
+
+        public bool PrintNeverCompletes { get; set; }
+
+        public string? PrintedPath { get; private set; }
+
+        public Task ExecuteScriptAsync(string script)
+        {
+            Scripts.Add(script);
+            if (script.Contains("enterPrintModeForPdf", StringComparison.Ordinal))
+            {
+                PdfExport.NotifyReadyToPrint();
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> PrintToPdfAsync(string fullPath)
+        {
+            PrintedPath = fullPath;
+            return PrintNeverCompletes ? new TaskCompletionSource<bool>().Task : Task.FromResult(true);
+        }
     }
 }

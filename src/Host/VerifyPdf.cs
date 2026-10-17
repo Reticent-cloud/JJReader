@@ -15,8 +15,13 @@ public static class VerifyPdf
     /// <summary>等待 renderDone 的上限（与 --verify-render 同口径：15 s）。</summary>
     public const int DefaultTimeoutMilliseconds = 15_000;
 
-    /// <summary>PrintToPdf 的总上限：正常单页文档 < 1 s，留足大文档/慢磁盘余量。</summary>
-    public const int ExportTimeoutMilliseconds = 60_000;
+    /// <summary>
+    /// PrintToPdf 的总上限：正常单页文档 &lt; 1 s，留足大文档/慢磁盘余量。
+    /// 比 <see cref="PdfExport.ReadyTimeoutMilliseconds"/> + <see cref="PdfExport.PrintTimeoutMilliseconds"/>
+    /// 多 5 s 收尾时间：内层超时先返回 false（退出打印模式），本层只兜 WebView 整体卡死，
+    /// 避免外层先退出把仍在写的半成品留在输出路径。
+    /// </summary>
+    public const int ExportTimeoutMilliseconds = 75_000;
 
     /// <summary>PDF 最小体积门禁（brief：&gt; 5 KB）。</summary>
     public const long MinimumPdfBytes = 5 * 1024;
@@ -47,6 +52,10 @@ public static class VerifyPdf
     {
         var normalizedInput = FileHost.NormalizePath(inputPath);
         var fullOutput = Path.GetFullPath(outputPath);
+
+        // 导出前先删旧输出：自检失败时不能留下上一次的旧 PDF 冒充本次结果。
+        TryDeleteOutput(fullOutput);
+
         var completion = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var window = new MainWindow();
@@ -91,6 +100,7 @@ public static class VerifyPdf
         {
             DebugLog.Write($"verify-pdf 导出超时 output={fullOutput} timeoutMs={ExportTimeoutMilliseconds}");
             ConsoleHelper.WriteLine($"PDF-FAILED 导出超时（{ExportTimeoutMilliseconds} ms）：{fullOutput}");
+            TryDeleteOutput(fullOutput);
             Application.Current?.Shutdown(2);
             return;
         }
@@ -99,6 +109,7 @@ public static class VerifyPdf
         {
             DebugLog.Write($"verify-pdf 导出失败 output={fullOutput}");
             ConsoleHelper.WriteLine($"PDF-FAILED 导出失败：{fullOutput}");
+            TryDeleteOutput(fullOutput);
             Application.Current?.Shutdown(2);
             return;
         }
@@ -109,6 +120,7 @@ public static class VerifyPdf
             var size = file.Exists ? file.Length : 0;
             DebugLog.Write($"verify-pdf PDF 缺失或过小 output={fullOutput} bytes={size}");
             ConsoleHelper.WriteLine($"PDF-FAILED PDF 文件缺失或过小：{fullOutput} bytes={size}");
+            TryDeleteOutput(fullOutput);
             Application.Current?.Shutdown(2);
             return;
         }
@@ -125,5 +137,23 @@ public static class VerifyPdf
         DebugLog.Write($"verify-pdf PDF-READY output={fullOutput} bytes={file.Length}");
         ConsoleHelper.WriteLine("PDF-READY " + JsonSerializer.Serialize(result, ReadyJsonOptions));
         Application.Current?.Shutdown(0);
+    }
+
+    /// <summary>
+    /// 删除旧输出/导出失败留下的半成品：文件不存在时 <see cref="File.Delete"/> 是空操作；
+    /// 被占用/无权限时只记日志并返回 false（清理失败不能掩盖导出失败，也不能抛）。
+    /// </summary>
+    internal static bool TryDeleteOutput(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"verify-pdf 清理输出失败 path={path}：{exception.Message}");
+            return false;
+        }
     }
 }
