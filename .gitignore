@@ -11,3 +11,6 @@ web/node_modules/
 *.pdf
 .DS_Store
 Thumbs.db
+
+# worktrees
+.worktrees/
