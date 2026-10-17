@@ -599,3 +599,144 @@ nav.toc-inline li[data-level='6'] {
 #toast .toast-action:hover {
   background: rgba(255, 255, 255, 0.16);
 }
+
+/* ── Task 14：文件夹浏览（文件树侧栏，复用 --toc-width 与 #toc 的独立滚动） ── */
+
+/* 侧栏两种内容：大纲（#toc-nav）或文件树（#file-tree）。树模式隐藏大纲，反之隐藏树。
+   两者都是 aside 的直接子元素：headings 的 renderToc 只替换 #toc-nav，不会冲掉文件树。 */
+#toc-nav {
+  min-width: 0;
+}
+
+#toc-nav[hidden] {
+  display: none;
+}
+
+#toc[data-sidebar='tree'] #toc-nav {
+  display: none;
+}
+
+#toc[data-sidebar='toc'] #file-tree {
+  display: none;
+}
+
+#file-tree[hidden] {
+  display: none;
+}
+
+#file-tree {
+  min-width: 0;
+}
+
+/* 工具条：文件树根目录名与「大纲」返回按钮（未打开文件夹/未在树模式时由 hidden 隐藏） */
+#toolbar .tool.browse-root {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#toolbar .tool.browse-root.active {
+  color: var(--accent);
+}
+
+#toolbar .tool[hidden] {
+  display: none;
+}
+
+/* 树节点：三角按钮 + 名称按钮；子列表换行到下一行并缩进 */
+.file-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.file-tree li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 1px 0;
+}
+
+.file-tree .tree-toggle,
+.file-tree .tree-toggle-spacer {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 24px;
+}
+
+.file-tree .tree-toggle {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 24px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.file-tree .tree-toggle:hover,
+.file-tree .tree-toggle:focus-visible {
+  background: var(--bg-muted);
+  color: var(--fg);
+  outline: none;
+}
+
+.file-tree .tree-name {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--toc-fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.file-tree .tree-name:hover,
+.file-tree .tree-name:focus-visible {
+  background: var(--bg-muted);
+  color: var(--fg);
+  outline: none;
+}
+
+.file-tree li.active > .tree-name {
+  background: var(--toc-active-bg);
+  color: var(--toc-active-fg);
+  font-weight: 600;
+}
+
+.file-tree ul.tree-children {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 14px;
+  list-style: none;
+}
+
+.file-tree ul.tree-children[hidden] {
+  display: none;
+}
+
+#file-tree p.tree-empty,
+.file-tree li.tree-empty {
+  display: block;
+  margin: 4px 0;
+  padding: 4px 8px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}

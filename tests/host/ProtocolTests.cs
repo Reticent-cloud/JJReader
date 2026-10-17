@@ -96,6 +96,51 @@ public class ProtocolTests
     }
 
     [Fact]
+    public void DirListing_serializes_entries()
+    {
+        var json = Protocol.DirListing(@"C:\notes", new[] { ("a.md", false, "a.md"), ("sub", true, "sub") });
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("dirListing", doc.RootElement.GetProperty("type").GetString());
+
+        var payload = doc.RootElement.GetProperty("payload");
+        Assert.Equal(@"C:\notes", payload.GetProperty("root").GetString());
+        Assert.Equal(string.Empty, payload.GetProperty("path").GetString());
+
+        var entries = payload.GetProperty("entries");
+        Assert.Equal(2, entries.GetArrayLength());
+        Assert.Equal("a.md", entries[0].GetProperty("name").GetString());
+        Assert.False(entries[0].GetProperty("isDir").GetBoolean());
+        Assert.Equal("a.md", entries[0].GetProperty("relPath").GetString());
+        Assert.Equal("sub", entries[1].GetProperty("name").GetString());
+        Assert.True(entries[1].GetProperty("isDir").GetBoolean());
+        Assert.Equal("sub", entries[1].GetProperty("relPath").GetString());
+    }
+
+    [Fact]
+    public void DirListing_carries_browse_root_and_relative_path()
+    {
+        var json = Protocol.DirListing(@"C:\笔记 目录", "子目录", new[] { ("a.md", false, "子目录/a.md") });
+
+        using var doc = JsonDocument.Parse(json);
+        var payload = doc.RootElement.GetProperty("payload");
+        Assert.Equal(@"C:\笔记 目录", payload.GetProperty("root").GetString());
+        Assert.Equal("子目录", payload.GetProperty("path").GetString());
+        Assert.Equal("子目录/a.md", payload.GetProperty("entries")[0].GetProperty("relPath").GetString());
+    }
+
+    [Fact]
+    public void DirListing_rejects_missing_root_and_null_entries()
+    {
+        var empty = Array.Empty<(string, bool, string)>();
+
+        Assert.Throws<ArgumentException>(() => Protocol.DirListing(" ", empty));
+        Assert.Throws<ArgumentException>(() => Protocol.DirListing(@"C:\notes", " ", empty));
+        Assert.Throws<ArgumentNullException>(() => Protocol.DirListing(@"C:\notes", null!, empty));
+        Assert.Throws<ArgumentNullException>(() => Protocol.DirListing(@"C:\notes", string.Empty, null!));
+    }
+
+    [Fact]
     public void Toast_and_assocState_have_fixed_payload_shape()
     {
         using var toast = JsonDocument.Parse(Protocol.Toast("提示"));

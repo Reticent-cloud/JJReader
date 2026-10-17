@@ -31,7 +31,7 @@ public partial class MainWindow : Window
     private string? _pendingDocumentPath;
     private DocumentRead? _currentDocument;
 
-    /// <summary>pickFolder 选中的文件夹：文件树（Task 14）接入前的落脚点，也用作下次对话框的初始目录。</summary>
+    /// <summary>pickFolder 选中的文件夹：文件树浏览根（Task 14），同时用作下次对话框的初始目录。</summary>
     private string? _browseRoot;
 
     /// <summary>前端完成一次渲染（来自 <c>renderDone</c> 消息；--verify-render 与 debug 日志使用）。</summary>
@@ -350,6 +350,10 @@ public partial class MainWindow : Window
                 PickFolder();
                 break;
 
+            case "listDir":
+                TryPostDirectoryListing(message.Path);
+                break;
+
             case "reload":
                 ReloadCurrentDocument();
                 break;
@@ -359,7 +363,7 @@ public partial class MainWindow : Window
                 break;
 
             default:
-                // 其余契约消息（listDir/exportPdf/readyToPrint/openDefaultApps）属 Task 14–16，本任务只记日志。
+                // 其余契约消息（exportPdf/readyToPrint/openDefaultApps）属 Task 15–16，本任务只记日志。
                 DebugLog.Write($"忽略消息 type={message.Type}");
                 break;
         }
@@ -451,8 +455,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// pickFolder：系统文件夹对话框（.NET 8+ 的 OpenFolderDialog）。文件树属 Task 14，
-    /// 本任务只记住选择结果并提示；记下的目录同时作为后续对话框的初始位置。
+    /// pickFolder：系统文件夹对话框（.NET 8+ 的 OpenFolderDialog），选中后进入文件树浏览；
+    /// 记下的目录同时作为后续对话框的初始位置。
     /// </summary>
     private void PickFolder()
     {
@@ -472,9 +476,80 @@ public partial class MainWindow : Window
             return;
         }
 
-        _browseRoot = dialog.FolderName;
-        DebugLog.Write($"pickFolder root={_browseRoot}");
-        Post(Protocol.Toast("已选择文件夹（文件树功能将在后续版本提供）", "warn"));
+        DebugLog.Write($"pickFolder path={dialog.FolderName}");
+        OpenFolder(dialog.FolderName);
+    }
+
+    /// <summary>
+    /// 打开文件夹浏览（pickFolder 与拖入文件夹共用）：记住浏览根 → 推根目录 dirListing → 提示根名。
+    /// 根目录不可读时只提示，不覆盖用户已有的浏览根。
+    /// </summary>
+    private void OpenFolder(string folderPath)
+    {
+        string root;
+        try
+        {
+            root = FileHost.NormalizePath(folderPath);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            DebugLog.Write($"打开文件夹失败 path={folderPath}：{exception.Message}");
+            Post(Protocol.Toast("无法打开文件夹", "error"));
+            return;
+        }
+
+        if (!Directory.Exists(root))
+        {
+            DebugLog.Write($"打开文件夹失败（目录不存在） path={root}");
+            Post(Protocol.Toast("无法打开文件夹", "error"));
+            return;
+        }
+
+        _browseRoot = root;
+        DebugLog.Write($"打开文件夹 root={_browseRoot}");
+
+        // 先推根列表（失败时 TryPostDirectoryListing 已 toast「无法读取该目录」），成功后再提示已打开。
+        if (TryPostDirectoryListing(string.Empty))
+        {
+            Post(Protocol.Toast($"已打开文件夹：{FolderName(root)}"));
+        }
+    }
+
+    /// <summary>
+    /// 列出浏览根下 <paramref name="relativePath"/>（空串 = 根）并推 <c>dirListing{root,path,entries}</c>。
+    /// 尚未选择文件夹时提示；越界/无权限/目录不存在时 toast「无法读取该目录」。
+    /// </summary>
+    private bool TryPostDirectoryListing(string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(_browseRoot))
+        {
+            DebugLog.Write("忽略 listDir：尚未打开文件夹");
+            Post(Protocol.Toast("请先打开文件夹", "warn"));
+            return false;
+        }
+
+        var relative = (relativePath ?? string.Empty).Trim();
+        try
+        {
+            var entries = DirectoryLister.List(_browseRoot, relative);
+            Post(Protocol.DirListing(_browseRoot, relative, entries));
+            DebugLog.Write($"dirListing root={_browseRoot} path={relative} entries={entries.Count}");
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            DebugLog.Write($"读取目录失败 root={_browseRoot} path={relative}：{exception.Message}");
+            Post(Protocol.Toast("无法读取该目录", "warn"));
+            return false;
+        }
+    }
+
+    /// <summary>浏览根的显示名（盘符根等取不到名称时回退完整路径）。</summary>
+    private static string FolderName(string path)
+    {
+        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+        return string.IsNullOrEmpty(name) ? path : name;
     }
 
     /// <summary>对话框初始目录：当前文档所在目录优先，其次上次 pickFolder 的选择。</summary>
@@ -501,7 +576,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 拖放打开：取第一个路径。Markdown 文件直接打开；文件夹提示后续版本（文件树 T14）；
+    /// 拖放打开：取第一个路径。Markdown 文件直接打开；文件夹进入文件树浏览（Task 14）；
     /// 其它类型提示不支持。所有异常只记日志，拖放不能把宿主带崩。
     /// </summary>
     private void OnDrop(object sender, DragEventArgs e)
@@ -536,7 +611,7 @@ public partial class MainWindow : Window
         {
             if (Directory.Exists(first))
             {
-                Post(Protocol.Toast("文件夹浏览功能将在后续版本提供", "warn"));
+                OpenFolder(first);
                 return;
             }
 

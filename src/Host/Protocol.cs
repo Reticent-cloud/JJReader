@@ -94,6 +94,36 @@ public static class Protocol
     }
 
     /// <summary>
+    /// 构造 <c>dirListing</c>：浏览根 <paramref name="root"/> 下相对路径 <paramref name="path"/> 目录的直接子项。
+    /// <paramref name="path"/> 为空串表示根目录；<c>relPath</c> 也是相对 root（<c>/</c> 分隔）。
+    /// 目录在前、名称排序等由 <see cref="DirectoryLister"/> 保证，前端只负责展示。
+    /// </summary>
+    public static string DirListing(
+        string root,
+        string path,
+        IEnumerable<(string Name, bool IsDir, string RelPath)> entries)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(root);
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(entries);
+        if (path.Length > 0 && string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("path 不能为纯空白；根目录请传空字符串。", nameof(path));
+        }
+
+        var items = entries
+            .Select(entry => new { name = entry.Name, isDir = entry.IsDir, relPath = entry.RelPath })
+            .ToList();
+        return Serialize("dirListing", new { root, path, entries = items });
+    }
+
+    /// <summary>brief 兼容重载：只有根列表（<c>path = ""</c>）。</summary>
+    public static string DirListing(
+        string root,
+        IEnumerable<(string Name, bool IsDir, string RelPath)> entries)
+        => DirListing(root, string.Empty, entries);
+
+    /// <summary>
     /// 解析前端发来的消息。未知 type、非 JSON 对象、字段类型不符都抛 <see cref="FormatException"/>，
     /// 由调用方记日志后忽略（坏消息不能中断宿主）。缺省的可选字段使用默认值（0 / null）。
     /// </summary>
