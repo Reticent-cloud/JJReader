@@ -7,6 +7,12 @@
 /** 独占行的 [TOC]（大小写不敏感）；行首行尾空白由调用方 trim 处理。 */
 const TOC_LINE_RE = /^\[toc\]$/i;
 
+/** 单字符空白判定（与 String.trim 同口径：含全角空格 U+3000、NBSP U+00A0）；单字符类无回溯风险。 */
+const BLANK_RE = /\s/;
+
+/** 引用块前缀字符 `>`（逐字符剥离用）。 */
+const QUOTE_CHAR = '>';
+
 /** HTML 转义映射：标题文本来自 Markdown（可能含 < & "），属性值与文本节点都要转义。 */
 const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const ESCAPE_RE = /[&<>"']/g;
@@ -35,12 +41,44 @@ export function buildTocHtml(headings) {
 }
 
 /**
+ * 单行是否为块级规则会命中的独占行 [TOC]：String.trim() 去行首行尾空白后，
+ * 剥离引用块前缀 `>`（可重复、前缀间允许空白），剩余内容恰为 `[toc]`（大小写不敏感）。
+ * 全程逐字符线性扫描、不用正则：旧的 /^(?:[ \t]*>[ \t]*)*…/im 对「> * N + 非空白文字」灾难性回溯。
+ * trim 口径与块规则一致（含全角空格 U+3000、NBSP），因此预扫描与块规则不会一个命中一个漏判。
+ */
+function isTocLine(line) {
+  const text = line.trim();
+  const len = text.length;
+  let i = 0;
+  while (i < len) {
+    if (text[i] !== QUOTE_CHAR) {
+      break;
+    }
+    i += 1;
+    while (i < len && BLANK_RE.test(text[i])) {
+      i += 1;
+    }
+  }
+  if (len - i !== 5) {
+    return false; // `[toc]` 固定 5 字符：长行不必再做大小写转换
+  }
+  return text.slice(i).toLowerCase() === '[toc]';
+}
+
+/**
  * 文档里是否存在独占行 [TOC]：没有占位符就不必为了预扫描多付一次 parse 开销。
- * 行首允许缩进与引用块前缀（`>`），与块级规则能命中的行保持一致；代码块里的 [TOC] 也会命中，
- * 只是多算一次目录、最终不输出（块级规则不会在代码块内触发），行为无害。
+ * 逐行扫描（split(/\r?\n/) + 每行 trim 后精确比较），不做正则回溯；大小写不敏感。
+ * 引用块里的 `> [TOC]` 也命中（块级规则在 blockquote 内层 token 化，能真正转换）；
+ * 代码块里的 [TOC] 也会命中，只是多算一次目录、最终不输出（块级规则不会在代码块内触发），行为无害。
  */
 export function hasTocPlaceholder(markdown) {
-  return /^(?:[ \t]*>[ \t]*)*[ \t]*\[toc\][ \t]*$/im.test(String(markdown ?? ''));
+  const lines = String(markdown ?? '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (isTocLine(lines[i])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

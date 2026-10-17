@@ -143,6 +143,34 @@ describe('[TOC] 内联目录', () => {
     expect(html).toContain('<nav class="toc-inline"><ol>');
     expect(html).toContain('href="#标题"');
   });
+
+  // 评审 Minor 回归：块规则用 String.trim()（含全角空格 U+3000 / NBSP）判断独占行，
+  // 预扫描必须同口径；否则块规则命中而预扫描漏判 → 渲染出空目录。
+  it('全角空格/NBSP 缩进的 [TOC] 与块规则口径一致（生成完整目录而非空 nav）', () => {
+    const variants = ['\u3000[TOC]', '[TOC]\u3000', '\u00a0[TOC]', '\u3000\u00a0[TOC]\u00a0'];
+    for (const line of variants) {
+      const root = renderRoot(`${line}\n\n# 标题`);
+      const nav = root.querySelector('nav.toc-inline');
+      // 块规则命中 → 预扫描必须也命中：nav 存在且含完整目录（不是空 nav）
+      expect(nav).toBeTruthy();
+      expect(nav.querySelector('ol')).toBeTruthy();
+      expect(nav.querySelector('a').getAttribute('href')).toBe('#标题');
+    }
+  });
+
+  // 评审 Critical 回归：预扫描曾用 /^(?:[ \t]*>[ \t]*)*[ \t]*\[toc\][ \t]*$/im，嵌套量词对
+  // 「> * N + 非空白文字」灾难性回溯（n=28 已 2.7s，n=40 等同挂起）。这里锁死不再回溯且耗时可接受。
+  it('敌意引用前缀不再触发灾难性回溯（ReDoS 性能回归）', () => {
+    const hostile = '> '.repeat(40) + '引用文字';
+    // 预热：排除首次懒初始化（DOMPurify 实例等）计入计时
+    JJ.renderMarkdown('预热');
+    const started = performance.now();
+    expect(() => JJ.renderMarkdown(hostile)).not.toThrow();
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(100);
+    // 引用文字行不是 [TOC]：不得误判出目录
+    expect(JJ.renderMarkdown(hostile)).not.toContain('toc-inline');
+  });
 });
 
 describe('图片占位（离线/加载失败不破版）', () => {
