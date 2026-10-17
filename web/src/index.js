@@ -5,7 +5,8 @@
 // 主题（applyTheme）、排版（applySettings/settingsPatch）与 applyCss（T4 carry-forward：CSS 注入共用）；
 // Task 11 起加大文档分块（splitBlocks/createChunkedRenderer/阈值常量/isHuge）；
 // Task 12 起加最近文件面板（renderRecent）、位置追踪（createPositionTracker）、阅读 chrome（updateChrome）与 toast；
-// Task 14 起加文件树侧栏（renderTree/setSidebarMode/applyDirListing/setTreeActive）。
+// Task 14 起加文件树侧栏（renderTree/setSidebarMode/applyDirListing/setTreeActive）；
+// Task 15 起加打印模式（enterPrintMode / enterPrintModeForPdf / exitPrintModeForPdf，供 PDF 导出）。
 // 浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
 import {
   appendLinkDefinitions,
@@ -22,6 +23,7 @@ import {
 import { extractFrontmatter, extractHeadings, renderMarkdown, slugify } from './engine.js';
 import { enhance } from './enhance.js';
 import { highlight } from './highlight.js';
+import { enterPrintMode, enterPrintModeForPdf, exitPrintModeForPdf } from './print.js';
 import { sanitizeHtml } from './sanitize.js';
 import { applySettings, settingsPatch } from './settings.js';
 import { createPositionTracker, estimateTotalHeight, showToast, updateChrome } from './shell/chrome.js';
@@ -96,6 +98,10 @@ export function install(target = {}) {
     setSidebarMode,
     applyDirListing,
     setTreeActive,
+    // Task 15：PDF 导出打印模式（宿主经 ExecuteScriptAsync 调用；测试直接调用）
+    enterPrintMode,
+    enterPrintModeForPdf,
+    exitPrintModeForPdf,
     // T4 carry-forward：CSS 注入与 shell 共用同一实现（浏览器 boot 时已调用一次）
     applyCss,
   };

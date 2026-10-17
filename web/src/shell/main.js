@@ -33,6 +33,7 @@ import {
   updateChrome,
 } from './chrome.js';
 import { createTocController } from './headings.js';
+import { pdfSuggestedFileName } from '../print.js';
 import { nextRecentPath, normalizeRecentItems, renderRecent } from './recent.js';
 import { createRenderer } from './render.js';
 import { createTocResizer } from './resizer.js';
@@ -78,6 +79,12 @@ export function mountShell({ root, post } = {}) {
   }
   const send = typeof post === 'function' ? post : () => {};
 
+  // Task 15：打印模式需要从 JJ.enterPrintModeForPdf 回报 readyToPrint（宿主 --verify-pdf 依赖它）。
+  // 不覆盖其他模块注入的成员，只记 post；destroy 时若仍指向本次装配则清掉，避免闭包残留。
+  if (globalThis.JJ && typeof globalThis.JJ === 'object') {
+    globalThis.JJ.__post = send;
+  }
+
   // 固定骨架：#app > header#toolbar、aside#toc、div.toc-resizer（拖拽调宽分隔条）、main#content（滚动容器）、
   // div#progress（阅读进度条）、button#back-to-top、div#aa-panel、div#recent-menu（工具条最近菜单）、div#toast。
   // 分隔条绝对定位在侧栏右缘（不占网格列），折叠时隐藏；进度条/回到顶部/工具条都是 fixed 悬浮层。
@@ -91,6 +98,7 @@ export function mountShell({ root, post } = {}) {
     treeBack: treeBackButton,
     tocToggle,
     recentToggle,
+    exportPdf: exportPdfButton,
     themeToggle,
     aaToggle,
   } = toolbarParts;
@@ -593,6 +601,18 @@ export function mountShell({ root, post } = {}) {
     send('reload');
   }
 
+  /**
+   * 导出 PDF（Ctrl+E / 工具条按钮）：无当前文档时只提示；有文档则把「文档名去扩展名 + .pdf」
+   * 作为建议名交给宿主弹保存对话框（打印模式与 PrintToPdf 全在宿主侧完成）。
+   */
+  function exportCurrentPdf() {
+    if (!state.path) {
+      showToast('请先打开文档', 'warn');
+      return;
+    }
+    send('exportPdf', { suggestedName: pdfSuggestedFileName(state.path) });
+  }
+
   // ── 最近文件（Task 12） ──
   /** 打开最近文件项：绝对路径交给宿主（宿主也接受相对当前文档目录的路径）。 */
   function openRecentFile(path) {
@@ -744,6 +764,12 @@ export function mountShell({ root, post } = {}) {
       updateSettings({ tocVisible: !state.settings.tocVisible });
       return;
     }
+    if (key === 'e' || key === 'E') {
+      // Ctrl+E 导出 PDF（Task 15）：与工具条「导出 PDF」同一入口
+      event.preventDefault();
+      exportCurrentPdf();
+      return;
+    }
     if (key === '=' || key === '+') {
       event.preventDefault();
       updateSettings({ fontSize: state.settings.fontSize + 1 });
@@ -772,6 +798,8 @@ export function mountShell({ root, post } = {}) {
     state.baseUrl = typeof payload.baseUrl === 'string' ? payload.baseUrl : '';
     state.position = typeof payload.position === 'number' && Number.isFinite(payload.position) ? payload.position : null;
     state.loaded = true;
+    // Task 15：有文档才允许导出 PDF（与 Ctrl+E 的「请先打开文档」提示同口径）
+    exportPdfButton.disabled = !state.path;
     // 文档已打开：工具条最近菜单不再需要（避免浮层盖住新正文）
     closeRecentMenu();
     // 换文档先解绑旧位置追踪器（旧 key 的滚动上报不能带到新文档）
@@ -866,6 +894,8 @@ export function mountShell({ root, post } = {}) {
   openFolderButton.addEventListener('click', () => {
     send('pickFolder');
   });
+  // Task 15：工具条「导出 PDF」与 Ctrl+E 共用 exportCurrentPdf（无文档时提示，不发消息）
+  exportPdfButton.addEventListener('click', exportCurrentPdf);
   themeToggle.addEventListener('click', () => {
     updateSettings({ theme: nextTheme(state.settings.theme) });
   });
@@ -946,6 +976,10 @@ export function mountShell({ root, post } = {}) {
     stopPositionTracker();
     tocController.destroy();
     clearToastContainer(toast);
+    // Task 15：解除打印流程的 post 引用（仍是本次装配时才清），避免销毁后继续往旧通道发消息
+    if (globalThis.JJ && globalThis.JJ.__post === send) {
+      delete globalThis.JJ.__post;
+    }
   }
 
   // 握手：shell 装配完成（监听器已就绪）→ 通知宿主可以推 load 了（只发一次）。

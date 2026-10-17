@@ -30,6 +30,21 @@ public partial class App : Application
             return;
         }
 
+        // --verify-pdf <in.md> <out.pdf>：离屏打开文档 → 打印模式 → PrintToPdf，成功 exit 0（Task 15）。
+        var verifyPdfIndex = Array.IndexOf(e.Args, "--verify-pdf");
+        if (verifyPdfIndex >= 0)
+        {
+            if (verifyPdfIndex + 2 >= e.Args.Length)
+            {
+                ConsoleHelper.WriteLine("用法：JingjingReader.exe --verify-pdf <markdown 文件> <输出 PDF>");
+                Shutdown(2);
+                return;
+            }
+
+            _ = VerifyPdf.Run(e.Args[verifyPdfIndex + 1], e.Args[verifyPdfIndex + 2]);
+            return;
+        }
+
         // 命令行里的第一个非 -- 参数当作文档路径。
         var documentPath = e.Args.FirstOrDefault(argument => !argument.StartsWith("--", StringComparison.Ordinal));
 

@@ -60,6 +60,17 @@
   background: var(--bg-muted);
 }
 
+/* Task 15：导出 PDF 在未打开文档时禁用（禁用态不响应 hover，视觉上也变灰） */
+#toolbar .tool:disabled {
+  color: var(--fg-muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
+#toolbar .tool:disabled:hover {
+  background: transparent;
+}
+
 #toolbar .tool:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

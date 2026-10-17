@@ -96,9 +96,10 @@ export function buildAaPanel() {
 
 /**
  * 构建工具条骨架：打开文件 / 打开文件夹 / 浏览根（文件树，Task 14）/ 回到大纲 / 目录 / 最近 /
- * 弹性空隙 / 主题 / Aa（既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮；Task 13 新增两个打开入口，
- * 与 Ctrl+O / Ctrl+Shift+O 同口径）。「最近」菜单的内容由 main.js 用 renderRecent 渲染到 #recent-menu。
- * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, browseRoot: HTMLButtonElement, treeBack: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, themeToggle: HTMLButtonElement, aaToggle: HTMLButtonElement }}
+ * 导出 PDF（Task 15）/ 弹性空隙 / 主题 / Aa（既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮；
+ * Task 13 新增两个打开入口，与 Ctrl+O / Ctrl+Shift+O 同口径）。「最近」菜单的内容由 main.js 用 renderRecent 渲染到 #recent-menu。
+ * 导出按钮在未打开文档时禁用（main.js 在 load 后启用），与 Ctrl+E 共用同一导出入口。
+ * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, browseRoot: HTMLButtonElement, treeBack: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, exportPdf: HTMLButtonElement, themeToggle: HTMLButtonElement, aaToggle: HTMLButtonElement }}
  */
 export function createToolbar() {
   const toolbar = document.createElement('header');
@@ -116,13 +117,27 @@ export function createToolbar() {
   const recentToggle = createToolbarButton('最近', 'recent-toggle', '最近文件');
   recentToggle.setAttribute('aria-expanded', 'false');
   recentToggle.setAttribute('aria-controls', 'recent-menu');
+  // Task 15：PDF 导出（无文档时 disabled，load 后由 main.js 启用）
+  const exportPdf = createToolbarButton('导出 PDF', 'export-pdf', '导出 PDF（Ctrl+E）');
+  exportPdf.disabled = true;
   const themeToggle = createToolbarButton('跟随系统', 'theme-toggle', '主题：浅色 → 深色 → 跟随系统');
   const aaToggle = createToolbarButton('Aa', 'aa-toggle', '排版设置（Ctrl+,）');
   aaToggle.setAttribute('aria-expanded', 'false');
   aaToggle.setAttribute('aria-controls', 'aa-panel');
   const spacer = document.createElement('div');
   spacer.className = 'toolbar-spacer';
-  toolbar.append(openFile, openFolder, browseRoot, treeBack, tocToggle, recentToggle, spacer, themeToggle, aaToggle);
+  toolbar.append(
+    openFile,
+    openFolder,
+    browseRoot,
+    treeBack,
+    tocToggle,
+    recentToggle,
+    exportPdf,
+    spacer,
+    themeToggle,
+    aaToggle,
+  );
 
   return {
     element: toolbar,
@@ -132,6 +147,7 @@ export function createToolbar() {
     treeBack,
     tocToggle,
     recentToggle,
+    exportPdf,
     themeToggle,
     aaToggle,
   };

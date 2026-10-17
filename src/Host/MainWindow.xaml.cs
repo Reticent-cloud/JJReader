@@ -362,8 +362,17 @@ public partial class MainWindow : Window
                 ShowInFolder(message.Path);
                 break;
 
+            case "exportPdf":
+                ExportPdf(message.SuggestedName);
+                break;
+
+            case "readyToPrint":
+                // 前端已进入打印模式（浅色 + 隐藏界面 chrome）：唤醒等待中的 PdfExport。
+                PdfExport.NotifyReadyToPrint();
+                break;
+
             default:
-                // 其余契约消息（exportPdf/readyToPrint/openDefaultApps）属 Task 15–16，本任务只记日志。
+                // 其余契约消息（openDefaultApps/assocState 等）属 Task 16，本任务只记日志。
                 DebugLog.Write($"忽略消息 type={message.Type}");
                 break;
         }
@@ -709,6 +718,106 @@ public partial class MainWindow : Window
             // UI 边界：explorer 启动失败（路径含非法字符/被策略阻止）只记日志。
             DebugLog.Write($"showInFolder 失败 path={path}：{exception.Message}");
         }
+    }
+
+    /// <summary>
+    /// exportPdf（Task 15）：系统保存对话框（默认 <c>&lt;文档名&gt;.pdf</c>，可用前端 suggestedName）→
+    /// 交给 <see cref="PdfExport"/> 异步导出。取消对话框什么都不做。
+    /// </summary>
+    private void ExportPdf(string? suggestedName)
+    {
+        if (_currentDocument is not { } document)
+        {
+            DebugLog.Write("忽略 exportPdf：当前没有打开的文档");
+            Post(Protocol.Toast("请先打开文档", "warn"));
+            return;
+        }
+
+        var core = WebView.CoreWebView2;
+        if (core is null)
+        {
+            DebugLog.Write("忽略 exportPdf：WebView2 未就绪");
+            Post(Protocol.Toast("导出 PDF 失败：WebView2 未就绪", "error"));
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "导出 PDF",
+            Filter = "PDF 文件|*.pdf",
+            DefaultExt = ".pdf",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = DefaultPdfFileName(suggestedName, document.Path),
+        };
+        if (PreferredBrowseDirectory() is { } directory)
+        {
+            dialog.InitialDirectory = directory;
+        }
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            DebugLog.Write("exportPdf 已取消");
+            return;
+        }
+
+        var outputPath = dialog.FileName;
+        DebugLog.Write($"exportPdf path={outputPath}");
+        _ = RunPdfExportAsync(core, outputPath);
+    }
+
+    /// <summary>执行导出并按结果 toast：成功提示文件名并用资源管理器定位；失败/异常提示错误。</summary>
+    private async Task RunPdfExportAsync(Microsoft.Web.WebView2.Core.CoreWebView2 core, string outputPath)
+    {
+        var fileName = Path.GetFileName(outputPath);
+        var success = false;
+        try
+        {
+            success = await PdfExport.ExportAsync(core, outputPath);
+        }
+        catch (Exception exception)
+        {
+            // PDF 导出是异步 UI 流程：任何异常都不能变成未处理异常
+            DebugLog.Write($"exportPdf 异常 path={outputPath}：{exception}");
+        }
+
+        if (!success)
+        {
+            Post(Protocol.Toast("导出 PDF 失败", "error"));
+            return;
+        }
+
+        Post(Protocol.Toast("已导出 PDF：" + fileName));
+        ShowInFolder(outputPath);
+    }
+
+    /// <summary>
+    /// 保存对话框的默认文件名：前端 suggestedName 只取文件名部分并补 .pdf；
+    /// 缺省时用当前文档名去扩展名 + .pdf；清理 Windows 非法文件名字符。
+    /// </summary>
+    private static string DefaultPdfFileName(string? suggestedName, string documentPath)
+    {
+        var raw = !string.IsNullOrWhiteSpace(suggestedName)
+            ? Path.GetFileName(suggestedName.Trim())
+            : Path.GetFileNameWithoutExtension(documentPath) + ".pdf";
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            raw = "导出.pdf";
+        }
+
+        var sanitized = raw;
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            sanitized = sanitized.Replace(invalid, '_');
+        }
+
+        if (sanitized.Length == 0)
+        {
+            sanitized = "导出";
+        }
+
+        return sanitized.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? sanitized : sanitized + ".pdf";
     }
 
     private void SavePosition(InboundMessage message)
