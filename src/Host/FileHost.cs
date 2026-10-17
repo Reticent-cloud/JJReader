@@ -163,7 +163,9 @@ public static class FileHost
     /// <summary>
     /// 把文档内的相对（或绝对）引用转换为虚拟主机 URL：以文档所在目录为根，逐段 <see cref="Uri.EscapeDataString(string)"/>
     /// 并保留 <c>/</c>。null / 空白 / "." 返回 <c>https://md.local/</c>。
-    /// 越出文档目录（含 <c>..</c>、跨盘绝对路径）时不抛异常，返回 <c>https://md.local/</c> + 转义后的原始引用，交给调用方占位兜底。
+    /// 引用中的百分号编码（如 <c>img/a%20b.png</c>）先按 CommonMark 语义解码一次再参与路径计算与逐段转义，
+    /// 否则会被二次编码成 <c>img/a%2520b.png</c>。解码失败（非法转义）保持原样，不抛异常。
+    /// 越出文档目录（含 <c>..</c>、跨盘绝对路径）时不抛异常，返回 <c>https://md.local/</c> + 同样先解码再逐段转义的原始引用，交给调用方占位兜底。
     /// </summary>
     public static string VirtualHostUrl(string docPath, string? relativeOrAbsolutePath)
     {
@@ -173,6 +175,9 @@ public static class FileHost
         {
             return VirtualHostPrefix;
         }
+
+        // 仅引用需要解码（文档路径是宿主传入的本地路径，不含 URL 编码语义）
+        var reference = UnescapeReference(relativeOrAbsolutePath);
 
         try
         {
@@ -185,10 +190,10 @@ public static class FileHost
 
             if (string.IsNullOrEmpty(docDir))
             {
-                return VirtualHostPrefix + EscapeSegments(relativeOrAbsolutePath);
+                return VirtualHostPrefix + EscapeSegments(reference);
             }
 
-            var full = Path.GetFullPath(Path.Combine(docDir, StripExtendedPrefix(relativeOrAbsolutePath)));
+            var full = Path.GetFullPath(Path.Combine(docDir, StripExtendedPrefix(reference)));
             var relativePath = Path.GetRelativePath(docDir, full);
 
             if (relativePath == ".")
@@ -198,7 +203,7 @@ public static class FileHost
 
             if (EscapesDirectory(relativePath))
             {
-                return VirtualHostPrefix + EscapeSegments(relativeOrAbsolutePath);
+                return VirtualHostPrefix + EscapeSegments(reference);
             }
 
             return VirtualHostPrefix + EscapeSegments(relativePath);
@@ -206,7 +211,23 @@ public static class FileHost
         catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
         {
             // 引用本身不是合法路径：按原始引用兜底，绝不因为一张图片的路径而中断渲染
-            return VirtualHostPrefix + EscapeSegments(relativeOrAbsolutePath);
+            return VirtualHostPrefix + EscapeSegments(reference);
+        }
+    }
+
+    /// <summary>
+    /// 解码引用里的百分号编码（CommonMark 中 <c>![x](img/a%20b.png)</c> 指向文件名含空格的图片）。
+    /// 非法转义序列（如 <c>100%.png</c>、<c>a%zz.png</c>）保持原样；万一运行时抛异常也回退原字符串，绝不中断渲染。
+    /// </summary>
+    private static string UnescapeReference(string reference)
+    {
+        try
+        {
+            return Uri.UnescapeDataString(reference);
+        }
+        catch (Exception e) when (e is UriFormatException or ArgumentException)
+        {
+            return reference;
         }
     }
 

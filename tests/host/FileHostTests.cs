@@ -208,12 +208,30 @@ public class FileHostTests
     }
 
     [Fact]
-    public void VirtualHostUrl_escapes_percent_hash_and_accepts_backslash()
+    public void VirtualHostUrl_decodes_percent_encoded_reference_then_escapes_segments()
     {
-        var expected = BaseUrl + "img/a%2520b%23c.png";
+        // CommonMark 里 img/a%20b.png 表示文件名「a b.png」：引用先解码一次，再逐段转义；
+        // 解码后的字面 # 仍要转义成 %23，但空格不能被二次编码成 %2520。
+        var expected = BaseUrl + "img/a%20b%23c.png";
 
         Assert.Equal(expected, FileHost.VirtualHostUrl(@"C:\notes\a.md", "img/a%20b#c.png"));
         Assert.Equal(expected, FileHost.VirtualHostUrl(@"C:\notes\a.md", @"img\a%20b#c.png"));
+    }
+
+    [Fact]
+    public void VirtualHostUrl_decodes_percent_encoded_chinese_reference()
+    {
+        Assert.Equal(
+            BaseUrl + "img/%E5%9B%BE%201.png",
+            FileHost.VirtualHostUrl(@"C:\notes\a.md", "img/图%201.png"));
+    }
+
+    [Fact]
+    public void VirtualHostUrl_escapes_literal_percent_and_keeps_invalid_escape_sequences()
+    {
+        // 字面 % 只转义一次成 %25；无法解析的转义序列（100%、%zz）保持原样，不抛异常
+        Assert.Equal(BaseUrl + "img/100%25.png", FileHost.VirtualHostUrl(@"C:\notes\a.md", "img/100%.png"));
+        Assert.Equal(BaseUrl + "img/a%25zz.png", FileHost.VirtualHostUrl(@"C:\notes\a.md", "img/a%zz.png"));
     }
 
     [Fact]
@@ -244,6 +262,17 @@ public class FileHostTests
         Assert.Equal(
             BaseUrl + "D%3A/pics/x.png",
             FileHost.VirtualHostUrl(@"C:\notes\a.md", @"D:\pics\x.png"));
+    }
+
+    [Fact]
+    public void VirtualHostUrl_traversal_with_percent_encoded_reference_falls_back_once_escaped()
+    {
+        // 越界兜底分支同样「先解码再逐段转义」：%20 保持单段转义，不出现 %2520，且绝不抛异常
+        var url = FileHost.VirtualHostUrl(@"C:\notes\a.md", @"..\..\secret%20dir\a.png");
+
+        Assert.StartsWith(BaseUrl, url);
+        Assert.Contains("secret%20dir/a.png", url);
+        Assert.DoesNotContain("%2520", url);
     }
 
     // ---------------- ResolveInside ----------------
