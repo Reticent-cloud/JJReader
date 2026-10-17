@@ -49,18 +49,18 @@
 
 ### 2.3 验收标准（可测）
 
-1. 双击 `.md` → 首屏 ≤ **1.0 s**（热启动，文件已被系统缓存）。设计目标口径是前端 `renderDone.elapsedMs`（渲染器耗时）；`verify.ps1` 另记录「`Process.Start` → stdout READY」的端到端墙钟（含进程启动/WebView2 初始化/文件读取），修复波 D 最终验收实测 **1150 ms**，按 WARN 处理（< 1000 ms 记 PASS，≤ 2500 ms WARN，> 2500 ms FAIL），不作为 1.0 s 设计目标的失败判定。
-2. 阅读 5 MB 文档时，**宿主进程私有内存峰值 ≤ 200 MB**（Chromium 宿主基线；WebView2 进程组单独记录、不计入预算）。修复波 D 最终验收实测：宿主私有峰值 **162.8 MB**（50 ms 采样 21 次，最大间隔 65 ms）；WebView2 进程组 `WorkingSet64` 峰值 **321.8 MB**、整树 **475.8 MB**（仅信息项；500 ms 采样 2 次，采样窗口短，数值仅作参考）。
+1. 双击 `.md` → 首屏 ≤ **1.0 s**（热启动，文件已被系统缓存）。设计目标口径是前端 `renderDone.elapsedMs`（渲染器耗时）；`verify.ps1` 另记录「`Process.Start` → stdout READY」的端到端墙钟（含进程启动/WebView2 初始化/文件读取），最终验收（@0af4231，`out/verify-report.md`）实测 **1029 ms**，按 WARN 处理（< 1000 ms 记 PASS，≤ 2500 ms WARN，> 2500 ms FAIL），不作为 1.0 s 设计目标的失败判定。
+2. 阅读 5 MB 文档时，**宿主进程私有内存峰值 ≤ 200 MB**（Chromium 宿主基线；WebView2 进程组单独记录、不计入预算）。最终验收（@0af4231，`out/verify-report.md`）实测：宿主私有峰值 **174.3 MB**（50 ms 采样 19 个样本，最大间隔 64 ms）；WebView2 进程组 `WorkingSet64` 峰值 **235.7 MB**、整树 **349.8 MB**（仅信息项；500 ms 采样 1 次，采样窗口短，数值仅作参考）。
 3. 第 5 节语法支持矩阵每一行有对应样例 MD 与自动化断言，全部通过。
-4. 5 万行文档：首屏 ≤ 1.5 s（修复波 D 最终验收实测 `elapsedMs` **190 ms**，tocCount 500）；「单次滚动事件帧预算 < 16 ms」**已 descope**（无自动化测量手段，改为手测：连续滚轮/键盘滚动 5 万行观察掉帧，可选 DevTools Performance；不得声称已自动验证）。
+4. 5 万行文档：首屏 ≤ 1.5 s（最终验收实测 `elapsedMs` **185 ms**，tocCount 500）；「单次滚动事件帧预算 < 16 ms」**已 descope**（无自动化测量手段，改为手测：连续滚轮/键盘滚动 5 万行观察掉帧，可选 DevTools Performance；不得声称已自动验证）。
 5. TOC 点击跳转位置正确；关闭再打开同一文件回到上次阅读位置。
 6. 导出 PDF 与屏幕显示内容一致（分页合理、图片/表格/代码块不截断）。
 
 > 该口径于 T17 实测后修正：设计阶段未计入 WebView2 常驻进程成本。
 >
-> 进程数不作为验收项：WebView2 进程组数量随运行时版本变化（修复波 D 最终验收 5 个）；内存以宿主进程私有口径验收（见上）。
+> 进程数不作为验收项：WebView2 进程组数量随运行时版本变化（最终验收 6 个）；内存以宿主进程私有口径验收（见上）。
 >
-> 验收证据与逐条对应关系见 `docs/acceptance-traceability.md`；人工项记录见 `docs/verify-record.md`（修复波 C/D 手测全部「未执行（需人工）」）。
+> 验收证据与逐条对应关系见 `docs/acceptance-traceability.md`；人工项记录见 `docs/verify-record.md`（修复波 C 记录：手测全部「未执行（需人工）」；最终验收只含自动化项，手测仍未执行）。
 
 ---
 
@@ -410,7 +410,7 @@ TDD：先写测试，再写实现。
 - `JingjingReader.exe --verify-render <file>`：隐藏窗口渲染后向 stdout 输出一行 JSON（`{ready, path, elapsedMs, tocCount}`）；输入不存在时快速失败 exit 2。
 - `JingjingReader.exe --verify-pdf <file> <out.pdf>`：导出 PDF 后退出，退出码 0 表示成功；输入不存在时快速失败 exit 2。
 
-`scripts/verify.ps1` 的检查项（本轮 16 项，`VERIFY OK` 表示无 FAIL；端到端首屏允许 WARN）：
+`scripts/verify.ps1` 的检查项（每次 16 项，`VERIFY OK` 表示无 FAIL；端到端首屏允许 WARN）：
 1. 验收脚本自测（`-SelfTest` 纯函数固定样本 21 例，断言总数 21 且 0 失败；正常验收第 0 步）
 2. 构建成功（前端 + 宿主）
 3. 宿主单测全绿（总计 > 0、失败 0、TRX `notExecuted` = 0）
@@ -430,7 +430,7 @@ TDD：先写测试，再写实现。
 
 ### 9.4 手动验收
 
-按 2.3 六条逐项过；截图存档到 `docs/verify/`。执行记录写入 `docs/verify-record.md`；修复波 C/D **手测项全部未执行**，逐条标「未执行（需人工）」，不得伪造执行记录。
+按 2.3 六条逐项过；截图存档到 `docs/verify/`。执行记录写入 `docs/verify-record.md`；截至最终验收 **手测项仍全部未执行**，逐条标「未执行（需人工）」，不得伪造执行记录。
 
 ---
 
@@ -439,11 +439,11 @@ TDD：先写测试，再写实现。
 | 指标 | 目标 | 上限 |
 |---|---|---|
 | 首屏（热启动，≤ 200 KB 文档，`elapsedMs` 渲染器口径） | 0.6 s | 1.0 s |
-| 端到端首屏（`Process.Start` → stdout READY，含 WebView2 初始化） | — | 2.5 s（< 1.0 s PASS，1.0–2.5 s WARN；修复波 D 最终验收 1150 ms） |
+| 端到端首屏（`Process.Start` → stdout READY，含 WebView2 初始化） | — | 2.5 s（< 1.0 s PASS，1.0–2.5 s WARN；最终验收 1029 ms） |
 | 首屏（5 万行文档，`elapsedMs`） | 1.0 s | 1.5 s |
-| 宿主进程私有内存峰值：目标 150 MB（优化目标）/ 上限 200 MB；修复波 D 最终验收实测 162.8 MB（50 ms 采样 21 次，最大间隔 65 ms）。WebView2 进程组（信息项，含全部后代）实测 `WorkingSet64` 峰值 321.8 MB（500 ms 采样 2 次），整树 475.8 MB（同一采样时刻） | 150 MB | 200 MB |
-| 进程数 | 不作为验收项：WebView2 进程组数量随运行时版本变化（修复波 D 最终验收 5 个） | — |
-| 前端包体积（未压缩） | 350 KB | 500 KB（修复波 D 最终验收 472869 B） |
+| 宿主进程私有内存峰值：目标 150 MB（优化目标）/ 上限 200 MB；最终验收实测 174.3 MB（50 ms 采样 19 个样本，最大间隔 64 ms）。WebView2 进程组（信息项，含全部后代）实测 `WorkingSet64` 峰值 235.7 MB（500 ms 采样 1 次），整树 349.8 MB（同一采样时刻） | 150 MB | 200 MB |
+| 进程数 | 不作为验收项：WebView2 进程组数量随运行时版本变化（最终验收 6 个） | — |
+| 前端包体积（未压缩） | 350 KB | 500 KB（最终验收 475324 B） |
 | 安装包/exe 体积（依赖运行时） | 4 MB | 8 MB |
 | 滚动帧预算 | 16 ms/帧 | **已 descope**：无自动化测量手段，改手测（见 2.3-4 与 verify-checklist §12） |
 
@@ -451,11 +451,11 @@ TDD：先写测试，再写实现。
 >
 > 2026-10-18 T17 实测修正：原 150 MB 上限在 WebView2 155 下不可达（宿主实测 160.6–171.9 MB），保留 150 MB 作为后续优化目标；如需接近该目标，需优化文档消息负载与渲染器内存，属独立立项。
 >
-> 2026-10-18 修复波 C 复核（历史）：波 C 验收（Windows 10.0.19045，WebView2 155.0.4283.60；PowerShell 7.6.6 跑两次、5.1 跑一次）宿主私有峰值 164.1–175.8 MB；WebView2/整树为信息项，受采样窗口（宿主 50 ms、WebView2 500 ms，当时仅 1–2 个 WebView2 样本）与运行时版本影响，不参与判定。
+> 2026-10-18 修复波 C 复核（historical，仅存档）：波 C 验收（Windows 10.0.19045，WebView2 155.0.4283.60；PowerShell 7.6.6 跑两次、5.1 跑一次）宿主私有峰值 164.1–175.8 MB；WebView2/整树为信息项，受采样窗口（宿主 50 ms、WebView2 500 ms，当时仅 1–2 个 WebView2 样本）与运行时版本影响，不参与判定。
 >
-> 2026-10-18 修复波 D 最终验收（单次权威运行）：宿主私有峰值 162.8 MB（21 个样本，最大间隔 65 ms）、WebView2 进程组 321.8 MB（5 个进程，2 个样本）、整树 475.8 MB；full-syntax `elapsedMs` 121 ms、5 万行 190 ms、端到端首屏 1150 ms（WARN）；完整数据见 `out/verify-report.md`。
+> 2026-10-18 最终验收（@0af4231，单次权威运行，`out/verify-report.md`）：宿主私有峰值 174.3 MB（19 个样本，最大间隔 64 ms）、WebView2 进程组 235.7 MB（6 个进程，1 个样本）、整树 349.8 MB；full-syntax `elapsedMs` 113 ms、5 万行 185 ms、端到端首屏 1029 ms（WARN）；前端产物 475324 B（`web/dist` 与 `src/Host/Resources` SHA256 一致）。
 >
-> 进程数不作为验收项：WebView2 进程组数量随运行时版本变化（修复波 D 最终验收 5 个）；内存以宿主进程私有口径验收（见上）。
+> 进程数不作为验收项：WebView2 进程组数量随运行时版本变化（最终验收 6 个）；内存以宿主进程私有口径验收（见上）。
 >
 > 16 ms 帧预算与端到端 1.0 s 均未自动验证：前者 descope 为手测；后者以 WARN 口径记录（CLI 冷启动含 WebView2 初始化）。详见 `docs/acceptance-traceability.md`。
 
