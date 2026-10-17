@@ -1,0 +1,214 @@
+using System.Text.Json;
+
+namespace JingjingReader;
+
+/// <summary>
+/// 前后端 JSON 消息的唯一协议定义处（spec §4.4 的 14 条 + 本计划新增的 dirListing / shellReady）。
+/// 消息体统一为 <c>{type, payload}</c>：宿主→前端用 <see cref="Load"/> 等构造方法生成 JSON 字符串，
+/// 再用 <c>PostWebMessageAsJson</c> 推送；前端→宿主用 <see cref="ParseInbound"/> 解析。
+/// </summary>
+public static class Protocol
+{
+    // 消息里的字段名统一 camelCase（与持久化 JSON、前端 JS 习惯一致）。
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    /// <summary>
+    /// 契约里的全部消息 type。方向不影响解析容错（方向由调用方分派），
+    /// 只有不在契约里的 type 才视为错误——这样「未知 type 抛 FormatException」才有意义。
+    /// </summary>
+    private static readonly HashSet<string> KnownTypes = new(StringComparer.Ordinal)
+    {
+        // 宿主 → 前端
+        "load",
+        "toast",
+        "assocState",
+        "dirListing",
+
+        // 前端 → 宿主
+        "openFile",
+        "pickFile",
+        "pickFolder",
+        "listDir",
+        "savePosition",
+        "saveSettings",
+        "exportPdf",
+        "readyToPrint",
+        "showInFolder",
+        "openDefaultApps",
+        "renderDone",
+        "shellReady",
+    };
+
+    /// <summary>构造 <c>load</c>：宿主在收到前端 <c>shellReady</c> 后推送文档内容。</summary>
+    public static string Load(
+        string path,
+        string key,
+        string baseUrl,
+        string markdown,
+        AppSettings settings,
+        double? position)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
+        ArgumentNullException.ThrowIfNull(markdown);
+        ArgumentNullException.ThrowIfNull(settings);
+
+        return Serialize("load", new { path, key, baseUrl, markdown, settings, position });
+    }
+
+    /// <summary>构造 <c>toast</c>：宿主主动提示（编码异常、二进制文件等）。</summary>
+    public static string Toast(string text, string level = "info")
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentException.ThrowIfNullOrWhiteSpace(level);
+
+        return Serialize("toast", new { text, level });
+    }
+
+    /// <summary>构造 <c>assocState</c>：.md 文件关联状态（Task 16 使用）。</summary>
+    public static string AssocState(bool registered, bool isDefault)
+        => Serialize("assocState", new { registered, isDefault });
+
+    /// <summary>
+    /// 解析前端发来的消息。未知 type、非 JSON 对象、字段类型不符都抛 <see cref="FormatException"/>，
+    /// 由调用方记日志后忽略（坏消息不能中断宿主）。缺省的可选字段使用默认值（0 / null）。
+    /// </summary>
+    public static InboundMessage ParseInbound(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            throw new FormatException("消息体为空，无法解析。");
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(json);
+        }
+        catch (JsonException e)
+        {
+            throw new FormatException("消息不是合法的 JSON。", e);
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException("消息必须是 JSON 对象。");
+            }
+
+            if (!root.TryGetProperty("type", out var typeElement) || typeElement.ValueKind != JsonValueKind.String)
+            {
+                throw new FormatException("消息缺少字符串字段 type。");
+            }
+
+            var type = typeElement.GetString() ?? string.Empty;
+            if (!KnownTypes.Contains(type))
+            {
+                throw new FormatException($"未知的消息 type：{type}");
+            }
+
+            // 没有 payload（pickFile/pickFolder/shellReady/readyToPrint 等空消息）时各字段保持默认值。
+            if (!root.TryGetProperty("payload", out var payload) || payload.ValueKind == JsonValueKind.Null)
+            {
+                return new InboundMessage(type, null, 0, null, null, null, null);
+            }
+
+            if (payload.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException("payload 必须是 JSON 对象。");
+            }
+
+            // patch 保留原始 JSON 文本：宿主合并设置时不必重新序列化（Task 10 使用）。
+            var patchJson = payload.TryGetProperty("patch", out var patch) ? patch.GetRawText() : null;
+
+            return new InboundMessage(
+                type,
+                OptionalString(payload, "key"),
+                OptionalDouble(payload, "ratio"),
+                patchJson,
+                OptionalString(payload, "relPath"),
+                OptionalString(payload, "suggestedName"),
+                OptionalString(payload, "path"),
+                OptionalDouble(payload, "elapsedMs"),
+                OptionalInt(payload, "tocCount"),
+                OptionalLong(payload, "bytes"));
+        }
+    }
+
+    private static string Serialize<T>(string type, T payload)
+        => JsonSerializer.Serialize(new { type, payload }, JsonOptions);
+
+    private static string? OptionalString(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var element))
+        {
+            return null;
+        }
+
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Null => null,
+            _ => throw new FormatException($"payload.{name} 必须是字符串。"),
+        };
+    }
+
+    private static double OptionalDouble(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var element))
+        {
+            return 0d;
+        }
+
+        return element.ValueKind == JsonValueKind.Number
+            ? element.GetDouble()
+            : throw new FormatException($"payload.{name} 必须是数字。");
+    }
+
+    private static int OptionalInt(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var element))
+        {
+            return 0;
+        }
+
+        return element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var value)
+            ? value
+            : throw new FormatException($"payload.{name} 必须是 32 位整数。");
+    }
+
+    private static long OptionalLong(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var element))
+        {
+            return 0L;
+        }
+
+        return element.ValueKind == JsonValueKind.Number && element.TryGetInt64(out var value)
+            ? value
+            : throw new FormatException($"payload.{name} 必须是 64 位整数。");
+    }
+}
+
+/// <summary>
+/// 解析后的前端→宿主消息。<see cref="PatchJson"/> 是 <c>payload.patch</c> 的原始 JSON 文本；
+/// <see cref="ElapsedMs"/>/<see cref="TocCount"/>/<see cref="Bytes"/> 来自 <c>renderDone</c>，
+/// 供 debug 日志与 <c>--verify-render</c> 输出（T5 起 tocCount 是真实标题数）。
+/// </summary>
+public sealed record InboundMessage(
+    string Type,
+    string? Key,
+    double Ratio,
+    string? PatchJson,
+    string? RelPath,
+    string? SuggestedName,
+    string? Path,
+    double ElapsedMs = 0,
+    int TocCount = 0,
+    long Bytes = 0);

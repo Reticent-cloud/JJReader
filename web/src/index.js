@@ -1,4 +1,6 @@
-// 鲸鲸阅读器前端引擎入口。Task 1 只提供最小 install 骨架，后续任务在此扩展。
+// 鲸鲸阅读器前端引擎入口：装配 engine/shell 并暴露 window.JJ（后续任务往 install 的 API 上逐个加成员）。
+// 本任务成员：version、mountShell；浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
+import { mountShell } from './shell/main.js';
 
 const STYLE_ATTR = 'data-jj';
 
@@ -23,13 +25,44 @@ export function applyCss(cssText) {
   }
 }
 
+// 前端 API 的唯一出口：测试在 setup.js 里 install(globalThis)，浏览器里 install(window)。
 export function install(target = {}) {
-  const api = { version: '0.1.0' };
+  const api = { version: '0.1.0', mountShell };
   target.JJ = api;
   applyCss(globalThis.window?.__JJ_CSS_TEXT__);
   return api;
 }
 
+// 浏览器（WebView2）环境：DOM ready 后自动 mountShell 并注册消息监听。
+// jsdom / 单测环境没有 window.chrome.webview，不会自动 mount（用例显式调用 JJ.mountShell）。
+function bootWebViewShell() {
+  const webview = globalThis.window?.chrome?.webview;
+  if (!webview) {
+    return;
+  }
+
+  const start = () => {
+    const root = document.getElementById('app');
+    if (!root) {
+      return;
+    }
+    const shell = mountShell({
+      root,
+      post: (type, payload) => webview.postMessage({ type, payload }),
+    });
+    // mountShell 内部已发出 shellReady；监听器在同一个同步任务里注册完成，
+    // 宿主的 load 只会在收到 shellReady 之后推送，因此这一小段先后顺序不会丢消息。
+    webview.addEventListener('message', (event) => shell.onMessage(event.data));
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start, { once: true });
+  } else {
+    start();
+  }
+}
+
 if (typeof window !== 'undefined') {
   install(window);
+  bootWebViewShell();
 }
