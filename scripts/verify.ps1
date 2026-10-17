@@ -9,7 +9,7 @@
   4. 把 out\ 复制到 ASCII 临时目录，后续启动实测都用这份副本
   5. --selftest：产品名 / .NET / WebView2 / OS
   6. --verify-render samples/full-syntax.md：首屏 ≤ 1000 ms、tocCount ≥ 30
-  7. --verify-render samples/huge-50k-lines.md：首屏 ≤ 1500 ms + 宿主私有内存峰值 ≤ 150 MB
+  7. --verify-render samples/huge-50k-lines.md：首屏 ≤ 1500 ms + 宿主私有内存峰值 ≤ 200 MB
   8. --verify-pdf：hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100
   9. 双开单实例：两个宿主进程同时打开不同文档，JingjingReader 进程数必须为 1
  10. 前端产物 ≤ 500 KB，且 web/dist 与 src/Host/Resources 两份字节一致
@@ -19,8 +19,10 @@
   - 每步输出 [PASS]/[FAIL] 名称 详情；失败不中断，继续跑完并汇总，最终 exit 1。
   - 不在本脚本里安装/卸载 .md 关联（不写注册表）：那属于 install.ps1/uninstall.ps1 与手测清单。
   - 内存判定口径（Controller 裁定，T17 修正）：宿主进程（JingjingReader.exe）的 PrivateMemorySize64
-    （Private Bytes）峰值 ≤ 150 MB，50 ms 采样取峰值。WebView2 进程组（直接子进程与全部后代）
+    （Private Bytes）峰值 ≤ 200 MB，50 ms 采样取峰值。WebView2 进程组（直接子进程与全部后代）
     的 WorkingSet64 之和只作为信息项记录，不参与 PASS/FAIL；对应 spec §2.3 第 2 条。
+  - 裁定 2（2026-10-18）：上限由 150 MB 修正为 200 MB（WebView2 155 下宿主实测基线
+    160.6–171.9 MB，原 150 MB 为设计阶段未实测预算）；150 MB 保留为后续优化目标。
   - 临时目录位于 %TEMP%\jj-verify-<guid>（ASCII），结束后清理；只停止本脚本启动的宿主进程。
 
 用法：
@@ -49,7 +51,8 @@ $BuildScript = Join-Path $Root 'scripts/build.ps1'
 $TestProject = Join-Path $Root 'tests/host/JingjingReader.Tests.csproj'
 
 $MB = 1024 * 1024
-$MemoryLimitBytes = 150 * $MB
+# 裁定 2（2026-10-18）：宿主私有内存上限 200 MB；150 MB 保留为优化目标。
+$MemoryLimitBytes = 200 * $MB
 $PdfHelloLimitBytes = 5 * 1024
 $PdfHugeLimitBytes = 1 * $MB
 $ArtifactLimitBytes = 500 * 1024
@@ -578,12 +581,12 @@ try {
             $memoryActual = '未采集到内存样本（进程退出过快或无法读取进程）'
             $webViewBaselineActual = '未采集到内存样本'
         } else {
-            $memoryActual = "峰值 $(Format-Mb $peakPrivateBytes)（≤ 150.0 MB；PrivateMemorySize64，采样 $memorySamples 次）"
+            $memoryActual = "峰值 $(Format-Mb $peakPrivateBytes)（≤ 200.0 MB；PrivateMemorySize64，采样 $memorySamples 次）"
             $webViewBaselineActual = "峰值 $(Format-Mb $peakWebViewBytes)（$peakWebViewCount 个 msedgewebview2 进程；50 ms 采样 $memorySamples 次）"
         }
     }
     Add-Result -Name '5 万行首屏' -Expect 'elapsedMs ≤ 1500 ms' -Actual $hugeActual -Pass $hugeReadyOk
-    Add-Result -Name '宿主私有内存峰值' -Expect 'JingjingReader.exe PrivateMemorySize64 峰值 ≤ 150 MB' -Actual $memoryActual -Pass $memoryOk
+    Add-Result -Name '宿主私有内存峰值（≤200MB）' -Expect 'JingjingReader.exe PrivateMemorySize64 峰值 ≤ 200 MB' -Actual $memoryActual -Pass $memoryOk
     if ($memorySamples -gt 0) {
         Write-Host "[INFO] WebView2 基线（信息，进程组 WorkingSet64 之和）：$webViewBaselineActual（不参与 PASS/FAIL）" -ForegroundColor DarkGray
         Write-Host "[INFO] 整树 WorkingSet（信息）：峰值 $(Format-Mb $peakTreeBytes)（宿主 WorkingSet64 + WebView2 进程组，同一采样时刻；仅参考）" -ForegroundColor DarkGray
@@ -771,7 +774,7 @@ try {
     $reportLines.Add('')
     $reportLines.Add('## 说明')
     $reportLines.Add('')
-    $reportLines.Add('- 内存判定口径（T17 裁定修正）：宿主进程 `JingjingReader.exe` 的 `PrivateMemorySize64`（Private Bytes，`Get-Process -Id <pid> | Select PrivateMemorySize64`）峰值 ≤ 150 MB，50 ms 采样取峰值。')
+    $reportLines.Add('- 内存判定口径（T17 裁定修正）：宿主进程 `JingjingReader.exe` 的 `PrivateMemorySize64`（Private Bytes，`Get-Process -Id <pid> | Select PrivateMemorySize64`）峰值 ≤ 200 MB，50 ms 采样取峰值。上限按裁定 2（2026-10-18）由 150 MB 修正为 200 MB：WebView2 155 下宿主实测基线 160.6–171.9 MB，原 150 MB 为设计阶段未实测预算，现保留为后续优化目标。')
     $reportLines.Add('- WebView2 基线（信息）：' + $webViewBaselineActual + '；统计对象为直接子进程与全部后代的 `msedgewebview2` 进程组，取 `WorkingSet64` 之和；只记录，不参与 PASS/FAIL。')
     if ($memorySamples -gt 0) {
         $reportLines.Add('- 整树 WorkingSet（信息）：峰值 ' + (Format-Mb $peakTreeBytes) + '（宿主 `WorkingSet64` + WebView2 进程组，同一采样时刻求和；仅参考）。')
