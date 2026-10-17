@@ -2,6 +2,7 @@
 // 正文走 JJ.renderMarkdown（Task 5 起为 markdown-it 引擎），引擎缺失时降级 escapeHtml + <pre> 保证不白屏。
 // Task 10 起装配阅读体验：TOC 侧栏（标题 id 兜底 + 滚动联动 + 拖拽调宽）、主题三态、排版面板（Aa）与快捷键。
 // Task 12 起装配最近文件、位置记忆、阅读进度条/回到顶部、悬浮工具条与 F5/Alt+←→/Ctrl+Shift+C。
+// Task 13 起加打开入口（Ctrl+O/Ctrl+Shift+O、工具条按钮）与 wikilink/附件点击寻文件（openFile 消息）。
 // 模块拆分（T10 评审 carry-forward）：工具条与 Aa 面板 → toolbar.js；最近文件面板 → recent.js；
 // 位置追踪/进度条/回到顶部/toast → chrome.js；标题 id + TOC/滚动联动 → headings.js；正文渲染管线 → render.js。
 // 设计约束：所有设置变更「先应用再上报」——applySettings/applyTheme 同步写 CSS 变量，随后 post('saveSettings', {patch})，
@@ -81,7 +82,14 @@ export function mountShell({ root, post } = {}) {
   root.replaceChildren();
   const toolbarParts = createToolbar();
   const toolbar = toolbarParts.element;
-  const { tocToggle, recentToggle, themeToggle, aaToggle } = toolbarParts;
+  const {
+    openFile: openFileButton,
+    openFolder: openFolderButton,
+    tocToggle,
+    recentToggle,
+    themeToggle,
+    aaToggle,
+  } = toolbarParts;
   const toc = document.createElement('aside');
   toc.id = 'toc';
   toc.setAttribute('aria-label', '大纲');
@@ -301,10 +309,25 @@ export function mountShell({ root, post } = {}) {
   }
 
   /**
-   * 正文内 `[TOC]` 内联目录点击（评审 #1）：委托到 #content，只接管 nav.toc-inline 内的锚点链接。
-   * 脚注回跳等其它站内锚点保持浏览器默认行为；分块模式下目标未渲染时先 renderAll 再实时定位。
+   * 正文点击委托：
+   * - `[TOC]` 内联目录（评审 #1）：只接管 nav.toc-inline 内的锚点链接，脚注回跳等保持默认行为；
+   * - wikilink / 非图片附件（Task 13）：`.wikilink[data-target]` 与 `a.attachment[data-target]` 阻止默认跳转，
+   *   把 data-target 原样作为 openFile 的 relPath 发给宿主（目标不可信，只进消息字段，由宿主按文档目录解析）；
+   *   图片形式的 .attachment 是 img 且没有 data-target，不拦截。
    */
   function onContentClick(event) {
+    const target = event && event.target;
+    if (target && typeof target.closest === 'function') {
+      const link = target.closest('.wikilink[data-target], a.attachment[data-target]');
+      if (link) {
+        event.preventDefault();
+        const relPath = link.getAttribute('data-target');
+        if (typeof relPath === 'string' && relPath !== '') {
+          send('openFile', { relPath });
+        }
+        return;
+      }
+    }
     tocController.handleInlineTocClick(event, chunkRenderOptions());
   }
 
@@ -619,6 +642,7 @@ export function mountShell({ root, post } = {}) {
   /**
    * 全局快捷键（输入框内不触发）：
    * Esc 关浮层（Aa/最近面板/工具条）；Alt 显示工具条；Alt+←/→ 切换最近文件；F5 重载；
+   * Ctrl+O 打开文件、Ctrl+Shift+O 打开文件夹（宿主弹系统对话框）；
    * Ctrl+B 侧栏显隐、Ctrl+= / Ctrl+- 字号 ±1、Ctrl+0 重置 16、Ctrl+, 排版面板、Ctrl+Shift+C 定位文件。
    */
   function onKeyDown(event) {
@@ -674,6 +698,12 @@ export function mountShell({ root, post } = {}) {
       return;
     }
 
+    if (key === 'o' || key === 'O') {
+      // Ctrl+O 打开文件 / Ctrl+Shift+O 打开文件夹：系统对话框由宿主弹，前端只发意图
+      event.preventDefault();
+      send(event.shiftKey ? 'pickFolder' : 'pickFile');
+      return;
+    }
     if ((key === 'c' || key === 'C') && event.shiftKey) {
       event.preventDefault();
       if (state.path) {
@@ -794,6 +824,13 @@ export function mountShell({ root, post } = {}) {
   renderRecentPanel();
   refreshChrome();
 
+  // Task 13：工具条打开入口与 Ctrl+O / Ctrl+Shift+O 走同一条消息（宿主弹系统对话框）
+  openFileButton.addEventListener('click', () => {
+    send('pickFile');
+  });
+  openFolderButton.addEventListener('click', () => {
+    send('pickFolder');
+  });
   themeToggle.addEventListener('click', () => {
     updateSettings({ theme: nextTheme(state.settings.theme) });
   });

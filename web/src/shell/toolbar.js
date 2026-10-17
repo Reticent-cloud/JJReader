@@ -95,14 +95,17 @@ export function buildAaPanel() {
 }
 
 /**
- * 构建工具条骨架：目录 / 最近 / 弹性空隙 / 主题 / Aa（既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮）。
+ * 构建工具条骨架：打开文件 / 打开文件夹 / 目录 / 最近 / 弹性空隙 / 主题 / Aa
+ * （既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮；Task 13 新增两个打开入口，与 Ctrl+O / Ctrl+Shift+O 同口径）。
  * 「最近」菜单的内容由 main.js 用 renderRecent 渲染到 #recent-menu（spec §5.6：与空白启动页共用列表）。
- * @returns {{ element: HTMLElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, themeToggle: HTMLButtonElement, aaToggle: HTMLButtonElement }}
+ * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, themeToggle: HTMLButtonElement, aaToggle: HTMLButtonElement }}
  */
 export function createToolbar() {
   const toolbar = document.createElement('header');
   toolbar.id = 'toolbar';
 
+  const openFile = createToolbarButton('打开文件', 'open-file', '打开 Markdown 文件（Ctrl+O）');
+  const openFolder = createToolbarButton('打开文件夹', 'open-folder', '选择文件夹（Ctrl+Shift+O）');
   const tocToggle = createToolbarButton('目录', 'toc-toggle', '大纲（Ctrl+B）');
   const recentToggle = createToolbarButton('最近', 'recent-toggle', '最近文件');
   recentToggle.setAttribute('aria-expanded', 'false');
@@ -113,9 +116,9 @@ export function createToolbar() {
   aaToggle.setAttribute('aria-controls', 'aa-panel');
   const spacer = document.createElement('div');
   spacer.className = 'toolbar-spacer';
-  toolbar.append(tocToggle, recentToggle, spacer, themeToggle, aaToggle);
+  toolbar.append(openFile, openFolder, tocToggle, recentToggle, spacer, themeToggle, aaToggle);
 
-  return { element: toolbar, tocToggle, recentToggle, themeToggle, aaToggle };
+  return { element: toolbar, openFile, openFolder, tocToggle, recentToggle, themeToggle, aaToggle };
 }
 
 /** 主题按钮文案（三态各一个中文标签）。 */

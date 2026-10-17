@@ -6,9 +6,13 @@
         Width="1000"
         Height="760"
         MinWidth="640"
-        MinHeight="480">
+        MinHeight="480"
+        AllowDrop="True"
+        DragOver="OnDragOver"
+        Drop="OnDrop">
     <Grid>
-        <!-- 极薄宿主：所有解析/排版/UI 都在 WebView2 里的前端完成 -->
-        <wv2:WebView2 x:Name="WebView" />
+        <!-- 极薄宿主：所有解析/排版/UI 都在 WebView2 里的前端完成。
+             AllowExternalDrop=False：把文件拖放交还给 WPF 窗口（否则 WebView2 自己吃掉拖放，Window.Drop 不触发）。 -->
+        <wv2:WebView2 x:Name="WebView" AllowExternalDrop="False" />
     </Grid>
 </Window>

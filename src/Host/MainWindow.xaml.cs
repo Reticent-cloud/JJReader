@@ -31,6 +31,9 @@ public partial class MainWindow : Window
     private string? _pendingDocumentPath;
     private DocumentRead? _currentDocument;
 
+    /// <summary>pickFolder 选中的文件夹：文件树（Task 14）接入前的落脚点，也用作下次对话框的初始目录。</summary>
+    private string? _browseRoot;
+
     /// <summary>前端完成一次渲染（来自 <c>renderDone</c> 消息；--verify-render 与 debug 日志使用）。</summary>
     public event Action<InboundMessage>? RenderDone;
 
@@ -103,6 +106,8 @@ public partial class MainWindow : Window
         settings.IsGeneralAutofillEnabled = false;
 
         core.WebMessageReceived += OnWebMessageReceived;
+        // Task 13：应用内不开第二个 WebView；http(s) 外链交给系统默认浏览器，其它协议忽略。
+        core.NewWindowRequested += OnNewWindowRequested;
         core.NavigateToString(BuildPageHtml());
 
         DebugLog.Write("WebView2 初始化完成，页面已导航");
@@ -337,6 +342,14 @@ public partial class MainWindow : Window
                 OpenFile(message.RelPath);
                 break;
 
+            case "pickFile":
+                PickFile();
+                break;
+
+            case "pickFolder":
+                PickFolder();
+                break;
+
             case "reload":
                 ReloadCurrentDocument();
                 break;
@@ -346,8 +359,7 @@ public partial class MainWindow : Window
                 break;
 
             default:
-                // 其余契约消息（pickFile/pickFolder/listDir/exportPdf/readyToPrint/openDefaultApps）
-                // 属 Task 13–16，本任务只记日志。
+                // 其余契约消息（listDir/exportPdf/readyToPrint/openDefaultApps）属 Task 14–16，本任务只记日志。
                 DebugLog.Write($"忽略消息 type={message.Type}");
                 break;
         }
@@ -369,8 +381,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// openFile：绝对路径直接使用；相对路径相对当前文档目录解析（越界拒绝）。
-    /// 最近文件面板与 Alt+←/→ 传绝对路径，wikilink/文件树的相对路径（Task 13）复用同一入口。
+    /// openFile：绝对路径直接使用（保持既有语义）；相对路径交给 <see cref="OpenTargetResolver"/>：
+    /// 精确路径 → 无扩展名补 .md → <see cref="NoteResolver"/> 大小写不敏感/递归子目录寻文件；越界一律拒绝。
+    /// 最近文件面板与 Alt+←/→ 传绝对路径，wikilink/附件（Task 13）与文件树（Task 14）传相对路径，共用同一入口。
     /// </summary>
     private void OpenFile(string? relPath)
     {
@@ -393,7 +406,7 @@ public partial class MainWindow : Window
                 var directory = Path.GetDirectoryName(document.Path);
                 if (!string.IsNullOrWhiteSpace(directory))
                 {
-                    target = FileHost.ResolveInside(directory, relPath);
+                    target = OpenTargetResolver.Resolve(directory, relPath);
                 }
             }
         }
@@ -404,12 +417,175 @@ public partial class MainWindow : Window
 
         if (string.IsNullOrWhiteSpace(target))
         {
-            DebugLog.Write($"openFile 无法解析 relPath={relPath}");
-            Post(Protocol.Toast("无法打开文件：路径不在当前文档目录内", "error"));
+            DebugLog.Write($"openFile 未找到 relPath={relPath}");
+            Post(Protocol.Toast($"未找到「{relPath}」", "warn"));
             return;
         }
 
         OpenDocument(target);
+    }
+
+    /// <summary>pickFile：系统打开对话框（Markdown/所有文件），选中后走 <see cref="OpenDocument"/>；取消不做任何事。</summary>
+    private void PickFile()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "打开 Markdown 文件",
+            Filter = "Markdown 文件|*.md;*.markdown;*.mdown;*.txt|所有文件|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+        if (PreferredBrowseDirectory() is { } directory)
+        {
+            dialog.InitialDirectory = directory;
+        }
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            DebugLog.Write("pickFile 已取消");
+            return;
+        }
+
+        DebugLog.Write($"pickFile path={dialog.FileName}");
+        OpenDocument(dialog.FileName);
+    }
+
+    /// <summary>
+    /// pickFolder：系统文件夹对话框（.NET 8+ 的 OpenFolderDialog）。文件树属 Task 14，
+    /// 本任务只记住选择结果并提示；记下的目录同时作为后续对话框的初始位置。
+    /// </summary>
+    private void PickFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择文件夹",
+            Multiselect = false,
+        };
+        if (PreferredBrowseDirectory() is { } directory)
+        {
+            dialog.InitialDirectory = directory;
+        }
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            DebugLog.Write("pickFolder 已取消");
+            return;
+        }
+
+        _browseRoot = dialog.FolderName;
+        DebugLog.Write($"pickFolder root={_browseRoot}");
+        Post(Protocol.Toast("已选择文件夹（文件树功能将在后续版本提供）", "warn"));
+    }
+
+    /// <summary>对话框初始目录：当前文档所在目录优先，其次上次 pickFolder 的选择。</summary>
+    private string? PreferredBrowseDirectory()
+    {
+        if (_currentDocument is { } document)
+        {
+            var directory = Path.GetDirectoryName(document.Path);
+            if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+            {
+                return directory;
+            }
+        }
+
+        return _browseRoot is { Length: > 0 } root && Directory.Exists(root) ? root : null;
+    }
+
+    /// <summary>拖入文件：接受 FileDrop（Effects=Copy），其余拖拽类型不接管。</summary>
+    private void OnDragOver(object sender, DragEventArgs e)
+    {
+        var isFileDrop = e.Data.GetDataPresent(DataFormats.FileDrop);
+        e.Effects = isFileDrop ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// 拖放打开：取第一个路径。Markdown 文件直接打开；文件夹提示后续版本（文件树 T14）；
+    /// 其它类型提示不支持。所有异常只记日志，拖放不能把宿主带崩。
+    /// </summary>
+    private void OnDrop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return;
+        }
+
+        e.Handled = true;
+
+        string? first = null;
+        try
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+            {
+                first = paths.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+            }
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"读取拖放数据失败：{exception.Message}");
+            return;
+        }
+
+        if (first is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(first))
+            {
+                Post(Protocol.Toast("文件夹浏览功能将在后续版本提供", "warn"));
+                return;
+            }
+
+            if (File.Exists(first) && FileHost.IsMarkdown(first))
+            {
+                OpenDocument(first);
+                return;
+            }
+
+            DebugLog.Write($"拖放不支持的文件 path={first}");
+            Post(Protocol.Toast("不支持的文件类型", "warn"));
+        }
+        catch (Exception exception)
+        {
+            // UI 事件边界：路径解析/文件系统异常只记日志
+            DebugLog.Write($"拖放打开失败 path={first}：{exception}");
+        }
+    }
+
+    /// <summary>
+    /// 新窗口请求（target=_blank 外链，Task 6 carry-forward）：取消应用内新窗口；
+    /// http(s) 交给系统默认浏览器，其它协议（file/javascript 等）忽略。
+    /// </summary>
+    private static void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+    {
+        e.Handled = true;
+        if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri))
+        {
+            DebugLog.Write($"忽略无法解析的新窗口请求：{e.Uri}");
+            return;
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            DebugLog.Write($"忽略非 http(s) 新窗口请求：{e.Uri}");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+            DebugLog.Write($"外链交给系统浏览器：{uri.AbsoluteUri}");
+        }
+        catch (Exception exception)
+        {
+            // UI 边界：系统没有默认浏览器/被策略阻止时只记日志
+            DebugLog.Write($"打开外链失败 uri={uri.AbsoluteUri}：{exception.Message}");
+        }
     }
 
     /// <summary>reload（F5）：重新读取当前文档并推送；位置按新文件的 key 重新查找（文件被外部修改则回到顶部）。</summary>
