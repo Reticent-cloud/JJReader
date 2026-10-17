@@ -1,9 +1,17 @@
 // 渲染后增强（Task 6）：给代码块复制按钮绑事件、给外链加 target/rel。
-// 设计约束：绝不抛异常（增强失败不能影响正文显示）、幂等（重复调用不重复绑事件）、
-// 不依赖框架（直接操作已解析 DOM）。图片加载失败兜底（onImageError）留给后续任务。
+// Task 9：图片占位——给每个 img 加 loading="lazy"/decoding="async"，error 时替换为 span.img-placeholder，
+// 离线/无 DNS（shields.io 徽章）或本地图片缺失时按原尺寸（或 16:9）占位，不破版、不阻塞首屏。
+// 设计约束：绝不抛异常（增强失败不能影响正文显示）、幂等（重复调用不重复绑事件/不重复替换）、
+// 不依赖框架（直接操作已解析 DOM）。
 
 /** 已绑过事件的标记：放在按钮上而不是容器上——shell 每次重渲染都会换一批新按钮，容器标记会误伤。 */
 const ENHANCED_ATTR = 'data-jj-enhanced';
+
+/** 图片 error 监听只绑一次的标记：写在 img 上（替换成占位后 img 已离开文档，重复 enhance 不会重复处理）。 */
+const IMG_GUARD_ATTR = 'data-jj-img-guard';
+
+/** 占位框兜底比例：拿不到宽高时使用（16:9，遵循 spec §5.11「固定 16:9 或按 width/height 的占位框」）。 */
+const PLACEHOLDER_ASPECT_RATIO = '16/9';
 
 /** 隐藏 textarea + document.execCommand('copy') 兜底；不可用或返回 false 时返回 false。 */
 function copyWithExecCommand(text) {
@@ -78,12 +86,106 @@ function markExternalLinks(container) {
 }
 
 /**
- * 渲染后增强：代码复制按钮 + 外链属性。
- * @param {Element|DocumentFragment} container 渲染容器（shell 的 #content）
- * @param {{baseUrl?: string}} options baseUrl 预留给后续任务（图片占位等），本任务不使用
+ * 把宽度/高度规整成 CSS 长度：纯数字按 px（HTML width/height 属性语义），百分比/em 等其它写法原样。
+ * @returns {string} 空串表示没有可用尺寸
  */
-export function enhance(container, { baseUrl } = {}) {
-  void baseUrl; // 预留参数：保持与 brief Interfaces 一致的签名，本任务只做复制与外链
+function cssLength(value) {
+  const text = String(value ?? '').trim();
+  if (text === '') {
+    return '';
+  }
+  return /^\d+(?:\.\d+)?$/.test(text) ? `${text}px` : text;
+}
+
+/** 图片尺寸：内联 style 优先（作者显式样式），其次 width/height 属性；缺失的部分为空串。 */
+function imageSize(img) {
+  const style = img.style;
+  const styleWidth = style ? cssLength(style.width) : '';
+  const styleHeight = style ? cssLength(style.height) : '';
+  return {
+    width: styleWidth || cssLength(img.getAttribute('width')),
+    height: styleHeight || cssLength(img.getAttribute('height')),
+  };
+}
+
+/**
+ * 构造占位元素：保留原 alt 文本（data-alt + 可见文本，均按 DOM 文本写入，不拼 HTML），
+ * 已知宽高则按原尺寸占位，否则用 16:9 比例撑开，避免版面塌陷。
+ */
+function buildImagePlaceholder(img) {
+  const placeholder = document.createElement('span');
+  placeholder.className = 'img-placeholder';
+  const alt = img.getAttribute('alt') || '';
+  placeholder.dataset.alt = alt;
+  placeholder.textContent = alt;
+  const { width, height } = imageSize(img);
+  if (width) {
+    placeholder.style.width = width;
+  }
+  if (height) {
+    placeholder.style.height = height;
+  }
+  if (!width || !height) {
+    placeholder.style.setProperty('aspect-ratio', PLACEHOLDER_ASPECT_RATIO);
+  }
+  return placeholder;
+}
+
+/**
+ * 把加载失败的 img 替换为占位元素；img 已不在文档中（被替换过）时直接忽略，保证幂等。
+ * onImageError(placeholder, { src, alt }) 为可选回调（宿主/后续任务可据此统计或重试），回调异常不影响正文。
+ * @returns {Element|null} 占位元素（未替换时 null）
+ */
+function replaceWithPlaceholder(img, onImageError) {
+  const parent = img.parentNode;
+  if (!parent) {
+    return null;
+  }
+  const info = {
+    src: img.getAttribute('src') || '',
+    alt: img.getAttribute('alt') || '',
+  };
+  const placeholder = buildImagePlaceholder(img);
+  parent.replaceChild(placeholder, img);
+  if (typeof onImageError === 'function') {
+    try {
+      onImageError(placeholder, info);
+    } catch {
+      // 回调失败不能影响正文：占位已经替换完成，吞掉异常
+    }
+  }
+  return placeholder;
+}
+
+/** 给单张图片绑 error 兜底并补 loading/decoding 属性；已绑过（data-jj-img-guard="1"）只补属性，不重复绑定。 */
+function guardImage(img, onImageError) {
+  if (img.getAttribute(IMG_GUARD_ATTR) !== '1') {
+    img.setAttribute(IMG_GUARD_ATTR, '1');
+    img.addEventListener(
+      'error',
+      () => {
+        replaceWithPlaceholder(img, onImageError);
+      },
+      { once: true },
+    );
+  }
+  // 属性设置天然幂等：已有作者指定的值时不覆盖
+  if (!img.hasAttribute('loading')) {
+    img.setAttribute('loading', 'lazy');
+  }
+  if (!img.hasAttribute('decoding')) {
+    img.setAttribute('decoding', 'async');
+  }
+}
+
+/**
+ * 渲染后增强：代码复制按钮 + 外链属性 + 图片占位兜底。
+ * @param {Element|DocumentFragment} container 渲染容器（shell 的 #content）
+ * @param {{baseUrl?: string, onImageError?: (placeholder: Element, info: {src: string, alt: string}) => void}} options
+ *   baseUrl 保留（相对图片 src 已在渲染期按 baseUrl 改写）；onImageError 在图片失败换占位后回调
+ */
+export function enhance(container, { baseUrl, onImageError } = {}) {
+  void baseUrl; // 相对图片 src 已由引擎渲染期按 baseUrl 改写，这里只需要做失败兜底
   if (!container || typeof container.querySelectorAll !== 'function') {
     return;
   }
@@ -92,4 +194,7 @@ export function enhance(container, { baseUrl } = {}) {
   }
   // 纯属性设置天然幂等（重复设成同一个值），不需要打标记
   markExternalLinks(container);
+  for (const img of container.querySelectorAll('img')) {
+    guardImage(img, onImageError);
+  }
 }

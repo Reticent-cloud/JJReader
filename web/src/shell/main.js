@@ -72,14 +72,61 @@ export function mountShell({ root, post } = {}) {
   };
 
   /**
+   * front matter「属性」折叠块（Task 9）：先用 JJ.extractFrontmatter 取本文档属性数据
+   * （T8 carry-forward：不复用 renderMarkdown 写回的 env，避免跨文档陈旧），非空时在 #content 顶部插入
+   * <details class="frontmatter"><summary>属性</summary><table>…</table></details>（默认折叠）。
+   * 表格用 createElement/textContent 逐格写入：属性值是不可信文本，绝不拼 HTML 字符串。
+   */
+  function mountFrontmatter(markdown) {
+    const engine = globalThis.JJ;
+    if (!engine || typeof engine.extractFrontmatter !== 'function') {
+      return;
+    }
+    const result = engine.extractFrontmatter(markdown);
+    const data = result && typeof result === 'object' ? result.data : null;
+    if (!data || typeof data !== 'object') {
+      return;
+    }
+    const entries = Object.entries(data);
+    if (entries.length === 0) {
+      return;
+    }
+
+    const details = document.createElement('details');
+    details.className = 'frontmatter';
+    const summary = document.createElement('summary');
+    summary.textContent = '属性';
+    const table = document.createElement('table');
+    const tbody = document.createElement('tbody');
+    for (const [key, value] of entries) {
+      const row = document.createElement('tr');
+      const th = document.createElement('th');
+      th.textContent = String(key);
+      const td = document.createElement('td');
+      // 数组值用「、」连接；布尔/数字统一按字符串展示（与 extractFrontmatter 的解析口径一致）
+      td.textContent = Array.isArray(value)
+        ? value.map((item) => String(item)).join('、')
+        : String(value);
+      row.append(th, td);
+      tbody.append(row);
+    }
+    table.append(tbody);
+    details.append(summary, table);
+    content.prepend(details);
+  }
+
+  /**
    * 正文渲染：优先走 JJ.renderMarkdown（与宿主共用同一 markdown-it 实现，baseUrl 用于解析相对图片）。
-   * 渲染后调用 JJ.enhance（Task 6 起）绑代码复制按钮/处理外链；enhance 缺失时跳过，正文已经渲染，不白屏。
+   * 每次渲染都传新的 env 字面量（T8 carry-forward：env 会被写入 frontmatter，复用会串文档）。
+   * 渲染后挂 front matter 属性块并调用 JJ.enhance（Task 6 起复制按钮/外链，Task 9 起图片占位）；
+   * enhance 缺失时跳过，正文已经渲染，不白屏。
    * 引擎缺失（打包缺失/加载失败）时降级为 escapeHtml + <pre>，保证正文区永远不白屏。
    */
   function render(markdown) {
     const engine = globalThis.JJ;
     if (engine && typeof engine.renderMarkdown === 'function') {
       content.innerHTML = engine.renderMarkdown(markdown, { baseUrl: state.baseUrl });
+      mountFrontmatter(markdown);
       if (typeof engine.enhance === 'function') {
         engine.enhance(content, { baseUrl: state.baseUrl });
       }

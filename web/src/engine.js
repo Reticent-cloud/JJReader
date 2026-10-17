@@ -2,7 +2,8 @@
 // 单例让 renderMarkdown 与 extractHeadings 对同一文档产生完全一致的标题 id（共用 slugify 分配逻辑）。
 // Task 6 起装配脚注/任务清单/emoji 插件并自定义 fence 渲染器（代码高亮 + 复制按钮）；
 // Task 7 起 renderMarkdown 出口统一过 sanitizeHtml（DOMPurify 白名单），内嵌 HTML 不再原样透传；
-// Task 8 起装配笔记体扩展语法（front matter / wikilink / 附件 / ==高亮== / %%注释%%，见 src/ext/）。
+// Task 8 起装配笔记体扩展语法（front matter / wikilink / 附件 / ==高亮== / %%注释%%，见 src/ext/）；
+// Task 9 起装配 [TOC] 内联目录（预扫描标题 → env.tocHtml → 块级占位规则，见 src/ext/toc-placeholder.js）。
 
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
@@ -12,6 +13,7 @@ import { install as attachment } from './ext/attachment.js';
 import { install as comment } from './ext/comment.js';
 import { extractFrontmatter, install as frontmatter } from './ext/frontmatter.js';
 import { install as highlightMark } from './ext/highlight-mark.js';
+import { buildTocHtml, hasTocPlaceholder, install as tocPlaceholder } from './ext/toc-placeholder.js';
 import { install as wikilink } from './ext/wikilink.js';
 import { highlight } from './highlight.js';
 import { sanitizeHtml } from './sanitize.js';
@@ -60,6 +62,7 @@ md.use(wikilink);
 md.use(attachment);
 md.use(highlightMark);
 md.use(comment);
+md.use(tocPlaceholder);
 
 /**
  * 把 inline 子 token 还原成纯文本：去掉强调/链接/HTML 等行内标记，保留文字、行内代码、emoji 与图片 alt。
@@ -184,6 +187,8 @@ md.renderer.rules.fence = (tokens, idx) => {
  *   - baseUrl：相对图片 src 按 baseUrl 解析；未给 baseUrl 时保留原样；
  *   - frontmatter：调用方未提供（undefined/null）时，把本文档的解析结果写回 env.frontmatter（T9 的「属性」折叠块读取）；
  *     调用方显式提供时原样保留，不被文档内容覆盖。
+ * 含独占行 [TOC] 时先做一次标题预扫描（extractHeadings），把目录 HTML 放进本次渲染 env.tocHtml 供块级规则内联；
+ * 无 [TOC] 的文档不额外 parse（省掉一次全文解析开销）。
  * 出口统一过 sanitizeHtml（Task 7）：Markdown 内嵌 HTML 与新语法产出的标签都必须先经 DOMPurify 白名单才能进 DOM。
  */
 export function renderMarkdown(markdown, env = {}) {
@@ -193,8 +198,11 @@ export function renderMarkdown(markdown, env = {}) {
     targetEnv.frontmatter = extractFrontmatter(text).data;
   }
   // 拷贝一份 env 再挂内部状态：不污染调用方对象（frontmatter 是上面按需写回的显式契约），
-  // 同时让核心规则拿到本文档的 usedIds。
+  // 同时让核心规则拿到本文档的 usedIds 与内联目录 HTML。
   const renderEnv = { ...targetEnv, [USED_IDS_KEY]: new Set() };
+  if (hasTocPlaceholder(text)) {
+    renderEnv.tocHtml = buildTocHtml(extractHeadings(text));
+  }
   return sanitizeHtml(md.render(text, renderEnv));
 }
 
