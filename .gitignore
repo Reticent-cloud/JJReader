@@ -2,6 +2,7 @@
 bin/
 obj/
 out/
+out-selfcontained/
 web/dist/
 web/node_modules/
 *.user

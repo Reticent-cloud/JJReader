@@ -9,9 +9,15 @@
     <RootNamespace>JingjingReader</RootNamespace>
     <AssemblyName>JingjingReader</AssemblyName>
     <Product>鲸鲸阅读器</Product>
-    <AssemblyTitle>JingjingReader</AssemblyTitle>
+    <!-- Win32 版本资源的「文件说明」由 Roslyn 从 AssemblyTitle 生成（FileDescription 属性本身不参与），
+         因此两处都写产品名，保证资源管理器/任务管理器显示「鲸鲸阅读器」。 -->
+    <AssemblyTitle>鲸鲸阅读器</AssemblyTitle>
     <Description>鲸鲸阅读器 Markdown 阅读器</Description>
+    <FileDescription>鲸鲸阅读器</FileDescription>
     <Version>0.1.0</Version>
+    <!-- Task 17：资源管理器/任务栏图标（16/32/48/256 多尺寸）与 PerMonitorV2 DPI/长路径清单。 -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
