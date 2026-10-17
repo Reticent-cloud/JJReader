@@ -114,11 +114,11 @@ dotnet test tests/host/JingjingReader.Tests.csproj    # xUnit
 pwsh -NoProfile -File scripts/verify.ps1
 ```
 
-脚本会在 ASCII 临时目录复制一份 `out\` 后依次检查：构建、宿主单测、前端单测、环境自检、`samples/full-syntax.md` 首屏（≤ 1000 ms、`tocCount ≥ 30`）、`samples/huge-50k-lines.md` 首屏（≤ 1500 ms）与进程树内存峰值（≤ 150 MB，宿主 + WebView2 子进程 `WorkingSet64` 50 ms 采样）、PDF 导出（hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100）、双开单实例、前端产物 ≤ 500 KB 且两份字节一致。终端打印 `VERIFY OK` / `VERIFY FAILED`，报告写入 `out/verify-report.md`。
+脚本会在 ASCII 临时目录复制一份 `out\` 后依次检查：构建、宿主单测、前端单测、环境自检、`samples/full-syntax.md` 首屏（≤ 1000 ms、`tocCount ≥ 30`）、`samples/huge-50k-lines.md` 首屏（≤ 1500 ms）与宿主私有内存峰值（≤ 150 MB，`PrivateMemorySize64` 50 ms 采样；WebView2 进程组只记录、不参与判定）、PDF 导出（hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100）、双开单实例、前端产物 ≤ 500 KB 且两份字节一致。终端打印 `VERIFY OK` / `VERIFY FAILED`，报告写入 `out/verify-report.md`。
 
 无法自动化的交互项（拖放、对话框、主题、字体、文件树、关联前后注册表一致性、长路径等）见 [docs/verify-checklist.md](docs/verify-checklist.md)。
 
-> 注意：内存项按 Controller 决定的「进程树 `WorkingSet64` 峰值」口径统计。WebView2 会常驻浏览器/渲染/GPU/工具等多个进程，在本仓库的验证机上该项实测约 300–310 MB，超过 spec 的 150 MB 预算（详见 `out/verify-report.md` 与下方「已知限制」）。自动验收的其余检查项均通过；TOC 位置记忆、拖放等交互项见手测清单。
+> 注意：内存判定项按 T17 裁定后的「宿主进程私有内存峰值（`PrivateMemorySize64`，50 ms 采样）≤ 150 MB」口径统计；WebView2 进程组（直接子进程与全部后代）的 `WorkingSet64` 只作为信息项记录，不参与 PASS/FAIL。验证机上宿主私有峰值实测约 160–170 MB，仍超过 150 MB 预算，因此自动验收保留该 1 项 FAIL（详见 `out/verify-report.md` 与下方「已知限制」）。其余检查项均通过；TOC 位置记忆、拖放等交互项见手测清单。
 
 ## 卸载
 
@@ -170,7 +170,7 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -ExePath "D:\apps\JingjingReader\Jin
 - **分块渲染与跨块脚注**：超过 512 KB 的文档按块独立解析，定义在文末的脚注引用在较早的块里会显示为字面文本（`[^1]`）。引用式链接定义已做全文预抽取并补齐，脚注不在补齐范围（脚注区重复会改变既有输出）。这是已知取舍，不是渲染错误。
 - **超大文档导出 PDF 会先全量渲染**：导出前会把分块懒渲染的剩余块一次性渲染出来（保证内容完整），因此 5 万行文档导出要约 5 秒、1000+ 页；导出完成后以 toast 提示成功/失败，超时保护为 75 秒。
 - **默认关联受 Windows 限制**：安装只写当前用户的「打开方式」，不能静默抢占已有默认程序；`HKCU` 之外的机器级关联不修改，也不需要管理员权限。
-- **内存占用以 WebView2 基线为主**：程序会常驻 WebView2 的浏览器/渲染/GPU/工具进程。验证机上进程树 `WorkingSet64` 峰值约 300–310 MB（私有工作集约 150–180 MB），高于 spec §10 的 150 MB 预算；该指标受 WebView2 Runtime 版本、GPU 与系统环境影响，验收报告会记录实测值。
+- **内存主要在 WebView2 内核（Chromium 基线）**：程序会常驻 WebView2 的浏览器/渲染/GPU/工具等进程。验证机上（50 ms 采样峰值，多次运行）实测：宿主私有内存（`PrivateMemorySize64`）约 160–170 MB、WebView2 进程组（直接子进程与全部后代）`WorkingSet64` 约 425–475 MB、整树 `WorkingSet64` 约 585–630 MB。验收口径为「宿主进程私有内存峰值 ≤ 150 MB」，WebView2 进程组单列为信息项、不计入该预算；当前宿主私有峰值仍高于 150 MB（约 7–13%），自动验收保留该 1 项 FAIL。数值受 WebView2 Runtime 版本、GPU 与系统环境影响，详见 `out/verify-report.md`。
 - **图标为占位**：`src/Host/app.ico` 是 `scripts/gen-icon.py` 生成的临时鲸鱼图标（16/32/48/256），正式图标待设计（spec Q1）。
 - **不支持**：数学公式 `$...$` / `$$...$$`、Mermaid、定义列表；内嵌 `<script>`/`<style>`/`<iframe>` 会被清洗移除；只读、无编辑、无多标签页、无全文搜索；不做笔记库级双链解析，`[[...]]` 只在当前文档目录及浅层子目录查找。
 - **长路径**：清单已声明 `longPathAware`，文件读取对超长路径做 `\\?\` 规范化；网络共享/权限受限目录仍受系统策略约束。

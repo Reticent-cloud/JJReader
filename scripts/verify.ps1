@@ -9,7 +9,7 @@
   4. 把 out\ 复制到 ASCII 临时目录，后续启动实测都用这份副本
   5. --selftest：产品名 / .NET / WebView2 / OS
   6. --verify-render samples/full-syntax.md：首屏 ≤ 1000 ms、tocCount ≥ 30
-  7. --verify-render samples/huge-50k-lines.md：首屏 ≤ 1500 ms + 进程树内存峰值 ≤ 150 MB
+  7. --verify-render samples/huge-50k-lines.md：首屏 ≤ 1500 ms + 宿主私有内存峰值 ≤ 150 MB
   8. --verify-pdf：hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100
   9. 双开单实例：两个宿主进程同时打开不同文档，JingjingReader 进程数必须为 1
  10. 前端产物 ≤ 500 KB，且 web/dist 与 src/Host/Resources 两份字节一致
@@ -18,8 +18,9 @@
 约定：
   - 每步输出 [PASS]/[FAIL] 名称 详情；失败不中断，继续跑完并汇总，最终 exit 1。
   - 不在本脚本里安装/卸载 .md 关联（不写注册表）：那属于 install.ps1/uninstall.ps1 与手测清单。
-  - 内存口径：宿主进程 + ParentProcessId 等于宿主 PID 的 msedgewebview2 进程的 WorkingSet64 之和，
-    50 ms 采样取峰值（Controller 决策 17-⑦；对应 spec「本应用相关进程总内存」）。
+  - 内存判定口径（Controller 裁定，T17 修正）：宿主进程（JingjingReader.exe）的 PrivateMemorySize64
+    （Private Bytes）峰值 ≤ 150 MB，50 ms 采样取峰值。WebView2 进程组（直接子进程与全部后代）
+    的 WorkingSet64 之和只作为信息项记录，不参与 PASS/FAIL；对应 spec §2.3 第 2 条。
   - 临时目录位于 %TEMP%\jj-verify-<guid>（ASCII），结束后清理；只停止本脚本启动的宿主进程。
 
 用法：
@@ -218,6 +219,60 @@ function Get-ShortText {
     $flat = ($Text -replace '\s+', ' ').Trim()
     if ($flat.Length -le $Length) { return $flat }
     return $flat.Substring(0, $Length) + '…'
+}
+
+function Get-WebViewGroupWorkingSet {
+    <#
+      宿主进程拉起的 WebView2 进程组（直接子进程与全部后代）的 WorkingSet64 之和。
+      父子关系用 CIM 查（只有 msedgewebview2.exe 参与），WorkingSet64 逐个用 Get-Process 读。
+      信息项：不参与 PASS/FAIL；CIM 不可用时返回 0 并标记 Error，采样不中断。
+    #>
+    param([int]$RootProcessId)
+    $ids = New-Object System.Collections.Generic.List[int]
+    try {
+        $webviews = @(Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" -ErrorAction SilentlyContinue)
+        if ($webviews.Count -eq 0) {
+            return [pscustomobject]@{ Bytes = [long]0; Count = 0; Error = $false }
+        }
+        $childrenByParent = @{}
+        foreach ($webview in $webviews) {
+            $parentId = [int]$webview.ParentProcessId
+            if (-not $childrenByParent.ContainsKey($parentId)) {
+                $childrenByParent[$parentId] = New-Object System.Collections.Generic.List[int]
+            }
+            $childrenByParent[$parentId].Add([int]$webview.ProcessId)
+        }
+        # 从宿主 PID 出发做 BFS：父 PID 链可能跨两层以上（browser → renderer/GPU/utility）。
+        $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+        $queue = New-Object 'System.Collections.Generic.Queue[int]'
+        $queue.Enqueue($RootProcessId)
+        while ($queue.Count -gt 0) {
+            $currentId = $queue.Dequeue()
+            if (-not $childrenByParent.ContainsKey($currentId)) { continue }
+            foreach ($childId in $childrenByParent[$currentId]) {
+                if ($seen.Add($childId)) {
+                    $ids.Add($childId)
+                    $queue.Enqueue($childId)
+                }
+            }
+        }
+    } catch {
+        return [pscustomobject]@{ Bytes = [long]0; Count = 0; Error = $true }
+    }
+    $bytes = [long]0
+    $count = 0
+    foreach ($processId in $ids) {
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($process) {
+            try {
+                $bytes += [long]$process.WorkingSet64
+                $count += 1
+            } catch {
+                # 进程在采样间隙退出：跳过该进程。
+            }
+        }
+    }
+    return [pscustomobject]@{ Bytes = $bytes; Count = $count; Error = $false }
 }
 
 function Stop-OurProcesses {
@@ -434,17 +489,19 @@ try {
     }
     Add-Result -Name 'full-syntax 首屏' -Expect 'elapsedMs ≤ 1000 ms，tocCount ≥ 30' -Actual $fullActual -Pass $fullOk
 
-    # ── ⑦ 5 万行首屏 + 进程树内存峰值 ────────────────────────────────────────
-    Write-Host '[7/10] 5 万行首屏与内存峰值（--verify-render + 进程树采样）…'
+    # ── ⑦ 5 万行首屏 + 宿主私有内存峰值（WebView2 进程组仅作信息项）──────────
+    Write-Host '[7/10] 5 万行首屏与内存峰值（--verify-render + 宿主私有内存采样）…'
     $hugeElapsed = $null
     $hugeReadyOk = $false
     $hugeActual = ''
-    $peakBytes = [long]0
-    $peakHostBytes = [long]0
+    $peakPrivateBytes = [long]0
     $peakWebViewBytes = [long]0
+    $peakWebViewCount = 0
+    $peakTreeBytes = [long]0
     $memorySamples = 0
     $memoryOk = $false
     $memoryActual = ''
+    $webViewBaselineActual = '跳过：运行副本缺失'
     if (-not $canRunHost) {
         $hugeActual = '跳过：运行副本缺失'
         $memoryActual = '跳过：运行副本缺失'
@@ -468,33 +525,24 @@ try {
         Start-Sleep -Milliseconds 20
         while ($true) {
             $hostProcess = Get-Process -Id $hugeProcess.Id -ErrorAction SilentlyContinue
-            $sampleSum = [long]0
-            $sampleWebView = [long]0
+            $samplePrivate = [long]0
+            $sampleHostWs = [long]0
             if ($hostProcess) {
-                $sampleSum += $hostProcess.WorkingSet64
+                try { $samplePrivate = [long]$hostProcess.PrivateMemorySize64 } catch { $samplePrivate = [long]0 }
+                try { $sampleHostWs = [long]$hostProcess.WorkingSet64 } catch { $sampleHostWs = [long]0 }
             }
-            try {
-                $webviews = @(Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" -ErrorAction SilentlyContinue)
-                foreach ($webview in $webviews) {
-                    if ([int]$webview.ParentProcessId -eq [int]$hugeProcess.Id) {
-                        $webviewProcess = Get-Process -Id ([int]$webview.ProcessId) -ErrorAction SilentlyContinue
-                        if ($webviewProcess) {
-                            $sampleSum += $webviewProcess.WorkingSet64
-                            $sampleWebView += $webviewProcess.WorkingSet64
-                        }
-                    }
-                }
-            } catch {
-                # CIM 查询失败不终止采样；宿主的内存仍是有效下限。
-            }
-            if ($sampleSum -gt 0) {
+            $webViewGroup = Get-WebViewGroupWorkingSet -RootProcessId ([int]$hugeProcess.Id)
+            $sampleTreeWs = $sampleHostWs + [long]$webViewGroup.Bytes
+            if (($samplePrivate -gt 0) -or ($sampleHostWs -gt 0) -or ([long]$webViewGroup.Bytes -gt 0)) {
                 $memorySamples += 1
-                if ($sampleSum -gt $peakBytes) {
-                    $peakBytes = $sampleSum
-                    # 分解值取「总和最大」那一刻的样本，避免宿主峰值与 WebView2 峰值来自不同时刻。
-                    $peakHostBytes = $sampleSum - $sampleWebView
-                    $peakWebViewBytes = $sampleWebView
+                # 判定值：宿主进程 PrivateMemorySize64（Private Bytes）单独取峰值。
+                if ($samplePrivate -gt $peakPrivateBytes) { $peakPrivateBytes = $samplePrivate }
+                # 信息项各自取峰值；整树峰值按同一采样时刻求和，避免相加两个不同时刻的峰值。
+                if ([long]$webViewGroup.Bytes -gt $peakWebViewBytes) {
+                    $peakWebViewBytes = [long]$webViewGroup.Bytes
+                    $peakWebViewCount = [int]$webViewGroup.Count
                 }
+                if ($sampleTreeWs -gt $peakTreeBytes) { $peakTreeBytes = $sampleTreeWs }
             }
             if ($hugeProcess.HasExited) { break }
             if ((Get-Date) -gt $deadline) {
@@ -525,15 +573,21 @@ try {
                 (Get-ShortText ($hugeStdOut + ' ' + (Read-Utf8File $hugeErr)) 300)
         }
 
-        $memoryOk = (-not $timedOut) -and ($memorySamples -gt 0) -and ($peakBytes -le $MemoryLimitBytes)
+        $memoryOk = (-not $timedOut) -and ($peakPrivateBytes -gt 0) -and ($peakPrivateBytes -le $MemoryLimitBytes)
         if ($memorySamples -eq 0) {
             $memoryActual = '未采集到内存样本（进程退出过快或无法读取进程）'
+            $webViewBaselineActual = '未采集到内存样本'
         } else {
-            $memoryActual = "峰值 $(Format-Mb $peakBytes)（≤ 150.0 MB；宿主 $(Format-Mb $peakHostBytes) + WebView2 $(Format-Mb $peakWebViewBytes)；采样 $memorySamples 次）"
+            $memoryActual = "峰值 $(Format-Mb $peakPrivateBytes)（≤ 150.0 MB；PrivateMemorySize64，采样 $memorySamples 次）"
+            $webViewBaselineActual = "峰值 $(Format-Mb $peakWebViewBytes)（$peakWebViewCount 个 msedgewebview2 进程；50 ms 采样 $memorySamples 次）"
         }
     }
     Add-Result -Name '5 万行首屏' -Expect 'elapsedMs ≤ 1500 ms' -Actual $hugeActual -Pass $hugeReadyOk
-    Add-Result -Name '5 万行内存峰值' -Expect '进程树 WorkingSet64 峰值 ≤ 150 MB' -Actual $memoryActual -Pass $memoryOk
+    Add-Result -Name '宿主私有内存峰值' -Expect 'JingjingReader.exe PrivateMemorySize64 峰值 ≤ 150 MB' -Actual $memoryActual -Pass $memoryOk
+    if ($memorySamples -gt 0) {
+        Write-Host "[INFO] WebView2 基线（信息，进程组 WorkingSet64 之和）：$webViewBaselineActual（不参与 PASS/FAIL）" -ForegroundColor DarkGray
+        Write-Host "[INFO] 整树 WorkingSet（信息）：峰值 $(Format-Mb $peakTreeBytes)（宿主 WorkingSet64 + WebView2 进程组，同一采样时刻；仅参考）" -ForegroundColor DarkGray
+    }
 
     # ── ⑧ PDF 导出 ───────────────────────────────────────────────────────────
     Write-Host '[8/10] PDF 导出（--verify-pdf）…'
@@ -717,7 +771,11 @@ try {
     $reportLines.Add('')
     $reportLines.Add('## 说明')
     $reportLines.Add('')
-    $reportLines.Add('- 内存口径：宿主进程 + `ParentProcessId` 等于宿主 PID 的 `msedgewebview2` 进程的 `WorkingSet64` 之和，50 ms 采样取峰值。')
+    $reportLines.Add('- 内存判定口径（T17 裁定修正）：宿主进程 `JingjingReader.exe` 的 `PrivateMemorySize64`（Private Bytes，`Get-Process -Id <pid> | Select PrivateMemorySize64`）峰值 ≤ 150 MB，50 ms 采样取峰值。')
+    $reportLines.Add('- WebView2 基线（信息）：' + $webViewBaselineActual + '；统计对象为直接子进程与全部后代的 `msedgewebview2` 进程组，取 `WorkingSet64` 之和；只记录，不参与 PASS/FAIL。')
+    if ($memorySamples -gt 0) {
+        $reportLines.Add('- 整树 WorkingSet（信息）：峰值 ' + (Format-Mb $peakTreeBytes) + '（宿主 `WorkingSet64` + WebView2 进程组，同一采样时刻求和；仅参考）。')
+    }
     $reportLines.Add('- 首屏耗时来自前端 `renderDone.elapsedMs`（`--verify-render` 的 READY JSON）；PDF 页数按字节层 `/Type /Page` 对象统计（排除 `/Type /Pages`）。')
     $reportLines.Add('- 双开单实例检查用同一份副本 exe 启动两个进程；若验收前已有用户正在使用的 JingjingReader 实例，该项会明确失败而不是误杀用户进程。')
     $reportLines.Add('- 本脚本不安装/卸载 .md 关联、不写注册表；默认应用、拖放、主题等交互项见 docs/verify-checklist.md。')
