@@ -117,6 +117,8 @@ export function createRenderer({ content, getState, tocController, send, showToa
 
   /** 拆掉上一次的分块渲染器（断开哨兵观察器）；下次 load 前先调用，避免观察器泄漏到新文档。 */
   function clearChunked() {
+    // 分块字节统计只对当前文档有效：拆掉渲染器时一并清掉，避免旧文档的字节比例参与位置估算
+    state().chunkBytes = null;
     if (!state().chunked) {
       return;
     }
@@ -174,6 +176,16 @@ export function createRenderer({ content, getState, tocController, send, showToa
     if (blocks.length === 0) {
       return renderSingle(markdown, huge, engine);
     }
+    // 分块字节统计（T12 评审 Important 1）：按块累计「已渲染源码字节 / 全文字节」，
+    // 供 shell 的位置追踪在未全部渲染时估算全文高度（不用首屏高度做分母）。
+    const splitTotal = Number(split.totalBytes);
+    const chunkBytes = {
+      totalBytes: Number.isFinite(splitTotal) && splitTotal > 0 ? splitTotal : utf8Length(markdown),
+      totalBlocks: blocks.length,
+      renderedBlocks: 0,
+      renderedBytes: 0,
+    };
+    state().chunkBytes = chunkBytes;
     const extracted = collectExtracted(markdown);
     tocController.setExtractedCount(extracted.length);
     const tocHeadings = extracted.map((heading) => ({
@@ -208,6 +220,15 @@ export function createRenderer({ content, getState, tocController, send, showToa
           });
         },
         onChunkRendered: (info) => {
+          // 已渲染块按顺序到达（首屏前缀 → 哨兵逐块 → renderAll 批量）：累计源码字节，
+          // 用 utf8Length(blocks[i]) 而不是 HTML 字节（位置估算以 markdown 源字节为密度基准）。
+          const index = Number(info && info.index);
+          if (Number.isInteger(index) && index >= chunkBytes.renderedBlocks && index < blocks.length) {
+            for (let i = chunkBytes.renderedBlocks; i <= index; i += 1) {
+              chunkBytes.renderedBytes += utf8Length(blocks[i]);
+            }
+            chunkBytes.renderedBlocks = index + 1;
+          }
           if (!frontmatterMounted) {
             frontmatterMounted = true;
             mountFrontmatter(content, markdown);

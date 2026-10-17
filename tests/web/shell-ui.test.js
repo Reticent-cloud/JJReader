@@ -679,29 +679,35 @@ it('点击 Aa 面板外部关闭，点击面板内部不关闭', () => {
   expect(root.querySelector('#aa-toggle').getAttribute('aria-expanded')).toBe('false');
 });
 
-it('Aa 面板控件变更即时应用并持久化', () => {
+it('Aa 面板控件变更即时应用，滑杆落盘防抖 300ms（T12 评审 Minor b）', () => {
+  vi.useFakeTimers();
   const { root, shell, posted } = mount();
   load(shell);
   const panel = root.querySelector('#aa-panel');
   root.querySelector('#aa-toggle').click();
   const style = document.documentElement.style;
 
+  // 下拉选择仍是即时落盘
   const width = panel.querySelector('[data-setting="contentWidth"]');
   width.value = '960';
   width.dispatchEvent(new Event('change', { bubbles: true }));
   expect(style.getPropertyValue('--content-width')).toBe('960px');
   expect(lastPatch(posted)).toEqual({ contentWidth: 960 });
 
+  // 滑杆：即时应用，300ms 无新输入才落盘
   const fontSize = panel.querySelector('[data-setting="fontSize"]');
   fontSize.value = '20';
   fontSize.dispatchEvent(new Event('input', { bubbles: true }));
   expect(style.getPropertyValue('--font-size')).toBe('20px');
+  expect(lastPatch(posted)).toEqual({ contentWidth: 960 });
+  vi.advanceTimersByTime(300);
   expect(lastPatch(posted)).toEqual({ fontSize: 20 });
 
   const lineHeight = panel.querySelector('[data-setting="lineHeight"]');
   lineHeight.value = '1.9';
   lineHeight.dispatchEvent(new Event('input', { bubbles: true }));
   expect(style.getPropertyValue('--line-height')).toBe('1.9');
+  vi.advanceTimersByTime(300);
   expect(lastPatch(posted)).toEqual({ lineHeight: 1.9 });
 
   const cjkFont = panel.querySelector('[data-setting="cjkFont"]');
@@ -715,6 +721,7 @@ it('Aa 面板控件变更即时应用并持久化', () => {
   monoFont.dispatchEvent(new Event('change', { bubbles: true }));
   expect(style.getPropertyValue('--font-mono')).toContain('Cascadia Mono');
   expect(lastPatch(posted)).toEqual({ monoFont: 'Cascadia Mono' });
+  vi.useRealTimers();
 });
 
 it('无标题文档显示「此文档没有标题」且 TOC 为空', () => {

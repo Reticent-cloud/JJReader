@@ -24,6 +24,7 @@ import {
   clearToastContainer,
   createChromeElements,
   createPositionTracker,
+  estimateTotalHeight,
   setToastContainer,
   showToast,
   updateChrome,
@@ -32,6 +33,7 @@ import { createTocController } from './headings.js';
 import { nextRecentPath, normalizeRecentItems, renderRecent } from './recent.js';
 import { createRenderer } from './render.js';
 import { createTocResizer } from './resizer.js';
+import { createSettingsSaver } from './settings-saver.js';
 import { buildAaPanel, createToolbar, themeLabel } from './toolbar.js';
 
 /** 工具条悬浮显示：鼠标进入窗口顶部 40px 区域（spec §5.1）。 */
@@ -126,6 +128,9 @@ export function mountShell({ root, post } = {}) {
     // Task 11：大文件模式标记（关闭高亮、停用滚动联动）、分块渲染器句柄
     huge: false,
     chunked: null,
+    // 分块字节统计（由 render.js 写入）：{totalBytes, totalBlocks, renderedBlocks, renderedBytes}
+    // 位置追踪在未全部渲染时按它估算全文高度（T12 评审 Important 1）
+    chunkBytes: null,
     // Task 12：位置追踪器（每次 load 重建；节流上报 savePosition）
     positionTracker: null,
   };
@@ -165,7 +170,7 @@ export function mountShell({ root, post } = {}) {
     tocResizer.hidden = !visible;
   }
 
-  /** Aa 面板控件回显当前设置（快捷键改字号后滑杆同步）。 */
+  /** Aa 面板控件回显当前设置（快捷键改字号后滑杆同步；滑杆的 aria-valuenow 一起同步）。 */
   function syncAaControls() {
     for (const control of aaPanel.querySelectorAll('[data-setting]')) {
       const key = control.dataset.setting;
@@ -174,6 +179,10 @@ export function mountShell({ root, post } = {}) {
         continue;
       }
       control.value = String(value);
+      if (control.getAttribute('type') === 'range') {
+        // T12 评审 Minor e：滑杆的无障碍当前值随数值更新（快捷键/拖动两条路径都会经过这里）
+        control.setAttribute('aria-valuenow', String(value));
+      }
       const output = control.parentElement ? control.parentElement.querySelector('.aa-value') : null;
       if (output) {
         output.textContent = String(value);
@@ -197,12 +206,23 @@ export function mountShell({ root, post } = {}) {
     return String(raw);
   }
 
+  // ── 设置落盘防抖（T12 评审 Minor b：拖动期间只 apply，停手 300ms 才 post('saveSettings')） ──
+  // 累积/合并/定时器逻辑在 settings-saver.js；这里只负责把 apply 后的 patch 交给它。
+  const settingsSaver = createSettingsSaver({ send });
+
+  /** 立即发出防抖中累积的设置 patch（关面板/离开面板/destroy 调用）。 */
+  function flushSettingsSave() {
+    settingsSaver.flush();
+  }
+
   /**
    * 唯一设置入口：归一 → 只算变化字段 → 先应用（写 CSS 变量/主题/侧栏）→ 再上报 saveSettings{patch}。
    * 没有变化时什么都不做（不重复发消息）。
+   * @param {object} next 部分设置字段
+   * @param {{deferSave?: boolean}} [options] deferSave：滑杆拖动中只 apply，落盘走 300ms 防抖
    * @returns {object} 实际发送的 patch（无变化为空对象）
    */
-  function updateSettings(next) {
+  function updateSettings(next, { deferSave = false } = {}) {
     const merged = normalizeSettings({ ...state.settings, ...(next && typeof next === 'object' ? next : {}) });
     const patch = settingsPatch(state.settings, merged);
     if (Object.keys(patch).length === 0) {
@@ -219,7 +239,8 @@ export function mountShell({ root, post } = {}) {
     syncAaControls();
     // 字号/行距/行宽（以及侧栏宽度）变化都会重排正文：刷新标题位置快照
     scheduleRefreshHeadingTops();
-    send('saveSettings', { patch });
+    // 非拖动路径会把累积的滑杆 patch 合并进本次消息一起发（不留 pending 里的旧值覆盖新值）
+    settingsSaver.save(patch, { defer: deferSave });
     return patch;
   }
 
@@ -292,7 +313,9 @@ export function mountShell({ root, post } = {}) {
     aaToggle.setAttribute('aria-expanded', 'true');
   }
 
+  /** 关闭面板：滑杆防抖中的落盘立即补发（Minor b：不能让最后一次拖动的值永远留在定时器里）。 */
   function closeAaPanel() {
+    flushSettingsSave();
     aaPanel.hidden = true;
     aaToggle.setAttribute('aria-expanded', 'false');
   }
@@ -322,7 +345,10 @@ export function mountShell({ root, post } = {}) {
     }
   }
 
-  /** Aa 面板控件变更（input 覆盖滑杆拖动，change 覆盖下拉选择）→ 即时应用并持久化。 */
+  /**
+   * Aa 面板控件变更（input 覆盖滑杆拖动，change 覆盖下拉选择/滑杆松手）→ 即时应用；
+   * 滑杆拖动中的 input 落盘走 300ms 防抖，change（松手）与下拉立刻落盘。
+   */
   function onAaControlChange(event) {
     const target = event.target;
     if (!target || typeof target.closest !== 'function') {
@@ -337,15 +363,18 @@ export function mountShell({ root, post } = {}) {
     if (typeof value === 'number' && !Number.isFinite(value)) {
       return;
     }
-    updateSettings({ [key]: value });
+    updateSettings({ [key]: value }, { deferSave: event.type === 'input' });
   }
 
   // ── 工具条悬浮（Task 12） ──
   let toolbarHideTimer = null;
+  // Minor f：自动隐藏到点时最近菜单还开着 → 先不隐藏，等菜单关闭后再隐藏
+  let toolbarHidePendingForMenu = false;
 
   /** 显示悬浮工具条（取消正在等待的自动隐藏）。 */
   function showToolbar() {
     root.dataset.toolbar = 'shown';
+    toolbarHidePendingForMenu = false;
     if (toolbarHideTimer !== null) {
       clearTimeout(toolbarHideTimer);
       toolbarHideTimer = null;
@@ -354,6 +383,7 @@ export function mountShell({ root, post } = {}) {
 
   /** 立即隐藏工具条并取消等待中的隐藏定时器。 */
   function hideToolbar() {
+    toolbarHidePendingForMenu = false;
     if (toolbarHideTimer !== null) {
       clearTimeout(toolbarHideTimer);
       toolbarHideTimer = null;
@@ -368,6 +398,11 @@ export function mountShell({ root, post } = {}) {
     }
     toolbarHideTimer = setTimeout(() => {
       toolbarHideTimer = null;
+      if (!recentMenu.hidden) {
+        // 菜单开着：工具条保持可见（菜单是它的浮层），关闭菜单时再按规则隐藏
+        toolbarHidePendingForMenu = true;
+        return;
+      }
       root.dataset.toolbar = 'hidden';
     }, TOOLBAR_HIDE_DELAY_MS);
   }
@@ -416,10 +451,31 @@ export function mountShell({ root, post } = {}) {
   }
 
   /**
+   * 分块文档的字节进度（Important 1）：返回 null 表示「不是分块 / 已全部渲染」，
+   * 位置追踪这时用真实 scrollHeight；否则返回已渲染块累计源码字节与全文 UTF-8 字节，
+   * 由 chrome.js 的 estimateTotalHeight 外推全文高度（首屏只渲染前缀时也能得到真实位置）。
+   */
+  function readChunkBytes() {
+    const info = state.chunkBytes;
+    if (!state.chunked || !info) {
+      return null;
+    }
+    if (!(info.renderedBlocks > 0 && info.renderedBytes > 0)) {
+      return null;
+    }
+    if (info.renderedBlocks >= info.totalBlocks) {
+      return null;
+    }
+    return { renderedBytes: info.renderedBytes, totalBytes: info.totalBytes };
+  }
+
+  /**
    * 恢复阅读位置：load 带 position 时按比例写 scrollTop（夹紧 [0,1]），并提示可点击回到顶部；
    * 没有 position（新文档/文件被外部修改换了 key）时回到顶部，不沿用上一份文档的滚动位置（T10 Minor）。
    * 分块/大文件模式首屏只渲染了预算内的块，scrollHeight 远小于全文——先 renderAll 补全，
    * 再按实时 scrollHeight 计算，否则恢复位置会严重偏前（裁定 3）。ratio=0（回到顶部）无需补全全量。
+   * T12 评审 Minor c/d：position=0 或内容不可滚动时不弹「已回到上次位置」；同步 renderAll 之前
+   * 的「正在恢复…」toast 无法在这一帧绘制（会与最终提示叠加），已去掉，只保留最终提示。
    */
   function restoreScrollPosition() {
     const position = state.position;
@@ -430,29 +486,36 @@ export function mountShell({ root, post } = {}) {
     }
     const ratio = Math.min(1, Math.max(0, position));
     if (state.chunked && ratio > 0) {
-      showToast('正在恢复到上次阅读位置…', 'info');
       try {
         state.chunked.renderAll();
       } catch {
         // 补全失败时仍按当前（首屏）高度恢复，不能因为位置恢复让正文消失
       }
     }
-    content.scrollTop = ratio * scrollableHeight();
+    const scrollable = scrollableHeight();
+    content.scrollTop = ratio * scrollable;
     refreshChrome();
-    if (ratio > 0) {
+    if (ratio > 0 && scrollable > 0) {
       showToast('已回到上次位置 · 回到顶部', 'info', { actionText: '回到顶部', onAction: scrollToTop });
     }
   }
 
-  /** 解绑上一次 load 的位置追踪器（换文档/销毁时调用，避免监听器与定时器泄漏）。 */
+  /**
+   * 解绑上一次 load 的位置追踪器（换文档/销毁时调用，避免监听器与定时器泄漏）。
+   * Important 2：destroy 前先 flush——切换文档时 ≤500ms 节流窗口内的位置不能丢；
+   * 此时 tracker 还带着旧 key，发出去的是旧文档的最后位置。
+   */
   function stopPositionTracker() {
-    if (state.positionTracker) {
-      state.positionTracker.destroy();
-      state.positionTracker = null;
+    const tracker = state.positionTracker;
+    if (!tracker) {
+      return;
     }
+    state.positionTracker = null;
+    tracker.flush();
+    tracker.destroy();
   }
 
-  /** 每次 load 用新 key 重建位置追踪器（滚动节流 500ms → savePosition）。 */
+  /** 每次 load 用新 key 重建位置追踪器（滚动节流 500ms → savePosition；分块未补全时按估算全文高度）。 */
   function startPositionTracker() {
     stopPositionTracker();
     if (!state.key) {
@@ -462,6 +525,8 @@ export function mountShell({ root, post } = {}) {
       scroller: content,
       key: state.key,
       emit: (key, ratio) => send('savePosition', { key, ratio }),
+      readChunkBytes,
+      estimateTotalHeight,
     });
     state.positionTracker.start();
   }
@@ -517,12 +582,22 @@ export function mountShell({ root, post } = {}) {
     renderRecentMenu();
     recentMenu.hidden = false;
     recentToggle.setAttribute('aria-expanded', 'true');
+    // Minor a：打开后焦点落到第一项，↑↓/Enter 立刻可用（焦点必须在解除 hidden 之后设置，
+    // 隐藏容器里的元素无法获得焦点）。菜单项是原生 button，Tab 仍可离开。
+    const first = recentMenu.querySelector('[data-path]');
+    if (first && typeof first.focus === 'function') {
+      first.focus();
+    }
   }
 
   /** 收起菜单并同步按钮展开状态（Esc / 点击外部 / 选中项 / load 都走这里）。 */
   function closeRecentMenu() {
     recentMenu.hidden = true;
     recentToggle.setAttribute('aria-expanded', 'false');
+    // Minor f：自动隐藏到点时因菜单开着被推迟的隐藏，现在补上
+    if (toolbarHidePendingForMenu) {
+      hideToolbar();
+    }
   }
 
   function toggleRecentMenu() {
@@ -552,6 +627,8 @@ export function mountShell({ root, post } = {}) {
     }
     const key = typeof event.key === 'string' ? event.key : '';
     if (key === 'Escape') {
+      // Minor g：Esc 在可编辑控件内属于控件自己（清空/取消输入），不能顺带隐藏工具条
+      const editable = isEditableTarget(event.target);
       if (!aaPanel.hidden) {
         closeAaPanel();
       } else if (!recentMenu.hidden) {
@@ -559,7 +636,9 @@ export function mountShell({ root, post } = {}) {
       } else if (!state.loaded && content.querySelector('.recent-panel')) {
         closeRecentPanel();
       }
-      hideToolbar();
+      if (!editable) {
+        hideToolbar();
+      }
       return;
     }
     if (isEditableTarget(event.target)) {
@@ -725,6 +804,8 @@ export function mountShell({ root, post } = {}) {
   recentToggle.addEventListener('click', toggleRecentMenu);
   aaPanel.addEventListener('input', onAaControlChange);
   aaPanel.addEventListener('change', onAaControlChange);
+  // 鼠标离开面板：防抖中的滑杆 patch 立即补发（Minor b），不能让最后一次拖动只在定时器里
+  aaPanel.addEventListener('mouseleave', flushSettingsSave);
   toc.addEventListener('click', onTocClick);
   // 评审 #1：内联 [TOC] 在 #content 里，点击委托到这里（与侧栏共用 scrollToHeading 的定位逻辑）
   content.addEventListener('click', onContentClick);
@@ -780,6 +861,8 @@ export function mountShell({ root, post } = {}) {
     }
     aaPanel.removeEventListener('input', onAaControlChange);
     aaPanel.removeEventListener('change', onAaControlChange);
+    aaPanel.removeEventListener('mouseleave', flushSettingsSave);
+    flushSettingsSave();
     recentToggle.removeEventListener('click', toggleRecentMenu);
     tocResizerControl.destroy();
     // Task 11：分块渲染器（哨兵观察器）与 huge-mode class 一并清理，避免跨实例/跨文档残留

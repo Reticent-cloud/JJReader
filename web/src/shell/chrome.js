@@ -12,29 +12,85 @@ export const BACK_TO_TOP_THRESHOLD_PX = 400;
 /** toast 默认显示时长（spec §5.6：3 秒后消失）。 */
 export const TOAST_DURATION_MS = 3000;
 
-/** 滚动比例：分母用 max(1, scrollHeight - clientHeight) 兜底不可滚动/无布局的容器。 */
-function readScrollRatio(scroller) {
+/** 滚动度量（jsdom 无布局时 Number() 可能得到 NaN，一律兜底 0）。 */
+function readScrollMetrics(scroller) {
   if (!scroller || typeof scroller !== 'object') {
-    return { ratio: 0, scrollTop: 0 };
+    return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
   }
   const scrollTop = Number(scroller.scrollTop);
   const scrollHeight = Number(scroller.scrollHeight);
   const clientHeight = Number(scroller.clientHeight);
-  const safeTop = Number.isFinite(scrollTop) ? scrollTop : 0;
-  const scrollable = Math.max(
-    1,
-    (Number.isFinite(scrollHeight) ? scrollHeight : 0) - (Number.isFinite(clientHeight) ? clientHeight : 0),
-  );
-  return { ratio: Math.min(1, Math.max(0, safeTop / scrollable)), scrollTop: safeTop };
+  return {
+    scrollTop: Number.isFinite(scrollTop) ? scrollTop : 0,
+    scrollHeight: Number.isFinite(scrollHeight) ? scrollHeight : 0,
+    clientHeight: Number.isFinite(clientHeight) ? clientHeight : 0,
+  };
+}
+
+function clampRatio(ratio) {
+  return Math.min(1, Math.max(0, ratio));
+}
+
+/**
+ * 分块文档的全文高度估算（T12 评审 Important 1）：分块模式首屏只渲染了前缀，
+ * 用「已渲染高度 / 已渲染字节」的密度把未渲染字节外推成高度，避免用首屏高度当分母。
+ *
+ *   estimatedTotal = renderedHeight + (renderedHeight / renderedBytes) × (totalBytes - renderedBytes)
+ *
+ * @param {number} renderedHeight 当前已渲染内容的 scrollHeight（px）
+ * @param {number} renderedBytes 已渲染块累计的源码 UTF-8 字节数
+ * @param {number} totalBytes 全文 UTF-8 字节数
+ * @returns {number} 估算的全文高度（px）；没有可用的字节基准或已全部渲染时返回已渲染高度
+ */
+export function estimateTotalHeight(renderedHeight, renderedBytes, totalBytes) {
+  const height = Number(renderedHeight);
+  const safeHeight = Number.isFinite(height) && height > 0 ? height : 0;
+  if (safeHeight === 0) {
+    return 0;
+  }
+  const rendered = Number(renderedBytes);
+  const total = Number(totalBytes);
+  if (!Number.isFinite(rendered) || !Number.isFinite(total) || rendered <= 0) {
+    return safeHeight;
+  }
+  const remainingBytes = Math.max(0, total - rendered);
+  if (remainingBytes === 0) {
+    return safeHeight;
+  }
+  return safeHeight + (safeHeight / rendered) * remainingBytes;
+}
+
+/** 滚动比例：分母用 max(1, scrollHeight - clientHeight) 兜底不可滚动/无布局的容器。 */
+function readScrollRatio(scroller) {
+  const { scrollTop, scrollHeight, clientHeight } = readScrollMetrics(scroller);
+  return { ratio: clampRatio(scrollTop / Math.max(1, scrollHeight - clientHeight)), scrollTop };
 }
 
 /**
  * 位置追踪器：scroll 事件节流节流上报，比例变化才发；flush() 立即发（同比例也发）。
  * 另监听 pagehide / visibilitychange(hidden) 时 flush，保证关窗前位置不丢。
- * @param {{scroller: HTMLElement, key: string, emit: (key: string, ratio: number) => void, throttleMs?: number}} options
+ *
+ * 分块模式（Important 1）：传 readChunkBytes 时，未全部渲染的比例按估算的全文高度计算：
+ *   ratio = scrollTop / max(1, estimateTotalHeight(scrollHeight, renderedBytes, totalBytes) - clientHeight)
+ * readChunkBytes 返回 null（普通文档 / 分块已全部渲染）时退回真实 scrollHeight。
+ * @param {{
+ *   scroller: HTMLElement,
+ *   key: string,
+ *   emit: (key: string, ratio: number) => void,
+ *   throttleMs?: number,
+ *   readChunkBytes?: (() => {renderedBytes: number, totalBytes: number} | null) | null,
+ *   estimateTotalHeight?: (renderedHeight: number, renderedBytes: number, totalBytes: number) => number,
+ * }} options
  * @returns {{start: () => void, flush: () => void, destroy: () => void}}
  */
-export function createPositionTracker({ scroller, key, emit, throttleMs = POSITION_THROTTLE_MS } = {}) {
+export function createPositionTracker({
+  scroller,
+  key,
+  emit,
+  throttleMs = POSITION_THROTTLE_MS,
+  readChunkBytes = null,
+  estimateTotalHeight: estimateFn = estimateTotalHeight,
+} = {}) {
   const scrollRoot = scroller && typeof scroller === 'object' ? scroller : null;
   const emitRatio = typeof emit === 'function' ? emit : null;
   const throttleNumber = Number(throttleMs);
@@ -45,9 +101,29 @@ export function createPositionTracker({ scroller, key, emit, throttleMs = POSITI
   let destroyed = false;
   let lastRatio = null;
 
+  /** 当前位置比例：分块未全部渲染时按估算全文高度，否则用真实可滚动高度。 */
+  function readRatio() {
+    if (typeof readChunkBytes === 'function' && typeof estimateFn === 'function') {
+      let bytes = null;
+      try {
+        bytes = readChunkBytes();
+      } catch {
+        bytes = null; // 估算数据不可用：退回真实高度，不能因为上报失败丢位置
+      }
+      const renderedBytes = Number(bytes && bytes.renderedBytes);
+      const totalBytes = Number(bytes && bytes.totalBytes);
+      if (bytes && Number.isFinite(renderedBytes) && Number.isFinite(totalBytes)) {
+        const { scrollTop, scrollHeight, clientHeight } = readScrollMetrics(scrollRoot);
+        const estimated = estimateFn(scrollHeight, renderedBytes, totalBytes);
+        return clampRatio(scrollTop / Math.max(1, estimated - clientHeight));
+      }
+    }
+    return readScrollRatio(scrollRoot).ratio;
+  }
+
   /** 上报一次：force=false 时比例与上次相同则跳过。 */
   function emitNow(force) {
-    const { ratio } = readScrollRatio(scrollRoot);
+    const ratio = readRatio();
     if (!force && ratio === lastRatio) {
       return;
     }
@@ -184,6 +260,11 @@ export function updateChrome({ scroller, progressEl, backToTopEl, thresholdPx = 
   const { ratio, scrollTop } = readScrollRatio(scrollRoot);
   if (progressEl && progressEl.style) {
     progressEl.style.height = `${(ratio * 100).toFixed(2)}%`;
+  }
+  // 无障碍（T12 原报告 §10.6 carry-forward）：外层 [role=progressbar] 的 aria-valuenow 同步百分比
+  const bar = progressEl && progressEl.parentElement ? progressEl.parentElement : null;
+  if (bar && typeof bar.setAttribute === 'function' && bar.getAttribute('role') === 'progressbar') {
+    bar.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
   }
 
   const thresholdNumber = Number(thresholdPx);

@@ -125,7 +125,12 @@ function stubChunkedHeight(content, { initialHeight = 1000, fullHeight = 5000, c
       value = next;
     },
   });
-  return { get: () => value };
+  return {
+    get: () => value,
+    set: (next) => {
+      value = next;
+    },
+  };
 }
 
 /** 多块小文档（降阈值后足以触发分块渲染）。 */
@@ -381,6 +386,42 @@ it('位置比例夹紧到 [0,1]', () => {
   vi.useRealTimers();
 });
 
+// ── 分块文档位置比例估算（T12 评审 Important 1） ──
+
+it('位置比例：分块未全部渲染时按估算全文高度计算，全部渲染后回到真实高度', () => {
+  const sent = [];
+  const scroller = document.createElement('div');
+  const scroll = stubScroll(scroller, { scrollHeight: 1000, clientHeight: 500 });
+  let chunkBytes = { renderedBytes: 256 * 1024, totalBytes: 1024 * 1024 };
+  const tracker = JJ.createPositionTracker({
+    scroller,
+    key: 'k',
+    emit: (key, ratio) => sent.push([key, ratio]),
+    readChunkBytes: () => chunkBytes,
+    estimateTotalHeight: JJ.estimateTotalHeight,
+  });
+  tracker.start();
+  scroll.set(500);
+  tracker.flush();
+  // 首屏只渲染了 1/4 字节：estimatedTotal = 1000 + (1000 / 256K) × 768K = 4000 → 500 / (4000 - 500)。
+  // 旧口径（首屏高度做分母）会得到 500 / (1000 - 500) = 1，完全失真。
+  expect(sent).toEqual([['k', 500 / 3500]]);
+
+  // 全部渲染完（readChunkBytes 返回 null）→ 用真实 scrollHeight 做分母
+  chunkBytes = null;
+  tracker.flush();
+  expect(sent.at(-1)).toEqual(['k', 1]);
+  tracker.destroy();
+});
+
+it('estimateTotalHeight 按字节密度外推未渲染部分，边界夹紧', () => {
+  expect(JJ.estimateTotalHeight(1000, 256 * 1024, 1024 * 1024)).toBe(4000);
+  expect(JJ.estimateTotalHeight(1000, 1024, 1024)).toBe(1000); // 全部渲染：不外推
+  expect(JJ.estimateTotalHeight(1000, 0, 1024)).toBe(1000); // 无已渲染字节基准
+  expect(JJ.estimateTotalHeight(1000, 2048, 1024)).toBe(1000); // 已渲染字节超过总数：夹紧
+  expect(JJ.estimateTotalHeight(Number.NaN, 1, 2)).toBe(0); // 非法高度
+});
+
 // ── 进度条 / 回到顶部 ──
 
 it('updateChrome 写竖向进度条高度百分比（spec §5.1），并按 400px 阈值显隐回到顶部', () => {
@@ -571,6 +612,28 @@ it('工具条最近菜单：点击外部与 Esc 关闭，打开期间 recent 刷
   expect(menu.querySelectorAll('.recent-panel [data-path]')).toHaveLength(2);
 });
 
+it('工具条最近菜单打开后焦点在第一项，↑↓/Enter 立即可用（Minor a）', () => {
+  const { root, shell, posted } = mount();
+  shell.onMessage({
+    type: 'recent',
+    payload: { items: [recentItem('C:\\a.md', 'a.md'), recentItem('C:\\b.md', 'b.md')] },
+  });
+  const toggle = root.querySelector('#recent-toggle');
+  const menu = root.querySelector('#recent-menu');
+
+  toggle.click();
+  const items = [...menu.querySelectorAll('.recent-panel [data-path]')];
+  expect(document.activeElement).toBe(items[0]);
+  expect(items[0].tabIndex).toBe(0); // 仍是原生 button：Tab 可达
+
+  // 焦点已在第一项时 ↓ 继续下移（不能停在第一项）→ Enter 打开第二项
+  items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  expect(document.activeElement).toBe(items[1]);
+  items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\b.md' });
+  expect(menu.hidden).toBe(true);
+});
+
 // ── 位置恢复 ──
 
 it('load 带 position 时恢复 scrollTop 并提示「已回到上次位置 · 回到顶部」', () => {
@@ -611,6 +674,20 @@ it('load 的 position 超出 [0,1] 时夹紧', () => {
   expect(scroll.get()).toBe(1000);
 });
 
+it('position=0 时不弹「已回到上次位置」（Minor c）', () => {
+  const { root, shell } = mount();
+  stubScroll(root.querySelector('#content'), { scrollHeight: 2000, clientHeight: 1000 });
+  load(shell, { position: 0 });
+  expect(root.querySelector('#toast .toast')).toBeNull();
+});
+
+it('内容不可滚动（scrollHeight ≤ clientHeight）时不弹位置提示（Minor c）', () => {
+  const { root, shell } = mount();
+  stubScroll(root.querySelector('#content'), { scrollHeight: 1000, clientHeight: 1000 });
+  load(shell, { position: 0.5 });
+  expect(root.querySelector('#toast .toast')).toBeNull();
+});
+
 it('分块文档恢复位置：先 renderAll 再按渲染后的实时 scrollHeight 计算 scrollTop', () => {
   const observer = installObserverStub();
   const originalThreshold = JJ.CHUNK_THRESHOLD;
@@ -629,9 +706,11 @@ it('分块文档恢复位置：先 renderAll 再按渲染后的实时 scrollHeig
     expect(content.textContent).toContain('第四段');
     // 旧实现按首屏 scrollHeight 恢复（0.8 × (1000-1000) = 0）；新实现按 renderAll 后的 5000 计算
     expect(scroll.get()).toBeCloseTo(0.8 * (5000 - 1000), 5);
-    expect([...root.querySelectorAll('#toast .toast')].at(-1).textContent).toContain(
-      '已回到上次位置 · 回到顶部',
-    );
+    // Minor d：同步 renderAll 前的「正在恢复…」toast 无法绘制，已去掉；只剩最终提示一条
+    const toasts = [...root.querySelectorAll('#toast .toast')];
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].textContent).not.toContain('正在恢复');
+    expect(toasts[0].textContent).toContain('已回到上次位置 · 回到顶部');
   } finally {
     renderAllSpy.restore();
     JJ.CHUNK_THRESHOLD = originalThreshold;
@@ -664,6 +743,69 @@ it('huge 模式分块文档同样先 renderAll 再恢复位置', () => {
   }
 });
 
+it('分块文档上报的位置比例按估算全文高度，renderAll 后用真实高度（Important 1）', () => {
+  const observer = installObserverStub();
+  const originalThreshold = JJ.CHUNK_THRESHOLD;
+  const originalInitial = JJ.INITIAL_BYTES;
+  const originalSplit = JJ.splitBlocks;
+  // 4 块等长（每块 247 UTF-8 字节，总 988 字节）：首屏只渲染第一块 → 已渲染字节 = 1/4 全文
+  const block = `## b\n\n${'x'.repeat(240)}\n`;
+  const blocks = [block, block, block, block];
+  const markdown = blocks.join('');
+  JJ.CHUNK_THRESHOLD = 1;
+  JJ.INITIAL_BYTES = 1;
+  JJ.splitBlocks = () => ({ blocks, totalBytes: 988 });
+  vi.useFakeTimers();
+  try {
+    const { root, shell, posted } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubChunkedHeight(content, { initialHeight: 1000, fullHeight: 5000, clientHeight: 500 });
+    load(shell, { key: 'key-a', markdown, position: null });
+    expect(content.querySelector('.chunk-sentinel')).toBeTruthy();
+
+    scroll.set(250); // 首屏可滚动区（1000-500）的一半
+    content.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(500);
+    // 旧口径 250/(1000-500)=0.5；估算 250/(4000-500)
+    const saved = lastPayload(posted, 'savePosition');
+    expect(saved.key).toBe('key-a');
+    expect(saved.ratio).toBeCloseTo(250 / 3500, 12);
+    expect(saved.ratio).not.toBeCloseTo(0.5, 2);
+
+    // 全部渲染（load 带 position → renderAll）后不再估算：按真实 scrollHeight=5000 计算
+    load(shell, { key: 'key-b', markdown, position: 0.8 });
+    expect(content.querySelector('.chunk-sentinel')).toBeNull();
+    expect(scroll.get()).toBeCloseTo(0.8 * (5000 - 500), 5);
+    content.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(500);
+    const afterFull = lastPayload(posted, 'savePosition');
+    expect(afterFull.key).toBe('key-b');
+    expect(afterFull.ratio).toBeCloseTo(0.8, 12);
+  } finally {
+    vi.useRealTimers();
+    JJ.splitBlocks = originalSplit;
+    JJ.CHUNK_THRESHOLD = originalThreshold;
+    JJ.INITIAL_BYTES = originalInitial;
+    observer.restore();
+  }
+});
+
+it('切换文档前 flush 旧位置追踪器，旧 key 的最后位置不丢（Important 2）', () => {
+  const { root, shell, posted } = mount();
+  const content = root.querySelector('#content');
+  const scroll = stubScroll(content, { scrollHeight: 3000, clientHeight: 1000 });
+  load(shell, { path: 'a.md', key: 'key-a', position: null });
+
+  scroll.set(500); // 落在 500ms 节流窗口内，尚未落盘
+  content.dispatchEvent(new Event('scroll'));
+  expect(posted.filter((message) => message.type === 'savePosition')).toHaveLength(0);
+
+  load(shell, { path: 'b.md', key: 'key-b', position: null });
+  const saved = posted.filter((message) => message.type === 'savePosition');
+  expect(saved).toHaveLength(1);
+  expect(saved[0].payload).toEqual({ key: 'key-a', ratio: 0.25 }); // 旧 key + 旧文档的位置
+});
+
 // ── 滚动驱动 chrome 与位置上报 ──
 
 it('滚动驱动进度条与回到顶部，并按 500ms 节流发 savePosition', () => {
@@ -677,6 +819,10 @@ it('滚动驱动进度条与回到顶部，并按 500ms 节流发 savePosition',
   content.dispatchEvent(new Event('scroll'));
   expect(root.querySelector('#back-to-top').hidden).toBe(false);
   expect(parseFloat(root.querySelector('#progress-bar').style.height)).toBeCloseTo((900 / 2200) * 100, 2);
+  // aria-valuenow 同步（T12 原报告 §10.6 carry-forward）
+  expect(root.querySelector('#progress').getAttribute('aria-valuenow')).toBe(
+    String(Math.round((900 / 2200) * 100)),
+  );
   expect(posted.filter((message) => message.type === 'savePosition')).toHaveLength(0);
 
   vi.advanceTimersByTime(500);
@@ -800,4 +946,94 @@ it('工具条隐藏时键盘快捷键仍可用', () => {
   expect(root.dataset.toolbar).toBe('hidden');
   press('b', { ctrlKey: true });
   expect(root.dataset.toc).toBe('hidden');
+});
+
+it('工具条 800ms 自动隐藏时最近菜单开着：先不隐藏，菜单关闭后再隐藏（Minor f）', () => {
+  vi.useFakeTimers();
+  const { root, shell } = mount();
+  shell.onMessage({ type: 'recent', payload: { items: [recentItem('C:\\a.md', 'a.md')] } });
+  const toggle = root.querySelector('#recent-toggle');
+  const menu = root.querySelector('#recent-menu');
+
+  document.dispatchEvent(new MouseEvent('mousemove', { clientY: 20 }));
+  expect(root.dataset.toolbar).toBe('shown');
+  toggle.click();
+  expect(menu.hidden).toBe(false);
+
+  root.querySelector('#toolbar').dispatchEvent(new MouseEvent('mouseleave'));
+  vi.advanceTimersByTime(800);
+  expect(root.dataset.toolbar).toBe('shown'); // 菜单开着：不隐藏工具条
+
+  document.body.click(); // 点击外部关闭菜单
+  expect(menu.hidden).toBe(true);
+  expect(root.dataset.toolbar).toBe('hidden'); // 菜单关闭后按规则隐藏
+  vi.useRealTimers();
+});
+
+it('Esc 在可编辑控件内不隐藏工具条（Minor g）', () => {
+  const { root, shell } = mount();
+  document.dispatchEvent(new MouseEvent('mousemove', { clientY: 20 }));
+  expect(root.dataset.toolbar).toBe('shown');
+
+  const input = document.createElement('input');
+  document.body.append(input);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  expect(root.dataset.toolbar).toBe('shown');
+
+  // 非可编辑区域（document.body）上的 Esc 仍按原规则隐藏工具条
+  press('Escape');
+  expect(root.dataset.toolbar).toBe('hidden');
+});
+
+// ── Aa 面板：落盘防抖与滑杆无障碍（Minor b / e） ──
+
+it('Aa 面板滑杆落盘防抖 300ms：连续拖动只发一次 patch，关闭面板立即 flush（Minor b）', () => {
+  vi.useFakeTimers();
+  const { root, shell, posted } = mount();
+  load(shell);
+  root.querySelector('#aa-toggle').click();
+  const panel = root.querySelector('#aa-panel');
+  const slider = panel.querySelector('[data-setting="fontSize"]');
+
+  for (const value of ['17', '18', '19']) {
+    slider.value = value;
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  // 即时应用，但落盘合并成一条（300ms 防抖）
+  expect(document.documentElement.style.getPropertyValue('--font-size')).toBe('19px');
+  vi.advanceTimersByTime(299);
+  expect(posted.filter((message) => message.type === 'saveSettings')).toHaveLength(0);
+  vi.advanceTimersByTime(1);
+  const messages = posted.filter((message) => message.type === 'saveSettings');
+  expect(messages).toHaveLength(1);
+  expect(messages[0].payload.patch).toEqual({ fontSize: 19 });
+
+  // 关闭面板（点击外部）：pending 的 patch 立即落盘，不等防抖
+  slider.value = '20';
+  slider.dispatchEvent(new Event('input', { bubbles: true }));
+  document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(panel.hidden).toBe(true);
+  const flushed = posted.filter((message) => message.type === 'saveSettings');
+  expect(flushed).toHaveLength(2);
+  expect(flushed.at(-1).payload.patch).toEqual({ fontSize: 20 });
+  vi.useRealTimers();
+});
+
+it('Aa 滑杆 aria-valuenow 随数值更新（Minor e）', () => {
+  const { root, shell } = mount();
+  load(shell);
+  const panel = root.querySelector('#aa-panel');
+  const fontSize = panel.querySelector('[data-setting="fontSize"]');
+  expect(fontSize.getAttribute('aria-valuemin')).toBe('14');
+  expect(fontSize.getAttribute('aria-valuemax')).toBe('24');
+  expect(fontSize.getAttribute('aria-valuenow')).toBe('16');
+
+  // 快捷键改字号：面板回显与 aria-valuenow 一起同步
+  press('=', { ctrlKey: true });
+  expect(fontSize.value).toBe('17');
+  expect(fontSize.getAttribute('aria-valuenow')).toBe('17');
+
+  fontSize.value = '20';
+  fontSize.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(fontSize.getAttribute('aria-valuenow')).toBe('20');
 });

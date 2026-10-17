@@ -23,7 +23,7 @@ import { enhance } from './enhance.js';
 import { highlight } from './highlight.js';
 import { sanitizeHtml } from './sanitize.js';
 import { applySettings, settingsPatch } from './settings.js';
-import { createPositionTracker, showToast, updateChrome } from './shell/chrome.js';
+import { createPositionTracker, estimateTotalHeight, showToast, updateChrome } from './shell/chrome.js';
 import { mountShell } from './shell/main.js';
 import { renderRecent } from './shell/recent.js';
 import { applyTheme } from './theme.js';
@@ -87,6 +87,8 @@ export function install(target = {}) {
     createPositionTracker,
     updateChrome,
     showToast,
+    // Task 12 评审修复：分块文档位置比例的全文高度估算（Important 1）
+    estimateTotalHeight,
     // T4 carry-forward：CSS 注入与 shell 共用同一实现（浏览器 boot 时已调用一次）
     applyCss,
   };

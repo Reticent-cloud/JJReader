@@ -33,7 +33,7 @@ const MONO_FONT_OPTIONS = [
   { value: 'Cascadia Mono', label: 'Cascadia Mono' },
 ];
 
-/** 带数值回显的滑杆行（字号/行距）。 */
+/** 带数值回显的滑杆行（字号/行距）。滑杆的 aria 当前值由 main.js 的 syncAaControls 同步。 */
 function createRangeRow(labelText, setting, min, max, step, value) {
   const row = document.createElement('label');
   row.className = 'aa-row';
@@ -46,6 +46,10 @@ function createRangeRow(labelText, setting, min, max, step, value) {
   input.step = String(step);
   input.value = String(value);
   input.dataset.setting = setting;
+  // T12 评审 Minor e：滑杆的无障碍当前值（后续由 syncAaControls 随设置更新）
+  input.setAttribute('aria-valuemin', String(min));
+  input.setAttribute('aria-valuemax', String(max));
+  input.setAttribute('aria-valuenow', String(value));
   const output = document.createElement('output');
   output.className = 'aa-value';
   output.textContent = String(value);

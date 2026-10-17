@@ -219,14 +219,23 @@ export function renderRecent(items, { onOpen, onClose } = {}) {
     buttons[activeIndex].focus();
   }
 
-  /** 当前焦点项（键盘 Enter 优先用实际焦点，其次用维护的下标，最后回退第一项）。 */
-  function currentIndex() {
+  /** 实际焦点项下标（焦点不在本面板的列表项内时返回 -1）。 */
+  function focusedIndex() {
     const focused = document.activeElement;
     if (focused && typeof focused.dataset === 'object' && typeof focused.dataset.path === 'string') {
       const index = buttons.indexOf(focused);
       if (index >= 0) {
         return index;
       }
+    }
+    return -1;
+  }
+
+  /** 当前项（键盘 Enter 优先用实际焦点，其次用维护的下标，最后回退第一项）。 */
+  function currentIndex() {
+    const index = focusedIndex();
+    if (index >= 0) {
+      return index;
     }
     return activeIndex >= 0 ? activeIndex : 0;
   }
@@ -238,12 +247,15 @@ export function renderRecent(items, { onOpen, onClose } = {}) {
     const key = typeof event.key === 'string' ? event.key : '';
     if (key === 'ArrowDown') {
       event.preventDefault();
-      focusItem(activeIndex + 1);
+      // 焦点可能由外部（工具条菜单打开时）直接设在第一项：从实际焦点继续移动，不能停在原地
+      const focused = focusedIndex();
+      focusItem(focused >= 0 ? focused + 1 : activeIndex + 1);
       return;
     }
     if (key === 'ArrowUp') {
       event.preventDefault();
-      focusItem(activeIndex - 1);
+      const focused = focusedIndex();
+      focusItem(focused >= 0 ? focused - 1 : activeIndex - 1);
       return;
     }
     if (key === 'Enter') {
