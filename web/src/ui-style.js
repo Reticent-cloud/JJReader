@@ -14,12 +14,18 @@ const UI_STYLE_LABELS = {
   whale: '鲸鱼娘',
 };
 
+/**
+ * Aa 面板「界面风格」下拉选项：顺序与 UI_STYLES 一致。
+ * 工具条（web/src/shell/toolbar.js）与测试共用这一份常量，避免两处标签/取值漂移（评审 Minor 7）。
+ */
+export const UI_STYLE_OPTIONS = UI_STYLES.map((value) => ({ value, label: UI_STYLE_LABELS[value] }));
+
 /** 归一化：只接受 whale，其余（含 undefined / null / 未知字符串）都回退 reader。 */
 export function normalizeUiStyle(style) {
   return style === 'whale' ? 'whale' : UI_STYLE_DEFAULT;
 }
 
-/** 两态循环：reader ↔ whale（工具条「🐳 主题」按钮用）。 */
+/** 两态循环：reader ↔ whale（工具条「主题」按钮用）。 */
 export function nextUiStyle(style) {
   return normalizeUiStyle(style) === 'whale' ? 'reader' : 'whale';
 }

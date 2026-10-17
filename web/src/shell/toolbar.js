@@ -1,8 +1,9 @@
 // 工具条与 Aa 排版面板（Task 12 从 main.js 拆出，行为不变）：
 // 工具条按钮与面板控件全部用 DOM API 创建（不拼 HTML），统一的 class/title 便于 CSS 与可访问性。
-// 界面美化波：新增「🐳 主题」（界面风格）按钮与 Aa 面板「界面风格」下拉；按钮里的吉祥物是自绘 SVG（装饰性）。
+// 界面美化波：新增「主题」（界面风格）按钮与 Aa 面板「界面风格」下拉；按钮里的吉祥物是自绘 SVG（装饰性）。
 
 import { MASCOT_SVG } from '../mascot.js';
+import { UI_STYLE_OPTIONS } from '../ui-style.js';
 
 /** 工具条按钮工厂：label 文案 + id + title 提示（无 title 时省略属性）。 */
 export function createToolbarButton(label, id, title) {
@@ -36,11 +37,7 @@ const MONO_FONT_OPTIONS = [
   { value: 'Cascadia Mono', label: 'Cascadia Mono' },
 ];
 
-// 界面风格（reader 阅读器风 / whale 鲸鱼娘主题）：与工具条「🐳 主题」按钮共用同一字段 uiStyle。
-const UI_STYLE_OPTIONS = [
-  { value: 'reader', label: '阅读器风' },
-  { value: 'whale', label: '鲸鱼娘' },
-];
+// 界面风格（reader 阅读器风 / whale 鲸鱼娘主题）：选项常量在 ui-style.js，与工具条「主题」按钮共用同一字段 uiStyle。
 
 /** 带数值回显的滑杆行（字号/行距）。滑杆的 aria 当前值由 main.js 的 syncAaControls 同步。 */
 function createRangeRow(labelText, setting, min, max, step, value) {
@@ -107,12 +104,12 @@ export function buildAaPanel() {
 
 /**
  * 构建工具条骨架：鲸鱼吉祥物 / 打开文件 / 打开文件夹 / 浏览根（文件树，Task 14）/ 回到大纲 / 目录 / 最近 /
- * 导出 PDF（Task 15）/ 弹性空隙 / 主题 / 界面风格（🐳 主题）/ Aa / 关于（Task 16）
+ * 导出 PDF（Task 15）/ 弹性空隙 / 主题 / 界面风格（主题 + 鲸鱼图标）/ Aa / 关于（Task 16）
  * （既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮；Task 13 新增两个打开入口，与 Ctrl+O / Ctrl+Shift+O 同口径）。
  * 「最近」菜单的内容由 main.js 用 renderRecent 渲染到 #recent-menu。
  * 导出按钮在未打开文档时禁用（main.js 在 load 后启用），与 Ctrl+E 共用同一导出入口；
  * 「关于」的 title 会由 main.js 随宿主下发的 assocState 更新（默认 .md 程序 / 尚未设为默认）。
- * 「🐳 主题」按钮切换 reader ↔ whale（界面美化波），文案与 aria 状态由 main.js 的 applyUiStyleState 同步。
+ * 「主题」按钮切换 reader ↔ whale（界面美化波），文案与 aria 状态由 main.js 的 applyUiStyleState 同步。
  * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, browseRoot: HTMLButtonElement, treeBack: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, exportPdf: HTMLButtonElement, themeToggle: HTMLButtonElement, uiStyleToggle: HTMLButtonElement, aaToggle: HTMLButtonElement, about: HTMLButtonElement }}
  */
 export function createToolbar() {

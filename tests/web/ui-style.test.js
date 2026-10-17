@@ -149,7 +149,7 @@ it('shell 装配装饰层：气泡 + 水印，aria-hidden 且不接收指针事�
   expect(select.value).toBe('reader');
 });
 
-it('工具条「🐳 主题」在 reader ↔ whale 间切换，只发 {uiStyle}', () => {
+it('工具条「主题」（鲸鱼图标）在 reader ↔ whale 间切换，只发 {uiStyle}', () => {
   const { root, shell, posted } = mount();
   load(shell);
   const button = root.querySelector('#toolbar #ui-style-toggle');

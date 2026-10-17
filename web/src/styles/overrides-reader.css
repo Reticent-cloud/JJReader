@@ -39,15 +39,18 @@ html[data-ui-style='reader'] ::selection {
   background: var(--ui-selection);
 }
 
-html[data-ui-style='reader'] #content a {
-  color: var(--ui-link);
-  text-decoration: none;
-}
+/* 正文链接只做屏幕样式：打印/PDF 由 print.css 统一回落为正文色 + 下划线（评审 Important 1）。 */
+@media screen {
+  html[data-ui-style='reader'] #content a {
+    color: var(--ui-link);
+    text-decoration: none;
+  }
 
-html[data-ui-style='reader'] #content a:hover {
-  color: var(--ui-link-hover);
-  text-decoration: underline;
-  text-underline-offset: 0.18em;
+  html[data-ui-style='reader'] #content a:hover {
+    color: var(--ui-link-hover);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
 }
 
 /* h1：层级最大 + 短强调线（3.2em）+ 一条淡下边框；h2 去掉边框弱化；h3 加粗 */
@@ -117,6 +120,22 @@ html[data-ui-style='reader'] #content tbody tr:last-child > td {
 
 html[data-ui-style='reader'] #content tbody tr:nth-child(even) > td {
   background: var(--ui-zebra);
+}
+
+/* front matter 属性表（details.frontmatter）是卡片内的两列键值表，不是正文表格：
+   清掉上面通用表格规则画的外框/表头底/斑马纹，避免与 .frontmatter 卡片形成双边框（评审 Minor 4）。 */
+html[data-ui-style='reader'] #content .frontmatter table {
+  border: 0;
+  border-collapse: collapse;
+  border-radius: 0;
+}
+
+html[data-ui-style='reader'] #content .frontmatter th,
+html[data-ui-style='reader'] #content .frontmatter td,
+html[data-ui-style='reader'] #content .frontmatter tbody tr:nth-child(even) > td {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* 行内代码：浅底 + 圆角 + 细边（pre > code 不受影响） */
@@ -205,7 +224,8 @@ html[data-ui-style='reader'] #toolbar .tool:active {
 
 html[data-ui-style='reader'] #toolbar .tool.active {
   background: var(--toc-active-bg);
-  color: var(--ui-accent);
+  /* 文本用加深一档的强调色（#3A55E8 在浅色 active 底上 ≥ 4.5:1）；--ui-accent 只用于条/边框/图标。 */
+  color: var(--ui-accent-strong);
 }
 
 html[data-ui-style='reader'] #toolbar .tool:focus-visible {
@@ -264,7 +284,8 @@ html[data-ui-style='reader'] #toc nav.toc a {
 
 html[data-ui-style='reader'] #toc nav.toc a.active {
   background: var(--toc-active-bg);
-  color: var(--ui-accent);
+  /* 文本对比度同工具条 active：用 --ui-accent-strong，强调条仍用 --ui-accent。 */
+  color: var(--ui-accent-strong);
 }
 
 html[data-ui-style='reader'] #toc nav.toc a.active::before {

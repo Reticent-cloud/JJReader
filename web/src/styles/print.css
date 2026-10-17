@@ -87,6 +87,15 @@ body.print-mode a {
   text-decoration: underline;
 }
 
+/* 界面风格的屏幕链接规则（#content a）已限定 @media screen；这里再给打印模式一条明确的正文链接规则，
+   并用 html[data-ui-style] 提升特异性作为双保险：即使媒体类型判断异常也保证 PDF 链接为正文色 + 下划线
+   （评审 Important 1）。 */
+body.print-mode #content a,
+html[data-ui-style] body.print-mode #content a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 /* ── 界面美化波：打印 / PDF 导出时两套界面风格一律回落为纸面样式 ──
    装饰层、吉祥物、水印、代码块顶栏全部隐藏；背景纯白；斑马纹/引用底/卡片阴影不进入纸面。 */
 body.print-mode #ui-decor,
@@ -110,6 +119,9 @@ body.print-mode #content {
 
 body.print-mode #content h1 {
   background-image: none !important;
+  /* 界面风格的 h1 装饰（下边框/强调线）不进纸面（评审 Minor 3）。 */
+  border-bottom: 0 !important;
+  background: none !important;
 }
 
 body.print-mode #content blockquote,
@@ -125,4 +137,33 @@ body.print-mode #content .code-wrap {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* ── 评审修复（Minor 3/4）：界面风格的列表与 front matter 装饰一律不进纸面 ── */
+/* 鲸尾列表符号：恢复普通圆点（任务清单仍无符号），并确保伪元素不打印 */
+body.print-mode #content ul {
+  list-style: revert;
+}
+
+body.print-mode #content ul.contains-task-list {
+  list-style: none;
+}
+
+body.print-mode #content ul:not(.contains-task-list) > li {
+  list-style: revert !important;
+}
+
+body.print-mode #content ul > li::before {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+}
+
+/* front matter 属性表：纸面保持两列键值排版，不继承界面风格的表格边框/表头底/斑马纹 */
+body.print-mode #content .frontmatter table,
+body.print-mode #content .frontmatter th,
+body.print-mode #content .frontmatter td {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }

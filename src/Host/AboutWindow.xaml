@@ -33,7 +33,7 @@
                 <TextBlock Text="Windows 上的 Markdown 阅读器"
                            Margin="0,4,0,0"
                            Foreground="#666666" />
-                <TextBlock Text="界面风格：阅读器风 / 鲸鱼娘（工具条「🐳 主题」切换）"
+                <TextBlock Text="界面风格：阅读器风 / 鲸鱼娘（工具条「主题」按钮，鲸鱼图标）"
                            Margin="0,4,0,0"
                            Foreground="#666666"
                            TextWrapping="Wrap" />

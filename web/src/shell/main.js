@@ -1134,7 +1134,7 @@ export function mountShell({ root, post } = {}) {
   themeToggle.addEventListener('click', () => {
     updateSettings({ theme: nextTheme(state.settings.theme) });
   });
-  // 界面美化波：工具条「🐳 主题」在 reader ↔ whale 间切换（与 Aa 面板下拉共用 uiStyle 字段）
+  // 界面美化波：工具条「主题」（鲸鱼图标）在 reader ↔ whale 间切换（与 Aa 面板下拉共用 uiStyle 字段）
   uiStyleToggle.addEventListener('click', () => {
     updateSettings({ uiStyle: nextUiStyle(state.settings.uiStyle) });
   });

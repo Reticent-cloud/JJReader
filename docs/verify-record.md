@@ -24,8 +24,8 @@
 |---|---|---|
 | 验收脚本自测（`-SelfTest` 21 例） | 21 / 21（两版本） | PASS |
 | 构建 | exit 0，`out\JingjingReader.exe` | PASS |
-| 宿主单测 | 371 passed / 0 failed / 0 skipped（两版本） | PASS |
-| 前端单测 | 19 files / 447 tests / 0 skipped（两版本） | PASS |
+| 宿主单测 | 376 passed / 0 failed / 0 skipped（界面美化波评审修复后全量；波 C 当时 371） | PASS |
+| 前端单测 | 21 files / 474 tests / 0 skipped（同上；波 C 当时 19 files / 447 tests） | PASS |
 | ASCII 运行副本 | 1.6 MB，数据目录 `<temp>\appdata` | PASS |
 | 分发包完整性 | exe + install.ps1 + uninstall.ps1 + README.md | PASS |
 | 环境自检 | 产品名=鲸鲸阅读器 | PASS |
@@ -38,6 +38,9 @@
 | 双开单实例 | 第 2 进程 ExitCode=0 且退出；进程数=1 | PASS |
 | 前端产物体积 | 435762 B × 2，SHA256 一致 | PASS |
 | 用户数据目录未被改写 | recent.json mtime/SHA256 前后一致 | PASS |
+
+> 单测两行已更新为**界面美化波评审修复后**的全量复测口径（宿主 376 / 前端 21 files / 474 tests）；
+> 波 C 三次运行当时分别为 371 / 19 files / 447 tests。其余数字仍为波 C 的实测记录。
 
 信息项（不参与判定）：WebView2 进程组 `WorkingSet64` 峰值 230.1–325.7 MB（5 个进程，500 ms 采样本轮仅 1–2 个）；
 整树 `WorkingSet64` 峰值 343.0–476.7 MB（同一采样时刻）；报告见 `out/verify-report.md`（最近一次为 PS 5.1 运行）。
