@@ -138,6 +138,7 @@ function requestChildren(li, options) {
     return;
   }
   li.dataset.requested = 'true';
+  delete li.dataset.failed;
   if (hasOnExpand) {
     options.onExpand(li.dataset.rel);
     return;
@@ -266,8 +267,25 @@ export function applyDirListing(payload, options = {}) {
 
   parent.dataset.loaded = 'true';
   delete parent.dataset.requested;
-  setExpanded(parent, true);
+  delete parent.dataset.failed;
+  // 保留当前展开/折叠状态：请求在途时用户可能已经折叠该目录，晚到的列表不能强行展开（评审 Minor 4）。
   return true;
+}
+
+/**
+ * 目录请求失败（宿主读取失败只发 toast，不回 dirListing）：清除在途标记、标记 data-failed 并折叠节点；
+ * 下一次单击 = 展开 → 重新请求，不需要先折叠再展开（评审 Minor 3）。
+ */
+export function failPendingTreeRequests() {
+  const container = document.getElementById(TREE_ID);
+  if (!container) {
+    return;
+  }
+  for (const li of container.querySelectorAll('li[data-requested="true"]')) {
+    delete li.dataset.requested;
+    li.dataset.failed = 'true';
+    setExpanded(li, false);
+  }
 }
 
 /**

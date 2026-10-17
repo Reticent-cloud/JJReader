@@ -481,8 +481,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 打开文件夹浏览（pickFolder 与拖入文件夹共用）：记住浏览根 → 推根目录 dirListing → 提示根名。
-    /// 根目录不可读时只提示，不覆盖用户已有的浏览根。
+    /// 打开文件夹浏览（pickFolder 与拖入文件夹共用）：先列根目录、成功后才提交新浏览根，再推根 dirListing 并提示。
+    /// 列目录失败时保留原浏览根（评审 Minor 1：不能先换根再失败，让宿主根与前端树错位）。
     /// </summary>
     private void OpenFolder(string folderPath)
     {
@@ -505,14 +505,24 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 先列目录：失败时保留旧根（前端树仍指向旧根，宿主根不能先换掉）。
+        IReadOnlyList<(string Name, bool IsDir, string RelPath)> entries;
+        try
+        {
+            entries = DirectoryLister.List(root, string.Empty);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            DebugLog.Write($"打开文件夹失败（无法读取目录） root={root}：{exception.Message}");
+            Post(Protocol.Toast("无法读取该目录", "warn"));
+            return;
+        }
+
+        // 列目录成功才提交新根并推送根列表（宿主 pickFolder 后先推根列表再 toast）。
         _browseRoot = root;
         DebugLog.Write($"打开文件夹 root={_browseRoot}");
-
-        // 先推根列表（失败时 TryPostDirectoryListing 已 toast「无法读取该目录」），成功后再提示已打开。
-        if (TryPostDirectoryListing(string.Empty))
-        {
-            Post(Protocol.Toast($"已打开文件夹：{FolderName(root)}"));
-        }
+        Post(Protocol.DirListing(root, string.Empty, entries));
+        Post(Protocol.Toast($"已打开文件夹：{FolderName(root)}"));
     }
 
     /// <summary>

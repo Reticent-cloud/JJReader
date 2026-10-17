@@ -1,5 +1,6 @@
 using System.IO;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace JingjingReader.Tests;
 
@@ -10,6 +11,13 @@ namespace JingjingReader.Tests;
 /// </summary>
 public class DirectoryListerTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public DirectoryListerTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     private static string CreateFile(string directory, string name)
     {
         var path = Path.Combine(directory, name);
@@ -180,7 +188,11 @@ public class DirectoryListerTests
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            // 当前环境不允许创建符号链接（未开启开发者模式等）：重解析点防御由下方代码审查与既有实现兜底
+            // xunit 2.9 没有动态 Skip（Assert.Skip 属于 xunit v3），这里显式标注跳过而不是静默 return：
+            // 环境不允许建符号链接（需开发者模式/管理员）时，重解析点防御只能靠代码审查兜底；
+            // 支持链接的环境（CI/开发者模式）会继续跑下面的断言。
+            _output.WriteLine($"[SKIP] 无法创建符号链接（需开发者模式/管理员），跳过重解析点用例：{exception.GetType().Name}: {exception.Message}");
+            Assert.True(true);
             return;
         }
 
@@ -191,7 +203,7 @@ public class DirectoryListerTests
     }
 
     [Fact]
-    public void List_truncates_at_max_entries_after_sorting()
+    public void List_stops_enumerating_at_max_entries()
     {
         var root = TestHelpers.TestDir();
         CreateFile(root, "a.md");
@@ -200,10 +212,35 @@ public class DirectoryListerTests
         CreateDirectory(root, "dir-a");
         CreateDirectory(root, "dir-b");
 
+        // 评审 Minor 5：达到上限立即停止枚举（先截断再排序），不再整目录遍历后排序截断。
         var entries = DirectoryLister.List(root, string.Empty, maxEntries: 3);
 
         Assert.Equal(3, entries.Count);
-        Assert.Equal(new[] { "dir-a", "dir-b", "a.md" }, entries.Select(entry => entry.Name));
+        // 截断结果本身仍按「目录在前、名称升序」排列；具体命中哪 3 项取决于文件系统枚举顺序，不做断言。
+        var expectedOrder = entries
+            .OrderByDescending(entry => entry.IsDir)
+            .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => entry.Name);
+        Assert.Equal(expectedOrder, entries.Select(entry => entry.Name));
+        Assert.All(
+            entries,
+            entry => Assert.Contains(entry.Name, new[] { "a.md", "b.md", "c.md", "dir-a", "dir-b" }));
         Assert.Empty(DirectoryLister.List(root, string.Empty, maxEntries: 0));
+    }
+
+    [Fact]
+    public void List_supports_a_browse_root_longer_than_max_path()
+    {
+        var root = TestHelpers.TestDir();
+        // 盘符根 + 两段长目录名 → 绝对路径超过 255（宿主会加 \\?\ 前缀，枚举必须保留前缀才稳）。
+        var folder = Path.Combine(root, new string('a', 120), new string('b', 120));
+        Directory.CreateDirectory(folder);
+        Assert.True(folder.Length > 255, $"长路径用例构造失败：{folder.Length} 字符");
+        CreateFile(folder, "a.md");
+
+        var entries = DirectoryLister.List(folder, string.Empty);
+
+        Assert.Equal(new[] { "a.md" }, entries.Select(entry => entry.Name));
+        Assert.Equal("a.md", entries[0].RelPath);
     }
 }

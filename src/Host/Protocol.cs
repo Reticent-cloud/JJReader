@@ -117,7 +117,11 @@ public static class Protocol
         return Serialize("dirListing", new { root, path, entries = items });
     }
 
-    /// <summary>brief 兼容重载：只有根列表（<c>path = ""</c>）。</summary>
+    /// <summary>
+    /// brief 兼容重载：只有根列表（<c>path = ""</c>）。
+    /// 仅供测试/文档示例兼容（brief 的两参数调用），产品代码请使用三参数重载；保留它只是为了不破坏既有测试。
+    /// </summary>
+    [Obsolete("测试专用兼容重载（path 固定为空）：产品代码请使用 DirListing(root, path, entries)。")]
     public static string DirListing(
         string root,
         IEnumerable<(string Name, bool IsDir, string RelPath)> entries)

@@ -4,7 +4,8 @@
 // Task 12 起装配最近文件、位置记忆、阅读进度条/回到顶部、悬浮工具条与 F5/Alt+←→/Ctrl+Shift+C。
 // Task 13 起加打开入口（Ctrl+O/Ctrl+Shift+O、工具条按钮）与 wikilink/附件点击寻文件（openFile 消息）。
 // 模块拆分（T10 评审 carry-forward）：工具条与 Aa 面板 → toolbar.js；最近文件面板 → recent.js；
-// 位置追踪/进度条/回到顶部/toast → chrome.js；标题 id + TOC/滚动联动 → headings.js；正文渲染管线 → render.js。
+// 位置追踪/进度条/回到顶部/toast → chrome.js；标题 id + TOC/滚动联动 → headings.js；正文渲染管线 → render.js；
+// Task 14 评审拆分：文件夹浏览（浏览根、dirListing 应用、树/大纲切换、树内打开与高亮）→ browse.js，这里只留装配。
 // 设计约束：所有设置变更「先应用再上报」——applySettings/applyTheme 同步写 CSS 变量，随后 post('saveSettings', {patch})，
 // 只发变化字段（宿主合并后落盘）；任何一步失败都不能影响正文渲染。
 
@@ -21,6 +22,7 @@ import {
 } from '../settings.js';
 import { applyTheme, nextTheme } from '../theme.js';
 import { buildToc } from '../toc.js';
+import { createBrowser } from './browse.js';
 import {
   clearToastContainer,
   createChromeElements,
@@ -36,7 +38,6 @@ import { createRenderer } from './render.js';
 import { createTocResizer } from './resizer.js';
 import { createSettingsSaver } from './settings-saver.js';
 import { buildAaPanel, createToolbar, themeLabel } from './toolbar.js';
-import { applyDirListing, setSidebarMode, setTreeActive } from './tree.js';
 
 /** 工具条悬浮显示：鼠标进入窗口顶部 40px 区域（spec §5.1）。 */
 const TOOLBAR_HOVER_ZONE_PX = 40;
@@ -151,10 +152,6 @@ export function mountShell({ root, post } = {}) {
     // Task 12：是否收到过 load（空白启动页显示最近文件面板）、最近文件列表（Alt+←/→ 切换用）
     loaded: false,
     recent: [],
-    // Task 14：文件夹浏览根（宿主 dirListing.root，绝对路径）、根显示名与侧栏模式（'toc' | 'tree'）
-    browseRoot: '',
-    browseRootName: '',
-    sidebarMode: 'toc',
     // Task 11：大文件模式标记（关闭高亮、停用滚动联动）、分块渲染器句柄
     huge: false,
     chunked: null,
@@ -164,6 +161,15 @@ export function mountShell({ root, post } = {}) {
     // Task 12：位置追踪器（每次 load 重建；节流上报 savePosition）
     positionTracker: null,
   };
+
+  // 文件夹浏览控制器（Task 14 评审拆分）：浏览根、dirListing 应用与校验、树/大纲模式切换、
+  // 树内打开与高亮都在 browse.js；getDocumentPath 让 dirListing 到达时按当前文档同步高亮。
+  const browser = createBrowser({
+    browseRootButton,
+    treeBackButton,
+    post: send,
+    getDocumentPath: () => state.path,
+  });
 
   // 正文渲染管线（兜底/分块/front matter/增强，实现见 render.js）；它读写 state.huge / state.chunked。
   const renderer = createRenderer({
@@ -661,113 +667,6 @@ export function mountShell({ root, post } = {}) {
     }
   }
 
-  // ── 文件夹浏览（Task 14） ──
-
-  /** 浏览根显示名：取最后一段路径（盘符根等取不到名称时回退完整路径）。 */
-  function rootDisplayName(root) {
-    const trimmed = String(root).replace(/[\\/]+$/, '');
-    const parts = trimmed.split(/[\\/]/);
-    const name = parts[parts.length - 1];
-    return name ? name : String(root);
-  }
-
-  /** 绝对路径 = root + '/' + relPath（用 / 拼接，宿主 NormalizePath 统一成 \）；根尾随分隔符不产生双斜杠。 */
-  function joinRootPath(root, relPath) {
-    const base = String(root).replace(/[\\/]+$/, '');
-    const relative = String(relPath).replace(/^[\\/]+/, '');
-    if (base === '') {
-      return relative;
-    }
-    return `${base}/${relative}`;
-  }
-
-  /**
-   * 文件路径相对浏览根的路径（'/' 分隔）；不在根内 / 根或路径为空时返回 null。
-   * Windows 路径大小写不敏感：前缀比较统一小写（只用于定位树节点，绝对路径仍用宿主下发的原样）。
-   */
-  function relPathInsideRoot(filePath, root) {
-    if (typeof filePath !== 'string' || filePath === '' || typeof root !== 'string' || root === '') {
-      return null;
-    }
-    const file = filePath.replace(/\//g, '\\');
-    const base = root.replace(/\//g, '\\').replace(/\\+$/, '');
-    if (base === '') {
-      return null;
-    }
-    const prefix = `${base}\\`;
-    if (!file.toLowerCase().startsWith(prefix.toLowerCase())) {
-      return null;
-    }
-    return file.slice(prefix.length).replace(/\\/g, '/');
-  }
-
-  /** 工具条浏览根提示：有根时显示目录名（点击回树），树模式下同时显示「大纲」返回按钮。 */
-  function applyBrowseChrome() {
-    const hasRoot = state.browseRoot !== '';
-    const treeVisible = hasRoot && state.sidebarMode === 'tree';
-    browseRootButton.hidden = !hasRoot;
-    browseRootButton.textContent = hasRoot ? state.browseRootName : '';
-    browseRootButton.title = hasRoot ? `显示文件树：${state.browseRootName}` : '显示文件树';
-    browseRootButton.setAttribute('aria-label', hasRoot ? `显示文件树：${state.browseRootName}` : '显示文件树');
-    browseRootButton.classList.toggle('active', treeVisible);
-    treeBackButton.hidden = !treeVisible;
-  }
-
-  /** 进入文件树模式（侧栏隐藏大纲、显示树；不改变浏览根）。 */
-  function enterTreeMode() {
-    state.sidebarMode = 'tree';
-    setSidebarMode('tree');
-    applyBrowseChrome();
-  }
-
-  /** 回到大纲模式（保留浏览根与已加载的树，工具条根名可再切回）。 */
-  function showTocMode() {
-    state.sidebarMode = 'toc';
-    setSidebarMode('toc');
-    applyBrowseChrome();
-  }
-
-  /** 工具条根目录名点击：有浏览根时切回文件树。 */
-  function onBrowseRootClick() {
-    if (state.browseRoot !== '') {
-      enterTreeMode();
-    }
-  }
-
-  /** 树中点击文件：把绝对路径交给宿主（宿主再做 NormalizePath/存在性校验）。 */
-  function openTreeFile(relPath) {
-    if (typeof relPath !== 'string' || relPath === '' || state.browseRoot === '') {
-      return;
-    }
-    send('openFile', { relPath: joinRootPath(state.browseRoot, relPath) });
-  }
-
-  /**
-   * load 之后同步树状态：
-   * - 新文档在浏览根内 → 高亮对应节点（树模式保持不变，点击树中文件不会跳回大纲）；
-   * - 在根外 → 当前是树模式则恢复大纲（Global Constraints：打开新的单文件时侧栏恢复大纲模式），
-   *   浏览根保留，工具条根名仍可一键切回树。
-   */
-  function syncTreeForDocument() {
-    if (state.browseRoot === '') {
-      setTreeActive('');
-      applyBrowseChrome();
-      return;
-    }
-    const relative = relPathInsideRoot(state.path, state.browseRoot);
-    if (relative !== null) {
-      setTreeActive(relative);
-      applyBrowseChrome();
-      return;
-    }
-    setTreeActive('');
-    if (state.sidebarMode === 'tree') {
-      showTocMode();
-      return;
-    }
-    applyBrowseChrome();
-  }
-
   /**
    * 全局快捷键（输入框内不触发）：
    * Esc 关浮层（Aa/最近面板/工具条）；Alt 显示工具条；Alt+←/→ 切换最近文件；F5 重载；
@@ -903,7 +802,7 @@ export function mountShell({ root, post } = {}) {
     restoreScrollPosition();
     startPositionTracker();
     // Task 14：新文档决定侧栏模式（根内保持树并高亮；根外恢复大纲）
-    syncTreeForDocument();
+    browser.syncForDocument();
     // 新文档 load 后（首帧布局 / 字体就绪可能改变标题位置）：下一帧再校准一次标题 top
     scheduleRefreshHeadingTops();
   }
@@ -922,6 +821,8 @@ export function mountShell({ root, post } = {}) {
         break;
       case 'toast':
         showToast(payload.text, payload.level);
+        // 读取目录失败时宿主只发 warn/error toast：浏览控制器据此把在途目录标为失败（单击可重试）
+        browser.onToast(payload);
         break;
       case 'recent':
         // 宿主每次打开文档后都会推最新列表；空白启动页用它渲染面板（已有文档时只更新 state）。
@@ -937,38 +838,11 @@ export function mountShell({ root, post } = {}) {
       case 'assocState':
         state.assoc = { registered: Boolean(payload.registered), isDefault: Boolean(payload.isDefault) };
         break;
-      case 'dirListing': {
+      case 'dirListing':
         state.dirListing = payload;
-        const root = typeof payload.root === 'string' ? payload.root : '';
-        if (root === '') {
-          // 旧宿主/畸形消息没有 root：只记状态，不能建树（避免把绝对路径当相对路径拼）
-          break;
-        }
-        const rootName = rootDisplayName(root);
-        const applied = applyDirListing(payload, {
-          rootName,
-          onOpen: openTreeFile,
-          post: send,
-        });
-        if (!applied) {
-          break;
-        }
-        const path = typeof payload.path === 'string' ? payload.path.trim() : '';
-        if (path === '') {
-          // 根列表：记住浏览根并进入树模式（宿主 pickFolder 后先推根列表再 toast）
-          state.browseRoot = root;
-          state.browseRootName = rootName;
-          enterTreeMode();
-        }
-        if (state.path) {
-          const relative = relPathInsideRoot(state.path, state.browseRoot || root);
-          if (relative !== null) {
-            setTreeActive(relative);
-          }
-        }
-        applyBrowseChrome();
+        // 根列表切根 / 子列表填树、迟到旧根子列表丢弃、当前文档高亮都在 browse.js。
+        browser.applyListing(payload);
         break;
-      }
       default:
         break;
     }
@@ -981,8 +855,7 @@ export function mountShell({ root, post } = {}) {
   syncAaControls();
   syncTocResizerWidth();
   tocNav.replaceChildren(buildToc([]));
-  setSidebarMode('toc');
-  applyBrowseChrome();
+  browser.showTocMode();
   renderRecentPanel();
   refreshChrome();
 
@@ -993,9 +866,6 @@ export function mountShell({ root, post } = {}) {
   openFolderButton.addEventListener('click', () => {
     send('pickFolder');
   });
-  // Task 14：工具条根目录名 = 切回文件树；「大纲」按钮 = 回到大纲（不重新请求宿主）
-  browseRootButton.addEventListener('click', onBrowseRootClick);
-  treeBackButton.addEventListener('click', showTocMode);
   themeToggle.addEventListener('click', () => {
     updateSettings({ theme: nextTheme(state.settings.theme) });
   });
@@ -1066,8 +936,8 @@ export function mountShell({ root, post } = {}) {
     aaPanel.removeEventListener('mouseleave', flushSettingsSave);
     flushSettingsSave();
     recentToggle.removeEventListener('click', toggleRecentMenu);
-    browseRootButton.removeEventListener('click', onBrowseRootClick);
-    treeBackButton.removeEventListener('click', showTocMode);
+    // 浏览控制器的工具条监听（根名切回树 / 大纲返回）与内部状态一并清理
+    browser.destroy();
     tocResizerControl.destroy();
     // Task 11：分块渲染器（哨兵观察器）与 huge-mode class 一并清理，避免跨实例/跨文档残留
     renderer.clearChunked();

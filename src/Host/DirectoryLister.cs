@@ -6,6 +6,7 @@ namespace JingjingReader;
 /// 文件树侧栏的目录枚举（Task 14 的纯函数，真实临时目录即可测试）：
 /// 只列子目录与可渲染的 Markdown 文本扩展名；目录在前、同类按名称（OrdinalIgnoreCase）排序；
 /// 跳过隐藏/系统/重解析点与单个不可读项；相对路径统一用 <c>/</c> 分隔。
+/// 达到 <see cref="DefaultMaxEntries"/> 上限立即停止枚举（超大目录不整目录遍历）。
 /// 路径限制在浏览根内：越界（含 <c>..</c>、跨盘、同前缀兄弟目录）抛 <see cref="UnauthorizedAccessException"/>；
 /// 子路径中的重解析点（junction/symlink）同样拒绝，避免从根内路径借道逃逸。
 /// </summary>
@@ -33,7 +34,8 @@ public static class DirectoryLister
             return Array.Empty<(string Name, bool IsDir, string RelPath)>();
         }
 
-        // 普通（非 \\?\）形式：Path.GetRelativePath 与重解析点逐段检查都按普通路径处理。
+        // 枚举路径保留 \\?\ 前缀（评审 WARN）：>255 的根/目录用带前缀路径枚举才稳；
+        // 普通（去前缀）形式只用于「包含性比较 / 相对路径计算」，不能反过来先丢前缀再枚举。
         var root = PlainPath(FileHost.NormalizePath(browseRoot));
         var relative = (relativePath ?? string.Empty).Trim();
         var target = relative.Length == 0 || relative == "."
@@ -44,7 +46,7 @@ public static class DirectoryLister
         EnsureNoReparsePoint(root, target);
 
         var entries = new List<(string Name, bool IsDir, string RelPath)>();
-        foreach (var info in EnumerateSafely(new DirectoryInfo(target)))
+        foreach (var info in EnumerateSafely(new DirectoryInfo(FileHost.NormalizePath(target))))
         {
             string name;
             FileAttributes attributes;
@@ -70,15 +72,21 @@ public static class DirectoryLister
                 continue;
             }
 
-            var relPath = Path.GetRelativePath(root, info.FullName).Replace('\\', '/');
+            // info.FullName 可能带 \\?\ 前缀：先归一成普通路径再算相对 root 的路径（只比较，不再用于枚举）。
+            var relPath = Path.GetRelativePath(root, PlainPath(info.FullName)).Replace('\\', '/');
             entries.Add((name, isDir, relPath));
+
+            if (entries.Count >= maxEntries)
+            {
+                // 评审 Minor 5：达到上限立即停止枚举，超大目录不再为「排序后截断」继续遍历/统计。
+                break;
+            }
         }
 
-        // 目录在前、同类按名称排序；先排序再按上限截断，保证截断结果本身仍有序。
+        // 目录在前、同类按名称排序；入口处已按上限截断，这里只排序本次收集到的条目。
         return entries
             .OrderByDescending(entry => entry.IsDir)
             .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
-            .Take(maxEntries)
             .ToList();
     }
 
@@ -103,7 +111,8 @@ public static class DirectoryLister
             current = Path.Combine(current, segment);
             try
             {
-                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                // 属性查询用带 \\?\ 前缀的规范形式（>255 的子路径同样可靠；root/target 本身只用于拼接与比较）。
+                if ((File.GetAttributes(FileHost.NormalizePath(current)) & FileAttributes.ReparsePoint) != 0)
                 {
                     throw new UnauthorizedAccessException($"路径包含重解析点：{segment}");
                 }

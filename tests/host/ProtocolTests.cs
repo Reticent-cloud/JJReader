@@ -98,7 +98,10 @@ public class ProtocolTests
     [Fact]
     public void DirListing_serializes_entries()
     {
+        // 两参数重载已标 [Obsolete]（仅供 brief 兼容/测试）：这里显式使用以锁住兼容行为。
+#pragma warning disable CS0618
         var json = Protocol.DirListing(@"C:\notes", new[] { ("a.md", false, "a.md"), ("sub", true, "sub") });
+#pragma warning restore CS0618
 
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("dirListing", doc.RootElement.GetProperty("type").GetString());
@@ -134,7 +137,9 @@ public class ProtocolTests
     {
         var empty = Array.Empty<(string, bool, string)>();
 
+#pragma warning disable CS0618 // 两参数重载仅供 brief 兼容，仍要验证其参数校验
         Assert.Throws<ArgumentException>(() => Protocol.DirListing(" ", empty));
+#pragma warning restore CS0618
         Assert.Throws<ArgumentException>(() => Protocol.DirListing(@"C:\notes", " ", empty));
         Assert.Throws<ArgumentNullException>(() => Protocol.DirListing(@"C:\notes", null!, empty));
         Assert.Throws<ArgumentNullException>(() => Protocol.DirListing(@"C:\notes", string.Empty, null!));
