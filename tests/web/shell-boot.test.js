@@ -1,5 +1,5 @@
 // shell 启动骨架：mountShell 建固定 DOM、load → renderDone 回报、shellReady 握手、toast 与容错。
-// 本任务用占位渲染器（escapeHtml + <pre>），Task 5 换成真正的 markdown 引擎。
+// Task 5 起正文走 JJ.renderMarkdown（真实 markdown 引擎）；引擎缺失时降级 escapeHtml + <pre> 兜底。
 
 /** 每个用例独立的 #app 容器（mountShell 的 root 就是 #app 本身）。 */
 function createRoot() {
@@ -80,8 +80,8 @@ it('renderDone 携带 path/elapsedMs/tocCount/bytes', () => {
 
   const done = posted.find((m) => m.type === 'renderDone');
   expect(done).toBeTruthy();
-  // 契约（spec §4.4）：{path, elapsedMs, tocCount, bytes}；本任务 tocCount 恒 0（T5 接真引擎后是标题数）
-  expect(done.payload).toMatchObject({ path: 'a.md', tocCount: 0 });
+  // 契约（spec §4.4）：{path, elapsedMs, tocCount, bytes}；T5 接真引擎后 tocCount 是真实标题数（'# 甲' → 1）
+  expect(done.payload).toMatchObject({ path: 'a.md', tocCount: 1 });
   expect(done.payload.elapsedMs).toBeGreaterThanOrEqual(0);
   // bytes 是 markdown 文本的 UTF-8 字节数：'#'+' '+甲+换行+换行+乙 = 1+1+3+1+1+3
   expect(done.payload.bytes).toBe(10);
@@ -110,16 +110,24 @@ it('连续 toast 追加多条提示', () => {
   expect(root.querySelector('#toast').textContent).toContain('第二条');
 });
 
-it('简易渲染器转义 HTML，不注入脚本', () => {
+it('引擎缺失时降级 <pre> 转义渲染，不白屏', () => {
   const root = createRoot();
   const { shell } = mount(root);
+  const original = JJ.renderMarkdown;
 
-  shell.onMessage({
-    type: 'load',
-    payload: loadPayload({ markdown: '<img src=x onerror=alert(1)>' }),
-  });
+  try {
+    // 模拟引擎未装配（打包缺失/加载失败）：shell 必须走 escapeHtml 兜底，原文不能当作 HTML 执行
+    delete JJ.renderMarkdown;
+    shell.onMessage({
+      type: 'load',
+      payload: loadPayload({ markdown: '<img src=x onerror=alert(1)>' }),
+    });
+  } finally {
+    JJ.renderMarkdown = original;
+  }
 
   const html = root.querySelector('#content').innerHTML;
+  expect(html).toContain('jj-fallback');
   expect(html).not.toContain('<img');
   expect(html).toContain('&lt;img');
 });

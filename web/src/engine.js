@@ -1,0 +1,154 @@
+// 鲸鲸阅读器渲染引擎（Task 5）：markdown-it 单例 + 标题 id + 图片相对路径改写。
+// 单例让 renderMarkdown 与 extractHeadings 对同一文档产生完全一致的标题 id（共用 slugify 分配逻辑）。
+// 本任务只做 GFM 基础语法：不装配扩展插件（Task 6），不清洗 HTML（Task 7，故 html:true 原样保留内嵌 HTML）。
+
+import MarkdownIt from 'markdown-it';
+
+/** env 中保存「本文档已占用标题 id」的键：每次渲染/提取用新 Set，保证同一文档的 id 稳定可复现。 */
+const USED_IDS_KEY = '__jjHeadingUsedIds';
+
+/** 绝对/特殊地址前缀：命中的图片 src 保持原样，其余相对路径才按 baseUrl 解析。 */
+const ABSOLUTE_SRC_RE = /^(?:https?:\/\/|data:|#|mailto:|tel:)/i;
+
+/** 保留字母（含中日韩）、数字与组合记号；其余标点/符号丢弃。 */
+const SLUG_KEEP_RE = /[\p{L}\p{N}\p{M}]/u;
+
+/** 空白（含全角空格）统一视为分隔符。 */
+const SLUG_SPACE_RE = /\s/u;
+
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  breaks: false,
+  typographer: false,
+});
+
+/**
+ * 把 inline 子 token 还原成纯文本：去掉强调/链接/HTML 等行内标记，保留文字、行内代码与图片 alt。
+ * 注意标题 id 规则挂在 core 链末尾（text_join 之后），因此此时转义字符已合并回 text token。
+ */
+function inlinePlainText(children) {
+  let text = '';
+  for (const child of children || []) {
+    switch (child.type) {
+      case 'text':
+      case 'code_inline':
+        text += child.content;
+        break;
+      case 'image': // 图片在标题里按 alt 文本参与 id 计算
+        text += inlinePlainText(child.children);
+        break;
+      case 'softbreak':
+      case 'hardbreak':
+        text += ' ';
+        break;
+      default: // 强调/链接/HTML 等标记 token 不贡献文本
+        break;
+    }
+  }
+  return text;
+}
+
+/**
+ * 生成标题锚点 id：保留中日韩字符、字母与数字，空白转 '-'，标点与其它符号丢弃；
+ * 连续 '-' 折叠、去掉首尾 '-'。传入 usedIds（Set）时登记并保证唯一：重复 id 依次加 -2、-3。
+ */
+export function slugify(text, usedIds) {
+  let id = '';
+  for (const ch of String(text ?? '')) {
+    if (SLUG_KEEP_RE.test(ch)) {
+      id += ch;
+    } else if (SLUG_SPACE_RE.test(ch)) {
+      id += '-';
+    }
+  }
+  id = id.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+
+  if (!usedIds || typeof usedIds.has !== 'function' || typeof usedIds.add !== 'function') {
+    return id;
+  }
+
+  let unique = id;
+  let suffix = 2;
+  while (usedIds.has(unique)) {
+    unique = `${id}-${suffix}`;
+    suffix += 1;
+  }
+  usedIds.add(unique);
+  return unique;
+}
+
+// 标题 id：core 链末尾（inline/text_join 之后）给每个 heading_open 写 id。
+// 放在单例上而不是每次 render 注册，保证 renderMarkdown 与 extractHeadings 走同一套分配逻辑。
+md.core.ruler.push('jj_heading_id', (state) => {
+  let usedIds = state.env && state.env[USED_IDS_KEY];
+  if (!(usedIds instanceof Set)) {
+    usedIds = new Set();
+    if (state.env) {
+      state.env[USED_IDS_KEY] = usedIds;
+    }
+  }
+  const { tokens } = state;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token.type !== 'heading_open') {
+      continue;
+    }
+    const inline = tokens[i + 1];
+    if (!inline || inline.type !== 'inline') {
+      continue;
+    }
+    token.attrSet('id', slugify(inlinePlainText(inline.children), usedIds));
+  }
+});
+
+// 图片相对路径改写：仅当 env.baseUrl 存在且 src 不是绝对/特殊地址时，按虚拟主机 baseUrl 解析。
+// 包装默认 image renderer 而不是整段重写，保留 alt/title 等属性与转义行为。
+const defaultImageRenderer = md.renderer.rules.image;
+
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  const src = token.attrGet('src');
+  const baseUrl = env && typeof env.baseUrl === 'string' ? env.baseUrl : '';
+  if (baseUrl && src && !ABSOLUTE_SRC_RE.test(src)) {
+    try {
+      token.attrSet('src', new URL(src, baseUrl).href);
+    } catch {
+      // baseUrl 非法时保留原 src：图片显示不出来也不能让整篇渲染失败
+    }
+  }
+  return defaultImageRenderer(tokens, idx, options, env, self);
+};
+
+/**
+ * 渲染 markdown 为 HTML 字符串。
+ * env 可选 { baseUrl }：相对图片 src 按 baseUrl 解析；未给 baseUrl 时保留原样。
+ */
+export function renderMarkdown(markdown, env = {}) {
+  // 拷贝一份 env 再挂内部状态：不污染调用方对象，同时让核心规则拿到本文档的 usedIds。
+  const renderEnv = { ...env, [USED_IDS_KEY]: new Set() };
+  return md.render(String(markdown ?? ''), renderEnv);
+}
+
+/**
+ * 提取标题列表 [{ id, text, level }]。
+ * id 由同一套 slugify 分配逻辑生成，因此与 renderMarkdown 渲染出的 heading id 完全一致。
+ */
+export function extractHeadings(markdown) {
+  const env = { [USED_IDS_KEY]: new Set() };
+  const tokens = md.parse(String(markdown ?? ''), env);
+  const headings = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token.type !== 'heading_open') {
+      continue;
+    }
+    const inline = tokens[i + 1];
+    headings.push({
+      id: token.attrGet('id') || '',
+      text: inline && inline.type === 'inline' ? inlinePlainText(inline.children) : '',
+      level: Number(token.tag.slice(1)),
+    });
+  }
+  return headings;
+}

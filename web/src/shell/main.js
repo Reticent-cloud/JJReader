@@ -1,6 +1,6 @@
-// shell 总装：固定 DOM 骨架、消息分发、占位渲染与 renderDone 回报。
-// 本任务只做「宿主 ↔ 前端第一次打通」：渲染器是可替换的简易实现（escapeHtml + <pre>），
-// Task 5 起换成 JJ.renderMarkdown；TOC/主题/工具条等在 Task 10+ 继续往这里装配。
+// shell 总装：固定 DOM 骨架、消息分发、正文渲染与 renderDone 回报。
+// 正文走 JJ.renderMarkdown（Task 5 起为 markdown-it 引擎），引擎缺失时降级 escapeHtml + <pre> 保证不白屏；
+// TOC/主题/工具条等在 Task 10+ 继续往这里装配。
 
 /** 全局唯一的时间源：优先高精度计时，缺失时退回 Date.now。 */
 function now() {
@@ -8,7 +8,7 @@ function now() {
   return perf && typeof perf.now === 'function' ? perf.now() : Date.now();
 }
 
-/** HTML 文本转义（占位渲染器用；后续正文一律走 DOMPurify 清洗，不直接拼 HTML）。 */
+/** HTML 文本转义（仅引擎缺失时的兜底渲染用；正常正文由 renderMarkdown 输出，T7 统一加 DOMPurify 清洗）。 */
 function escapeHtml(text) {
   return String(text ?? '').replace(/[&<>"']/g, (ch) => {
     switch (ch) {
@@ -71,9 +71,27 @@ export function mountShell({ root, post } = {}) {
     dirListing: null,
   };
 
-  /** 占位渲染器：<pre> + 转义文本，Task 5 替换为真实 markdown 渲染。 */
+  /**
+   * 正文渲染：优先走 JJ.renderMarkdown（与宿主共用同一 markdown-it 实现，baseUrl 用于解析相对图片）。
+   * 引擎缺失（打包缺失/加载失败）时降级为 escapeHtml + <pre>，保证正文区永远不白屏。
+   */
   function render(markdown) {
+    const engine = globalThis.JJ;
+    if (engine && typeof engine.renderMarkdown === 'function') {
+      content.innerHTML = engine.renderMarkdown(markdown, { baseUrl: state.baseUrl });
+      return;
+    }
     content.innerHTML = `<pre class="jj-fallback">${escapeHtml(markdown)}</pre>`;
+  }
+
+  /** 标题数（renderDone.tocCount）：引擎缺失或返回值异常时按 0 上报，契约字段不能缺。 */
+  function countHeadings(markdown) {
+    const engine = globalThis.JJ;
+    if (!engine || typeof engine.extractHeadings !== 'function') {
+      return 0;
+    }
+    const headings = engine.extractHeadings(markdown);
+    return Array.isArray(headings) ? headings.length : 0;
   }
 
   function renderLoad(payload) {
@@ -86,13 +104,14 @@ export function mountShell({ root, post } = {}) {
 
     const started = now();
     render(markdown);
+    const tocCount = countHeadings(markdown);
     const elapsedMs = Math.max(0, now() - started);
 
     // 契约（spec §4.4）：renderDone{path, elapsedMs, tocCount, bytes}
     send('renderDone', {
       path: state.path,
       elapsedMs,
-      tocCount: 0,
+      tocCount,
       bytes: utf8Length(markdown),
     });
   }
