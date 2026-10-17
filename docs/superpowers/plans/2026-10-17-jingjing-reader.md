@@ -791,6 +791,7 @@ it('滚动超过 400px 时显示回到顶部按钮', () => {
   JJ.updateChrome({ scroller, progressEl, backToTopEl });
   expect(backToTopEl.hidden).toBe(false);
 });
+```
 
 - [ ] **Step 2: 确认失败**：`npm test -- shell-ux` → 失败。
 
