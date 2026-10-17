@@ -1,10 +1,19 @@
 // shell 总装：固定 DOM 骨架、消息分发、正文渲染与 renderDone 回报。
 // 正文走 JJ.renderMarkdown（Task 5 起为 markdown-it 引擎），引擎缺失时降级 escapeHtml + <pre> 保证不白屏。
-// Task 10 起装配阅读体验：TOC 侧栏（标题 id 兜底 + 滚动联动）、主题三态、排版面板（Aa）与快捷键。
+// Task 10 起装配阅读体验：TOC 侧栏（标题 id 兜底 + 滚动联动 + 拖拽调宽）、主题三态、排版面板（Aa）与快捷键。
 // 设计约束：所有设置变更「先应用再上报」——applySettings/applyTheme 同步写 CSS 变量，随后 post('saveSettings', {patch})，
 // 只发变化字段（宿主合并后落盘）；任何一步失败都不能影响正文渲染。
 
-import { applySettings, DEFAULT_SETTINGS, normalizeSettings, settingsPatch } from '../settings.js';
+import {
+  applySettings,
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+  normalizeTocWidth,
+  settingsPatch,
+  TOC_WIDTH_DEFAULT,
+  TOC_WIDTH_MAX,
+  TOC_WIDTH_MIN,
+} from '../settings.js';
 import { applyTheme, nextTheme } from '../theme.js';
 import {
   buildToc,
@@ -13,6 +22,7 @@ import {
   readHeadingTop,
   TOC_TOOLBAR_OFFSET,
 } from '../toc.js';
+import { createTocResizer } from './resizer.js';
 
 /** 全局唯一的时间源：优先高精度计时，缺失时退回 Date.now。 */
 function now() {
@@ -176,20 +186,31 @@ export function mountShell({ root, post } = {}) {
   }
   const send = typeof post === 'function' ? post : () => {};
 
-  // 固定骨架：#app > header#toolbar、aside#toc、main#content（滚动容器）、div#aa-panel、div#toast
+  // 固定骨架：#app > header#toolbar、aside#toc、div.toc-resizer（拖拽调宽分隔条）、main#content（滚动容器）、
+  // div#aa-panel、div#toast。分隔条绝对定位在侧栏右缘（不占网格列），折叠时隐藏。
   root.replaceChildren();
   const toolbar = document.createElement('header');
   toolbar.id = 'toolbar';
   const toc = document.createElement('aside');
   toc.id = 'toc';
   toc.setAttribute('aria-label', '大纲');
+  const tocResizer = document.createElement('div');
+  tocResizer.className = 'toc-resizer';
+  tocResizer.setAttribute('role', 'separator');
+  tocResizer.setAttribute('aria-orientation', 'vertical');
+  tocResizer.setAttribute('aria-label', '调整大纲宽度');
+  tocResizer.setAttribute('aria-valuemin', String(TOC_WIDTH_MIN));
+  tocResizer.setAttribute('aria-valuemax', String(TOC_WIDTH_MAX));
+  tocResizer.setAttribute('aria-valuenow', String(TOC_WIDTH_DEFAULT));
+  tocResizer.tabIndex = 0;
+  tocResizer.title = '拖动调整大纲宽度，双击重置为 240';
   const content = document.createElement('main');
   content.id = 'content';
   const aaPanel = buildAaPanel();
   const toast = document.createElement('div');
   toast.id = 'toast';
   toast.hidden = true;
-  root.append(toolbar, toc, content, aaPanel, toast);
+  root.append(toolbar, toc, tocResizer, content, aaPanel, toast);
 
   const tocToggle = createToolbarButton('目录', 'toc-toggle', '大纲（Ctrl+B）');
   const themeToggle = createToolbarButton('跟随系统', 'theme-toggle', '主题：浅色 → 深色 → 跟随系统');
@@ -413,12 +434,13 @@ export function mountShell({ root, post } = {}) {
     return resolved;
   }
 
-  /** 侧栏显隐：CSS 用 #app[data-toc="hidden"] 折叠（保持 DOM，切回不重建 TOC）。 */
+  /** 侧栏显隐：CSS 用 #app[data-toc="hidden"] 折叠（保持 DOM，切回不重建 TOC）；折叠时分隔条同步隐藏。 */
   function applyTocVisibility() {
     const visible = state.settings.tocVisible;
     root.setAttribute('data-toc', visible ? 'visible' : 'hidden');
     tocToggle.setAttribute('aria-pressed', String(visible));
     tocToggle.classList.toggle('active', visible);
+    tocResizer.hidden = !visible;
   }
 
   /** Aa 面板控件回显当前设置（快捷键改字号后滑杆同步）。 */
@@ -435,6 +457,11 @@ export function mountShell({ root, post } = {}) {
         output.textContent = String(value);
       }
     }
+  }
+
+  /** 分隔条无障碍状态回显（tocWidth 数值 → aria-valuenow，读屏可感知当前宽度）。 */
+  function syncTocResizerWidth() {
+    tocResizer.setAttribute('aria-valuenow', String(state.settings.tocWidth));
   }
 
   /** 面板控件值 → 设置字段类型（滑杆给字符串，设置比较要数值）。 */
@@ -471,6 +498,40 @@ export function mountShell({ root, post } = {}) {
     send('saveSettings', { patch });
     return patch;
   }
+
+  /**
+   * 拖拽中的实时预览：更新 tocWidth 状态 + 写 --toc-width（applySettings），不落盘。
+   * 拖动期间逐帧 saveSettings 会刷屏，因此松手时由 commitTocWidth 统一上报一次。
+   */
+  function previewTocWidth(width) {
+    state.settings = normalizeSettings({ ...state.settings, tocWidth: width });
+    applySettings(state.settings);
+    syncTocResizerWidth();
+  }
+
+  /**
+   * 拖拽/双击/方向键结束：以「起始宽」为基准算 patch，只上报变化的 tocWidth（与 updateSettings 的 settingsPatch 口径一致）。
+   * 起始宽由 resizer 模块保存并回传（拖拽中 state.settings 已被预览更新，不能拿它当基准）。
+   * @returns {object} 实际发送的 patch（无变化为空对象）
+   */
+  function commitTocWidth(width, startWidth) {
+    const base = { ...state.settings, tocWidth: normalizeTocWidth(startWidth) };
+    previewTocWidth(width);
+    const patch = settingsPatch(base, { tocWidth: state.settings.tocWidth });
+    if (Object.keys(patch).length > 0) {
+      send('saveSettings', { patch });
+    }
+    return patch;
+  }
+
+  // 分隔条交互（指针拖拽 / 双击重置 240 / 方向键 ±10）：本模块只管指针状态机，宽度合法性与持久化走上面的回调。
+  const tocResizerControl = createTocResizer({
+    handle: tocResizer,
+    getWidth: () => state.settings.tocWidth,
+    onPreview: previewTocWidth,
+    onCommit: commitTocWidth,
+    defaultWidth: TOC_WIDTH_DEFAULT,
+  });
 
   /** TOC 点击：阻止默认跳转，按「标题 top − 工具条占位」平滑滚动到目标。 */
   function onTocClick(event) {
@@ -641,6 +702,7 @@ export function mountShell({ root, post } = {}) {
     applyThemeState();
     applyTocVisibility();
     syncAaControls();
+    syncTocResizerWidth();
 
     const started = now();
     render(markdown);
@@ -697,6 +759,7 @@ export function mountShell({ root, post } = {}) {
   applyThemeState();
   applyTocVisibility();
   syncAaControls();
+  syncTocResizerWidth();
   toc.replaceChildren(buildToc([]));
 
   themeToggle.addEventListener('click', () => {
@@ -712,13 +775,14 @@ export function mountShell({ root, post } = {}) {
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('click', onDocumentClick);
 
-  /** 卸下全局监听与滚动联动（测试/多实例装配用；WebView2 页面生命周期内不需要调用）。 */
+  /** 卸下全局监听、滚动联动与分隔条拖拽（测试/多实例装配用；WebView2 页面生命周期内不需要调用）。 */
   function destroy() {
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('click', onDocumentClick);
     toc.removeEventListener('click', onTocClick);
     aaPanel.removeEventListener('input', onAaControlChange);
     aaPanel.removeEventListener('change', onAaControlChange);
+    tocResizerControl.destroy();
     if (state.spy) {
       state.spy.destroy();
       state.spy = null;

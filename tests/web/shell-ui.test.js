@@ -737,3 +737,138 @@ it('长 TOC（350 项）正常生成不崩', () => {
   const done = posted.find((message) => message.type === 'renderDone');
   expect(done.payload.tocCount).toBe(350);
 });
+
+// ── TOC 侧栏拖拽调宽（Task 10 补漏：spec §5.1 要求默认 240 px、可拖 180–360 px） ──
+// jsdom 没有 PointerEvent / 真实布局：用 new Event + Object.assign 注入 clientX，
+// 起始宽直接取设置里的 tocWidth（load 下发的数字），不依赖 getBoundingClientRect。
+
+/** 造一个带 clientX 的指针事件（jsdom 无 PointerEvent，事件对象上直接挂属性）。 */
+function pointerEvent(type, clientX) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(event, { clientX, pointerId: 1 });
+  return event;
+}
+
+/** 取分隔条（不存在时直接失败，便于定位装配缺失）。 */
+function resizerOf(root) {
+  const resizer = root.querySelector('.toc-resizer');
+  expect(resizer).toBeTruthy();
+  return resizer;
+}
+
+it('TOC 分隔条：拖动实时改宽并同步 tocWidth 状态，拖拽中不落盘', () => {
+  const { root, shell, posted } = mount();
+  load(shell); // 默认 tocWidth 240
+  const resizer = resizerOf(root);
+  expect(resizer.getAttribute('role')).toBe('separator');
+  expect(resizer.getAttribute('aria-orientation')).toBe('vertical');
+  expect(resizer.getAttribute('aria-valuenow')).toBe('240');
+
+  const down = pointerEvent('pointerdown', 300);
+  resizer.dispatchEvent(down);
+  expect(down.defaultPrevented).toBe(true); // 拖拽起点阻止默认行为（避免选中文本）
+
+  resizer.dispatchEvent(pointerEvent('pointermove', 350)); // dx=+50 → 290
+  const style = document.documentElement.style;
+  expect(style.getPropertyValue('--toc-width')).toBe('290px');
+  expect(resizer.getAttribute('aria-valuenow')).toBe('290'); // 状态同步（aria 反映 state.settings.tocWidth）
+  expect(saveSettingsMessages(posted)).toHaveLength(0); // 移动期间不落盘，松手才报一次
+
+  resizer.dispatchEvent(pointerEvent('pointermove', 260)); // dx=-40 → 200
+  expect(style.getPropertyValue('--toc-width')).toBe('200px');
+  expect(saveSettingsMessages(posted)).toHaveLength(0);
+
+  resizer.dispatchEvent(pointerEvent('pointerup', 260));
+  expect(lastPatch(posted)).toEqual({ tocWidth: 200 });
+});
+
+it('TOC 分隔条：拖到越界（dx=-999 / +999）夹在 180 / 360', () => {
+  const { root, shell, posted } = mount();
+  load(shell, { settings: { tocWidth: 240 } });
+  const resizer = resizerOf(root);
+  const style = document.documentElement.style;
+
+  resizer.dispatchEvent(pointerEvent('pointerdown', 500));
+  resizer.dispatchEvent(pointerEvent('pointermove', 500 - 999)); // 240-999 → 夹到 180
+  expect(style.getPropertyValue('--toc-width')).toBe('180px');
+  expect(resizer.getAttribute('aria-valuenow')).toBe('180');
+
+  resizer.dispatchEvent(pointerEvent('pointermove', 500 + 999)); // 240+999 → 夹到 360
+  expect(style.getPropertyValue('--toc-width')).toBe('360px');
+  expect(resizer.getAttribute('aria-valuenow')).toBe('360');
+
+  resizer.dispatchEvent(pointerEvent('pointerup', 500 + 999));
+  expect(lastPatch(posted)).toEqual({ tocWidth: 360 });
+});
+
+it('TOC 分隔条：pointerup 后 saveSettings 的 patch 只含 tocWidth', () => {
+  const { root, shell, posted } = mount();
+  load(shell);
+  const before = saveSettingsMessages(posted).length;
+  const resizer = resizerOf(root);
+
+  resizer.dispatchEvent(pointerEvent('pointerdown', 300));
+  resizer.dispatchEvent(pointerEvent('pointermove', 280)); // 220
+  resizer.dispatchEvent(pointerEvent('pointerup', 280));
+
+  const messages = saveSettingsMessages(posted);
+  expect(messages.length).toBe(before + 1);
+  const payload = messages.at(-1).payload;
+  expect(payload).toEqual({ patch: { tocWidth: 220 } });
+  expect(payload).not.toHaveProperty('settings');
+  expect(Object.keys(payload.patch)).toEqual(['tocWidth']);
+});
+
+it('TOC 分隔条：双击重置为 240 并持久化', () => {
+  const { root, shell, posted } = mount();
+  load(shell, { settings: { tocWidth: 320 } });
+  const resizer = resizerOf(root);
+  expect(document.documentElement.style.getPropertyValue('--toc-width')).toBe('320px');
+
+  const dblclick = new MouseEvent('dblclick', { bubbles: true, cancelable: true });
+  resizer.dispatchEvent(dblclick);
+
+  expect(dblclick.defaultPrevented).toBe(true);
+  expect(document.documentElement.style.getPropertyValue('--toc-width')).toBe('240px');
+  expect(resizer.getAttribute('aria-valuenow')).toBe('240');
+  expect(lastPatch(posted)).toEqual({ tocWidth: 240 });
+});
+
+it('侧栏折叠时分隔条不显示', () => {
+  const { root, shell } = mount();
+  load(shell, { settings: { tocVisible: false } });
+  const resizer = resizerOf(root);
+  expect(root.dataset.toc).toBe('hidden');
+  expect(resizer.hidden).toBe(true); // 折叠时 hidden（CSS 另有 #app[data-toc='hidden'] 的 display:none 兜底）
+
+  press('b', { ctrlKey: true });
+  expect(root.dataset.toc).toBe('visible');
+  expect(resizer.hidden).toBe(false);
+});
+
+it('applySettings 写入夹紧后的 --toc-width（180–360，默认 240）', () => {
+  const style = document.documentElement.style;
+  JJ.applySettings({ tocWidth: 999 });
+  expect(style.getPropertyValue('--toc-width')).toBe('360px');
+  JJ.applySettings({ tocWidth: 1 });
+  expect(style.getPropertyValue('--toc-width')).toBe('180px');
+  JJ.applySettings({});
+  expect(style.getPropertyValue('--toc-width')).toBe('240px');
+});
+
+it('TOC 分隔条：方向键 ±10 调宽并持久化', () => {
+  const { root, shell, posted } = mount();
+  load(shell);
+  const resizer = resizerOf(root);
+  const style = document.documentElement.style;
+
+  const right = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+  resizer.dispatchEvent(right);
+  expect(right.defaultPrevented).toBe(true);
+  expect(style.getPropertyValue('--toc-width')).toBe('250px');
+  expect(lastPatch(posted)).toEqual({ tocWidth: 250 });
+
+  resizer.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+  expect(style.getPropertyValue('--toc-width')).toBe('240px');
+  expect(lastPatch(posted)).toEqual({ tocWidth: 240 });
+});

@@ -1,6 +1,6 @@
 /* 鲸鲸阅读器基础样式（Task 10）：排版变量 + 正文字体栈 + 阅读基线。
    运行时由 web/src/settings.js 的 applySettings 覆写 --font-size / --line-height / --content-width /
-   --font-cjk / --font-mono；颜色变量在 light.css（含 :root 兜底）与 dark.css（html[data-theme='dark']）里定义。
+   --font-cjk / --font-mono / --toc-width；颜色变量在 light.css（含 :root 兜底）与 dark.css（html[data-theme='dark']）里定义。
    本文件只放排版与元素基线，不放颜色字面量（T1 carry-forward：不依赖 base/layout/code 的跨文件级联）。 */
 
 :root {
@@ -11,7 +11,7 @@
   --font-cjk: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   --font-mono: consolas, 'Cascadia Mono', monospace;
 
-  /* 布局（TOC 宽度与工具条高度；拖拽调宽在后续任务，先固定 240px） */
+  /* 布局（TOC 宽度与工具条高度；--toc-width 由 applySettings 按设置写入（180–360，默认 240），此处为同值兜底） */
   --toc-width: 240px;
   --toolbar-height: 40px;
   --radius: 8px;

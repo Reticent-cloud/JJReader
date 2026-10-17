@@ -148,7 +148,8 @@ function monoFontValue(font) {
 
 /**
  * 把设置夹紧后写入根元素 CSS 变量：
- * --font-size（px）、--line-height（无单位）、--content-width（px 或 100%）、--font-cjk、--font-mono。
+ * --font-size（px）、--line-height（无单位）、--content-width（px 或 100%）、--font-cjk、--font-mono、
+ * --toc-width（px，TOC 侧栏宽；normalizeSettings 已夹紧 180–360，拖拽调宽实时走这里）。
  * 非浏览器环境（无 document）直接跳过，绝不抛异常。
  */
 export function applySettings(settings) {
@@ -166,6 +167,7 @@ export function applySettings(settings) {
   );
   style.setProperty('--font-cjk', cjkFontValue(normalized.cjkFont));
   style.setProperty('--font-mono', monoFontValue(normalized.monoFont));
+  style.setProperty('--toc-width', `${normalized.tocWidth}px`);
 }
 
 /**
