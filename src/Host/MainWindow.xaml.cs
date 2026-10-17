@@ -42,7 +42,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        // 数据目录统一由 AppPaths 计算（不存在时创建）；WebView2 缓存仍留在 %LOCALAPPDATA%。
+        // 数据目录统一由 AppPaths 计算（只给路径，Store 落盘时自行创建）；WebView2 缓存仍留在 %LOCALAPPDATA%。
         _store = new Store(AppPaths.DataDir);
         _webViewDataFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

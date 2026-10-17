@@ -18,18 +18,17 @@ public static class AppPaths
     public const string DebugLogFileName = "debug.log";
 
     /// <summary>
-    /// 数据目录 <c>%APPDATA%\JingjingReader</c>；不存在时创建（Store / 备份文件都要求目录存在）。
-    /// 路径按当前环境变量实时计算，便于测试/迁移环境复用。
+    /// 数据目录 <c>%APPDATA%\JingjingReader</c>；只计算路径，不创建目录（getter 不产生副作用，
+    /// 目录不可写时也不会在取路径的地方抛异常）。需要落盘的调用方自行创建并处理失败：
+    /// Store/DebugLog/关联备份写入都会在真正写入前 <c>Directory.CreateDirectory</c>。
     /// </summary>
     public static string DataDir
     {
         get
         {
-            var directory = Path.Combine(
+            return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 DataDirectoryName);
-            Directory.CreateDirectory(directory);
-            return directory;
         }
     }
 

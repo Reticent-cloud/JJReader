@@ -11,10 +11,16 @@
 [CmdletBinding()]
 param(
     # 默认使用构建产物 out\JingjingReader.exe；可显式指定其它位置的 exe。
-    [string]$ExePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'out\JingjingReader.exe')
+    # 默认值不能写在 param 块里：Windows PowerShell 5.1 绑定参数时 $PSScriptRoot 还是空串，
+    # 会在 Split-Path 处直接失败；放到 param 之后用 $PSCommandPath 解析（5.1/7 都可用）。
+    [string]$ExePath
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $ExePath) {
+    $ExePath = Join-Path (Split-Path -Parent $PSCommandPath) '..\out\JingjingReader.exe'
+}
 
 try {
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -38,5 +44,5 @@ if ($exitCode -ne 0) {
     exit $exitCode
 }
 
-Write-Host '卸载完成：已移除「鲸鲸阅读器」的 .md 打开方式；若存在备份，.md 默认程序已恢复为安装前的值。'
+Write-Host '卸载完成：已移除「鲸鲸阅读器」的 .md 打开方式（恢复结果见上）。'
 exit 0

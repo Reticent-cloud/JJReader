@@ -11,12 +11,18 @@
 [CmdletBinding()]
 param(
     # 默认使用构建产物 out\JingjingReader.exe；可显式指定其它位置的 exe。
-    [string]$ExePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'out\JingjingReader.exe'),
+    # 默认值不能写在 param 块里：Windows PowerShell 5.1 绑定参数时 $PSScriptRoot 还是空串，
+    # 会在 Split-Path 处直接失败；放到 param 之后用 $PSCommandPath 解析（5.1/7 都可用）。
+    [string]$ExePath,
     # 安装完成后直接打开 Windows「默认应用」设置页。
     [switch]$OpenSettings
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $ExePath) {
+    $ExePath = Join-Path (Split-Path -Parent $PSCommandPath) '..\out\JingjingReader.exe'
+}
 
 # 输出统一 UTF-8：脚本被管道/CI 调用时中文不按系统代码页（GBK）乱码。
 try {

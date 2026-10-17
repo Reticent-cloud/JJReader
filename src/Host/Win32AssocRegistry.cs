@@ -43,6 +43,54 @@ public sealed class Win32AssocRegistry : IAssocRegistry
         return key is not null;
     }
 
+    /// <summary>
+    /// 递归读取键树中的值（只读）。REG_SZ / REG_EXPAND_SZ 按 string 读取；其它类型标记
+    /// <c>Supported=false</c>，卸载时无法用 string 接口如实写回，因此不会覆盖当前值。
+    /// </summary>
+    public IReadOnlyList<AssocRegistryValue> ReadValues(string keyPath)
+    {
+        var values = new List<AssocRegistryValue>();
+        using var key = Registry.CurrentUser.OpenSubKey(keyPath);
+        if (key is null)
+        {
+            return values;
+        }
+
+        CollectValues(keyPath, key, values);
+        return values
+            .OrderBy(value => value.KeyPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(value => value.ValueName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static void CollectValues(string keyPath, RegistryKey key, List<AssocRegistryValue> values)
+    {
+        foreach (var rawName in key.GetValueNames())
+        {
+            // .NET 用空串表示默认值；对外统一用 null 表达。
+            var valueName = rawName.Length == 0 ? null : rawName;
+            var kind = key.GetValueKind(rawName);
+            if (kind is RegistryValueKind.String or RegistryValueKind.ExpandString)
+            {
+                var value = key.GetValue(rawName, null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+                values.Add(new AssocRegistryValue(keyPath, valueName, Supported: true, value));
+            }
+            else
+            {
+                values.Add(new AssocRegistryValue(keyPath, valueName, Supported: false, Value: null));
+            }
+        }
+
+        foreach (var subKeyName in key.GetSubKeyNames())
+        {
+            using var subKey = key.OpenSubKey(subKeyName);
+            if (subKey is not null)
+            {
+                CollectValues(keyPath + @"\" + subKeyName, subKey, values);
+            }
+        }
+    }
+
     private static void PruneIfEmpty(string keyPath)
     {
         try

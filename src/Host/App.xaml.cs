@@ -110,11 +110,21 @@ public partial class App : Application
     /// <summary>
     /// <c>--install</c> / <c>--uninstall</c> 的命令行入口：不建窗口、不参与单实例，只操作 HKCU 并输出中文结果。
     /// 成功退出码 0、失败 1；异常必须转成消息 + 退出码，不能冒泡成未处理异常。
+    /// 用命名 Mutex 串行化并发的安装/卸载命令（双击两次、脚本与 exe 同时跑）。
     /// </summary>
     private void RunAssociationCommand(bool install)
     {
         try
         {
+            using var commandLock = Assoc.TryAcquireCommandMutex();
+            if (commandLock is null)
+            {
+                ConsoleHelper.WriteLine("另一个安装/卸载正在进行，请稍后再试。");
+                DebugLog.Write($"{(install ? "install" : "uninstall")} 未执行：另一个安装/卸载正在进行");
+                Shutdown(1);
+                return;
+            }
+
             var registry = new Win32AssocRegistry();
             if (install)
             {
@@ -125,18 +135,42 @@ public partial class App : Application
                 ConsoleHelper.WriteLine(state.IsDefault
                     ? "鲸鲸阅读器已是默认 .md 程序。"
                     : "若 .md 已有默认程序，请到 设置→默认应用 选择鲸鲸阅读器。");
-            }
-            else
-            {
-                // 卸载前判断备份是否存在，用于区分「恢复安装前状态」与「备份缺失的尽力还原」。
-                var hadBackup = File.Exists(AppPaths.AssocBackupPath);
-                Assoc.Uninstall(registry, AppPaths.AssocBackupPath);
-                ConsoleHelper.WriteLine(hadBackup
-                    ? "已卸载 .md 文件关联，并恢复安装前的状态。"
-                    : "未找到备份，已还原为本程序可识别的部分。");
+                DebugLog.Write("install 完成");
+                Shutdown(0);
+                return;
             }
 
-            DebugLog.Write(install ? "install 完成" : "uninstall 完成");
+            var backupPath = AppPaths.AssocBackupPath;
+            var result = Assoc.Uninstall(registry, backupPath);
+            switch (result)
+            {
+                case AssocUninstallResult.RestoredFromBackup:
+                    ConsoleHelper.WriteLine("已卸载 .md 文件关联，并恢复安装前的状态。");
+                    break;
+
+                case AssocUninstallResult.RemovedWithoutBackup:
+                    ConsoleHelper.WriteLine("备份缺失，已删除本程序写入的 .md 关联项（安装前的 ProgID 细节无法还原）。");
+                    break;
+
+                case AssocUninstallResult.BackupCorrupt:
+                    ConsoleHelper.WriteLine($"关联备份文件已损坏，未改动注册表：{backupPath}");
+                    ConsoleHelper.WriteLine("请检查或删除该备份文件后重试。");
+                    DebugLog.Write("uninstall 中止：备份损坏，未改动注册表");
+                    Shutdown(1);
+                    return;
+
+                case AssocUninstallResult.BackupIncompatible:
+                    ConsoleHelper.WriteLine($"关联备份版本不兼容（schemaVersion != 1），未改动注册表：{backupPath}");
+                    ConsoleHelper.WriteLine("请检查或删除该备份文件后重试。");
+                    DebugLog.Write("uninstall 中止：备份版本不兼容，未改动注册表");
+                    Shutdown(1);
+                    return;
+
+                default:
+                    throw new InvalidOperationException($"未知的卸载结果：{result}");
+            }
+
+            DebugLog.Write("uninstall 完成");
             Shutdown(0);
         }
         catch (Exception exception)
@@ -147,23 +181,41 @@ public partial class App : Application
         }
     }
 
-    /// <summary>带 --install 启动的程序自身路径：优先进程路径（publish 后的 exe），回退程序集位置。</summary>
+    /// <summary>
+    /// 带 <c>--install</c> 启动时应注册的可执行文件路径：
+    /// 正常 exe 启动用 <see cref="Environment.ProcessPath"/>；<c>dotnet JingjingReader.dll --install</c>
+    /// 时 ProcessPath 是 dotnet.exe，改用入口程序集所在目录的同名 apphost（JingjingReader.exe），
+    /// 避免把 dotnet.exe 注册成 .md 的打开方式。找不到 apphost 时报错（由调用方转成 exit 1）。
+    /// </summary>
     private static string ResolveExecutablePath()
     {
-        var path = Environment.ProcessPath;
-        if (string.IsNullOrWhiteSpace(path))
+        var processPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(processPath) && !IsDotnetHost(processPath))
         {
-            // 单文件发布时 Assembly.Location 为空字符串，这里只是 ProcessPath 缺失时的兜底。
+            return Path.GetFullPath(processPath);
+        }
+
+        // 单文件发布时 Assembly.Location 为空字符串；此处是 dotnet 宿主/兜底场景，取入口程序集路径。
 #pragma warning disable IL3000
-            path = Assembly.GetEntryAssembly()?.Location;
+        var assemblyPath = Assembly.GetEntryAssembly()?.Location;
 #pragma warning restore IL3000
-        }
-
-        if (string.IsNullOrWhiteSpace(path))
+        if (string.IsNullOrWhiteSpace(assemblyPath))
         {
-            throw new InvalidOperationException("无法确定程序自身路径");
+            throw new InvalidOperationException("无法确定程序自身路径（进程路径与入口程序集均不可用）。");
         }
 
-        return Path.GetFullPath(path);
+        var assemblyDirectory = Path.GetDirectoryName(assemblyPath);
+        var exePath = Path.Combine(assemblyDirectory ?? string.Empty, Path.GetFileNameWithoutExtension(assemblyPath) + ".exe");
+        if (!File.Exists(exePath))
+        {
+            throw new InvalidOperationException(
+                $"未找到程序可执行文件：{exePath}；请先构建 apphost 或直接运行 JingjingReader.exe --install。");
+        }
+
+        return Path.GetFullPath(exePath);
     }
+
+    /// <summary>判断进程路径是否是 .NET 宿主（dotnet / dotnet.exe）。</summary>
+    private static bool IsDotnetHost(string path)
+        => string.Equals(Path.GetFileNameWithoutExtension(path), "dotnet", StringComparison.OrdinalIgnoreCase);
 }
