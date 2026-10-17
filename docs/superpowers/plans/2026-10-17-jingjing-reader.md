@@ -820,62 +820,6 @@ it('滚动超过 400px 时显示回到顶部按钮', () => {
 ```csharp
 public static class SingleInstance {
     public const string MutexName = "Global\\JingjingReader";
-    public static bool TryAcquire();                       // true=我是主实例
-    public static Task<bool> TrySendAsync(string path, int timeoutMs = 500); // 把路径发给主实例
-}
-public static class IpcServer {
-    public static void Start(Action<string> onPath);       // 后台线程监听命名管道，收到路径回调
-    public static Task<bool> SendAsync(string path, int timeoutMs = 500);
-    public static void Stop();
-}
-public sealed record NoteHit(string FullPath, string RelativePath);
-public static class NoteResolver {
-    public static NoteHit? FindNote(string docDir, string target, int maxDepth = 2);      // 补 .md、大小写不敏感、跳过不可读目录
-    public static NoteHit? FindAttachment(string docDir, string target, int maxDepth = 2);
-}
-```
-
-- [ ] **Step 1: 写失败测试**
-
-```csharp
-[Fact] public async Task Ipc_roundtrip_delivers_path() {
-    var got = new TaskCompletionSource<string>();
-    IpcServer.Start(p => got.TrySetResult(p));
-    Assert.True(await IpcServer.SendAsync(@"C:\notes\中文 目录#1\a.md"));
-    Assert.Equal(@"C:\notes\中文 目录#1\a.md", await got.Task.WaitAsync(TimeSpan.FromSeconds(3)));
-    IpcServer.Stop();
-}
-[Fact] public async Task Ipc_send_fails_without_server() { Assert.False(await IpcServer.SendAsync(@"C:\a.md", 200)); }
-[Fact] public void NoteResolver_finds_note_in_subdir_case_insensitive() {
-    var dir = TestDir(); Directory.CreateDirectory(Path.Combine(dir, "子目录"));
-    File.WriteAllText(Path.Combine(dir, "子目录", "Note.md"), "# x");
-    Assert.NotNull(NoteResolver.FindNote(dir, "note"));
-    Assert.Equal("子目录/Note.md", NoteResolver.FindNote(dir, "Note")!.RelativePath.Replace('\\', '/'));
-}
-[Fact] public void NoteResolver_rejects_traversal_and_missing() {
-    Assert.Null(NoteResolver.FindNote(@"C:\notes", @"..\..\windows\win.ini"));
-    Assert.Null(NoteResolver.FindNote(@"C:\notes", "不存在"));
-}
-```
-
-- [ ] **Step 2: 确认失败**：`--filter "IpcTests|NoteResolverTests"` → 编译失败。
-
-- [ ] **Step 3: 实现**
-- `SingleInstance`：`new Mutex(true, MutexName, out createdNew)` 保存字段防 GC；`TrySendAsync` 调 `IpcServer.SendAsync`。
-- `IpcServer`：`NamedPipeServerStream(MutexName + ".pipe", PipeDirection.In, 1, PipeTransmissionMode.Byte)` 循环 `WaitForConnectionAsync`；`SendAsync` 用 `NamedPipeClientStream(".", pipe, PipeDirection.Out)` + `ConnectAsync(timeout)`，UTF-8 写一行路径。
-- `App` 启动顺序：`--selftest`/`--verify-*` 优先；否则 `TryAcquire()` 失败 → `TrySendAsync(path)` → 退出；成功 → `IpcServer.Start(path => Dispatcher.Invoke(() => mainWindow.Open(path)))`。
-- `MainWindow`：`AllowDrop=true`，`Drop` 事件取第一个文件；`openFile` 消息 → `FileHost` 校验存在 → 打开（绝对路径用 `NormalizePath`，相对路径 `ResolveInside` 到当前目录）；同时刷新虚拟主机映射（`ClearVirtualHostNameToFolderMapping` 后重设）。
-- `wikilink` 点击：`enhance` 给 `.wikilink`/`.attachment[data-target]` 绑定点击 → `post('openFile', { relPath })`；宿主先 `NoteResolver.FindNote` 再打开，找不到 `Protocol.Toast("未找到「xxx」", "warn")`。
-
-- [ ] **Step 4: 确认通过**：两个测试类 PASS；手动：连续双击两个 `.md` → 只出现一个窗口且内容切换。
-
-- [ ] **Step 5: 提交**：`git commit -m "feat: 单实例转交、拖放、目录浏览与 wikilink 寻文件"`
-
----
-
-```csharp
-public static class SingleInstance {
-    public const string MutexName = "Global\\JingjingReader";
     public static bool TryAcquire(string name = MutexName); // true=我是主实例；name 可注入便于测试
     public static Task<bool> TrySendAsync(string path, int timeoutMs = 500); // 把路径发给主实例
 }
