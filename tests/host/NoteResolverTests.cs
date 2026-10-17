@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using Xunit;
 
@@ -130,6 +131,53 @@ public class NoteResolverTests
     {
         Assert.Null(NoteResolver.FindNote("", "a.md"));
         Assert.Null(NoteResolver.FindNote(@"C:\definitely-not-a-real-dir-" + Guid.NewGuid().ToString("N"), "a.md"));
+    }
+
+    [Fact]
+    public void FindNote_rejects_explicit_paths_through_junctions()
+    {
+        var docDir = TestHelpers.TestDir();
+        var outside = TestHelpers.TestDir();
+        File.WriteAllText(Path.Combine(outside, "Secret.md"), "# x");
+        var link = Path.Combine(docDir, "link");
+        if (!TryCreateJunction(link, outside))
+        {
+            // 环境不允许创建 junction（受限账户/文件系统）：该用例尽力而为，跳过不算失败。
+            return;
+        }
+
+        // C1：显式 [[link/secret]] 不能借 junction 把「目录内」的字符串前缀指到目录外。
+        Assert.Null(NoteResolver.FindNote(docDir, @"link\secret"));
+        Assert.Null(NoteResolver.FindNote(docDir, "secret"));
+        Assert.Null(OpenTargetResolver.Resolve(docDir, @"link\secret"));
+    }
+
+    /// <summary>用 <c>mklink /J</c> 创建目录 junction（不需要管理员权限）；失败返回 false。</summary>
+    private static bool TryCreateJunction(string link, string target)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return false;
+            }
+
+            process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            return process.WaitForExit(5000) && process.ExitCode == 0 && Directory.Exists(link);
+        }
+        catch (Exception exception) when (exception is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     [Fact]

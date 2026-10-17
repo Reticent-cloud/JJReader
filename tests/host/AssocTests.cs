@@ -373,6 +373,105 @@ public class AssocTests
     }
 
     [Fact]
+    public void GetState_prefers_user_choice_over_classes_default()
+    {
+        // Win10/11 用户显式选择别的默认程序后，classes 默认值可能仍残留本 ProgID；UserChoice 才是实际生效值。
+        var reg = new FakeRegistry();
+        reg.SetValue(Assoc.DotMdKey(), null, Assoc.ProgId);
+        reg.SetValue(Assoc.UserChoiceKey(), "ProgId", "WorkBuddy.md");
+
+        Assert.False(Assoc.GetState(reg).IsDefault);
+    }
+
+    [Fact]
+    public void GetState_uses_user_choice_when_it_points_to_us()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(Assoc.DotMdKey(), null, "WorkBuddy.md");
+        reg.SetValue(Assoc.UserChoiceKey(), "ProgId", Assoc.ProgId);
+
+        Assert.True(Assoc.GetState(reg).IsDefault);
+    }
+
+    [Fact]
+    public void GetState_falls_back_to_classes_when_user_choice_is_missing_or_blank()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(Assoc.DotMdKey(), null, Assoc.ProgId);
+
+        Assert.True(Assoc.GetState(reg).IsDefault);
+
+        reg.SetValue(Assoc.UserChoiceKey(), "ProgId", string.Empty);
+        // 空 UserChoice 值视为没有 UserChoice，仍回退 classes 默认值。
+        Assert.True(Assoc.GetState(reg).IsDefault);
+    }
+
+    [Fact]
+    public void Install_backs_up_and_uninstall_restores_existing_open_with_progid_value()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(Assoc.DotMdKey(), null, "WorkBuddy.md");
+        reg.SetValue(OpenWithKey, Assoc.ProgId, "legacy-value");
+        var backup = NewBackupPath();
+
+        Assoc.Install(reg, ExePath, backup);
+
+        using (var document = JsonDocument.Parse(File.ReadAllText(backup)))
+        {
+            var root = document.RootElement;
+            Assert.True(root.GetProperty("hadOpenWithProgid").GetBoolean());
+            Assert.Equal("legacy-value", root.GetProperty("openWithProgidValue").GetString());
+        }
+
+        var result = Assoc.Uninstall(reg, backup);
+
+        Assert.Equal(AssocUninstallResult.RestoredFromBackup, result);
+        // M4：恢复安装前的原值，而不是一律删除。
+        Assert.Equal("legacy-value", reg.GetValue(OpenWithKey, Assoc.ProgId));
+    }
+
+    [Fact]
+    public void Uninstall_restores_empty_open_with_progid_value_instead_of_deleting()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(Assoc.DotMdKey(), null, "WorkBuddy.md");
+        // OpenWithProgids 的常见值是空串；安装前存在这个值，卸载后也应存在（空串），不能被删掉。
+        reg.SetValue(OpenWithKey, Assoc.ProgId, string.Empty);
+        var backup = NewBackupPath();
+        Assoc.Install(reg, ExePath, backup);
+
+        Assoc.Uninstall(reg, backup);
+
+        Assert.Equal(string.Empty, reg.GetValue(OpenWithKey, Assoc.ProgId));
+    }
+
+    [Fact]
+    public void Uninstall_restores_open_with_progid_from_legacy_backup_without_value_field()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(Assoc.DotMdKey(), null, "WorkBuddy.md");
+        reg.SetValue(OpenWithKey, Assoc.ProgId, string.Empty);
+        var backup = NewBackupPath();
+        // 旧备份：hadOpenWithProgid=true 但没有 openWithProgidValue 字段。
+        File.WriteAllText(backup, """
+        {
+          "schemaVersion": 1,
+          "exePath": "C:\\apps\\JingjingReader.exe",
+          "dotMdDefault": "WorkBuddy.md",
+          "dotMdDefaultPresent": true,
+          "hadOpenWithProgid": true,
+          "hadProgIdKey": false,
+          "backedUpAt": "2026-10-17T00:00:00Z"
+        }
+        """);
+
+        var result = Assoc.Uninstall(reg, backup);
+
+        Assert.Equal(AssocUninstallResult.RestoredFromBackup, result);
+        Assert.Equal(string.Empty, reg.GetValue(OpenWithKey, Assoc.ProgId));
+    }
+
+    [Fact]
     public void Install_and_Uninstall_reject_missing_arguments()
     {
         var reg = new FakeRegistry();

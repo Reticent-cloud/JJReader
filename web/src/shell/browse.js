@@ -87,7 +87,7 @@ export function rootDisplayName(root) {
  * 创建文件夹浏览控制器（浏览根 + 侧栏模式）。
  * @param {{browseRootButton?: HTMLElement, treeBackButton?: HTMLElement, post?: Function, getDocumentPath?: () => string}} [options]
  *   browseRootButton：工具条根目录名（点击回树）；treeBackButton：「大纲」返回按钮；
- *   post：发消息（openFile）；getDocumentPath：当前打开的文档绝对路径（dirListing 到达后同步高亮）。
+ *   post：发消息（openTreeFile）；getDocumentPath：当前打开的文档绝对路径（dirListing 到达后同步高亮）。
  * @returns {{applyListing: Function, syncForDocument: Function, onToast: Function, showTocMode: Function, destroy: Function}}
  */
 export function createBrowser({ browseRootButton, treeBackButton, post, getDocumentPath } = {}) {
@@ -139,12 +139,12 @@ export function createBrowser({ browseRootButton, treeBackButton, post, getDocum
     }
   }
 
-  /** 树中点击文件：把绝对路径交给宿主（宿主再做 NormalizePath/存在性校验）。 */
+  /** 树中点击文件：把绝对路径交给宿主（宿主按浏览根做包含性校验，见 openTreeFile）。 */
   function openTreeFile(relPath) {
     if (typeof relPath !== 'string' || relPath === '' || state.root === '') {
       return;
     }
-    send('openFile', { relPath: joinRootPath(state.root, relPath) });
+    send('openTreeFile', { path: joinRootPath(state.root, relPath) });
   }
 
   /** 当前文档按浏览根定位并高亮（根外/无根时只清除高亮）。 */

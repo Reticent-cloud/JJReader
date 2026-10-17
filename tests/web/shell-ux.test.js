@@ -538,7 +538,7 @@ it('空白启动显示最近文件面板，recent 消息刷新列表，load 后�
   expect(root.querySelector('#content .recent-panel')).toBeNull();
 });
 
-it('空白页最近文件项点击/Enter 发送 openFile 绝对路径，Esc 关闭面板', () => {
+it('空白页最近文件项点击/Enter 发送 openRecent 绝对路径，Esc 关闭面板', () => {
   const { root, shell, posted } = mount();
   shell.onMessage({
     type: 'recent',
@@ -546,7 +546,7 @@ it('空白页最近文件项点击/Enter 发送 openFile 绝对路径，Esc 关�
   });
   const panel = root.querySelector('#content .recent-panel');
   panel.querySelectorAll('[data-path]')[1].click();
-  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\b.md' });
+  expect(lastPayload(posted, 'openRecent')).toEqual({ path: 'C:\\b.md' });
 
   press('Escape');
   expect(root.querySelector('#content .recent-panel')).toBeNull();
@@ -554,7 +554,7 @@ it('空白页最近文件项点击/Enter 发送 openFile 绝对路径，Esc 关�
 
 // ── 工具条「最近」菜单（spec §5.6：与空白启动页共用最近列表） ──
 
-it('工具条「最近」按钮弹出最近文件菜单，选中项发送 openFile', () => {
+it('工具条「最近」按钮弹出最近文件菜单，选中项发送 openRecent', () => {
   const { root, shell, posted } = mount();
   shell.onMessage({
     type: 'recent',
@@ -575,7 +575,7 @@ it('工具条「最近」按钮弹出最近文件菜单，选中项发送 openFi
   expect([...items].map((item) => item.dataset.path)).toEqual(['C:\\a.md', 'C:\\b.md']);
 
   items[1].click();
-  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\b.md' });
+  expect(lastPayload(posted, 'openRecent')).toEqual({ path: 'C:\\b.md' });
   expect(menu.hidden).toBe(true);
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
 });
@@ -630,7 +630,7 @@ it('工具条最近菜单打开后焦点在第一项，↑↓/Enter 立即可用
   items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
   expect(document.activeElement).toBe(items[1]);
   items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\b.md' });
+  expect(lastPayload(posted, 'openRecent')).toEqual({ path: 'C:\\b.md' });
   expect(menu.hidden).toBe(true);
 });
 
@@ -854,16 +854,16 @@ it('Alt+←/→ 按最近文件列表切换（← 上一份更早，→ 更新�
   });
   load(shell, { path: 'C:\\b.md' }); // 最近列表第 0 项（最新）
   press('ArrowLeft', { altKey: true }); // 上一份（更早）= 第 1 项
-  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\a.md' });
+  expect(lastPayload(posted, 'openRecent')).toEqual({ path: 'C:\\a.md' });
 
   load(shell, { path: 'C:\\a.md' }); // 第 1 项
   press('ArrowRight', { altKey: true }); // 下一份（更新）= 第 0 项
-  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\b.md' });
+  expect(lastPayload(posted, 'openRecent')).toEqual({ path: 'C:\\b.md' });
 
   load(shell, { path: 'C:\\b.md' }); // 已在最新：再「下一份」无动作
-  const before = posted.filter((message) => message.type === 'openFile').length;
+  const before = posted.filter((message) => message.type === 'openRecent').length;
   press('ArrowRight', { altKey: true });
-  expect(posted.filter((message) => message.type === 'openFile')).toHaveLength(before);
+  expect(posted.filter((message) => message.type === 'openRecent')).toHaveLength(before);
 });
 
 it('F5 先 flush 位置再请求重载', () => {
@@ -905,7 +905,7 @@ it('输入框内不触发 F5/Alt+←→/Ctrl+Shift+C', () => {
   dispatch('ArrowLeft', { altKey: true });
   dispatch('C', { ctrlKey: true, shiftKey: true });
 
-  expect(posted.filter((message) => ['reload', 'openFile', 'showInFolder'].includes(message.type))).toHaveLength(0);
+  expect(posted.filter((message) => ['reload', 'openRecent', 'showInFolder'].includes(message.type))).toHaveLength(0);
 });
 
 // ── 工具条悬浮 ──

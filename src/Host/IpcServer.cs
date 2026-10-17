@@ -15,7 +15,18 @@ public static class IpcServer
     /// <summary>单条消息（一行）的 UTF-8 字节上限；超出时发送端拒绝、接收端丢弃。</summary>
     public const int MaxPayloadBytes = 32 * 1024;
 
+    /// <summary>
+    /// 单条连接读取上限（M9）：客户端连上却不发数据/只发半行时，2 s 后放弃该连接继续监听，
+    /// 不能让一个哑连接把单实例转交通道永久占死。
+    /// </summary>
+    public const int ReadTimeoutMilliseconds = 2_000;
+
     private const int ReadBufferSize = 4096;
+
+    /// <summary>发送失败后的重试次数（M9：短退避，覆盖主实例正在重建管道的瞬间）。</summary>
+    private const int SendRetryCount = 2;
+
+    private const int SendRetryBackoffMilliseconds = 50;
 
     /// <summary>保护 <see cref="_server"/><see cref="_thread"/><see cref="_running"/> 的互斥锁。</summary>
     private static readonly object Gate = new();
@@ -29,9 +40,17 @@ public static class IpcServer
     /// <paramref name="onPath"/> 在后台线程回调，调用方负责切回 UI 线程。
     /// </summary>
     public static void Start(string pipeName, Action<string> onPath)
+        => Start(pipeName, onPath, ReadTimeoutMilliseconds);
+
+    /// <summary>测试用重载：注入更短的读超时（生产常量见 <see cref="ReadTimeoutMilliseconds"/>）。</summary>
+    internal static void Start(string pipeName, Action<string> onPath, int readTimeoutMs)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         ArgumentNullException.ThrowIfNull(onPath);
+        if (readTimeoutMs <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(readTimeoutMs), "读超时必须为正数。");
+        }
 
         Stop();
 
@@ -40,7 +59,7 @@ public static class IpcServer
             _running = true;
         }
 
-        var thread = new Thread(() => ListenLoop(pipeName, onPath))
+        var thread = new Thread(() => ListenLoop(pipeName, onPath, readTimeoutMs))
         {
             IsBackground = true,
             Name = "JingjingReader.Ipc",
@@ -76,6 +95,38 @@ public static class IpcServer
             return false;
         }
 
+        return await SendWithRetryAsync(_ => TrySendOnceAsync(pipeName, bytes, timeoutMs)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// M9：单次失败后重试 2 次（退避 50/100 ms）。抽成 internal 便于单测覆盖重试次数；
+    /// <paramref name="attempt"/> 收到 0 起始的尝试序号。
+    /// </summary>
+    internal static async Task<bool> SendWithRetryAsync(
+        Func<int, Task<bool>> attempt,
+        int retryDelayMs = SendRetryBackoffMilliseconds)
+    {
+        ArgumentNullException.ThrowIfNull(attempt);
+
+        for (var attemptIndex = 0; attemptIndex <= SendRetryCount; attemptIndex++)
+        {
+            if (await attempt(attemptIndex).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            if (attemptIndex < SendRetryCount && retryDelayMs > 0)
+            {
+                await Task.Delay(retryDelayMs * (attemptIndex + 1)).ConfigureAwait(false);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>一次发送尝试：连接 → 写负载 → 写换行 → flush；任何失败返回 false。</summary>
+    private static async Task<bool> TrySendOnceAsync(string pipeName, byte[] bytes, int timeoutMs)
+    {
         try
         {
             using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
@@ -131,7 +182,7 @@ public static class IpcServer
         }
     }
 
-    private static void ListenLoop(string pipeName, Action<string> onPath)
+    private static void ListenLoop(string pipeName, Action<string> onPath, int readTimeoutMs)
     {
         while (_running)
         {
@@ -168,7 +219,7 @@ public static class IpcServer
             try
             {
                 server.WaitForConnection();
-                var payload = ReadPayload(server);
+                var payload = ReadPayload(server, readTimeoutMs);
                 if (payload is not null)
                 {
                     try
@@ -212,17 +263,37 @@ public static class IpcServer
         }
     }
 
-    /// <summary>读一行（到 \n 为止）；超长或连接提前关闭返回 null（该连接被丢弃）。</summary>
-    private static string? ReadPayload(Stream stream)
+    /// <summary>
+    /// 读一行（到 \n 为止）；超长、连接提前关闭或超过 <paramref name="timeoutMs"/> 未读完返回 null
+    /// （该连接被放弃，监听循环继续服务下一条连接）。
+    /// </summary>
+    internal static string? ReadPayload(Stream stream, int timeoutMs = ReadTimeoutMilliseconds)
     {
+        ArgumentNullException.ThrowIfNull(stream);
+
         var buffer = new byte[ReadBufferSize];
         using var accumulated = new MemoryStream();
+        using var timeout = new CancellationTokenSource();
+        if (timeoutMs > 0)
+        {
+            timeout.CancelAfter(timeoutMs);
+        }
+
         while (true)
         {
             int read;
             try
             {
-                read = stream.Read(buffer, 0, buffer.Length);
+                // 后台线程上用同步等待读取异步结果：取消令牌可打断哑客户端占住的等待。
+                read = stream.ReadAsync(buffer.AsMemory(0, buffer.Length), timeout.Token)
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                DebugLog.Write($"IPC 读取超时（{timeoutMs} ms），放弃该连接");
+                return null;
             }
             catch (Exception exception) when (exception is IOException or ObjectDisposedException)
             {

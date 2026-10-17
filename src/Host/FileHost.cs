@@ -79,6 +79,12 @@ public static class FileHost
         return full.Length > LongPathThreshold ? ExtendedPrefix + full : full;
     }
 
+    /// <summary>单文件打开上限（M11：超过 50 MB 直接拒绝，避免同步读取把宿主卡死）。</summary>
+    public const long MaxDocumentBytes = 50L * 1024 * 1024;
+
+    /// <summary>文件是否超过 <see cref="MaxDocumentBytes"/>（严格大于；等于 50 MB 仍允许）。</summary>
+    public static bool IsTooLarge(long size) => size > MaxDocumentBytes;
+
     /// <summary>可渲染的 Markdown 文本扩展名：<c>.md</c>、<c>.markdown</c>、<c>.mdown</c>、<c>.txt</c>（大小写不敏感）。</summary>
     public static bool IsMarkdown(string path)
     {

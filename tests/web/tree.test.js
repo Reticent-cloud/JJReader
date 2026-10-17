@@ -246,8 +246,8 @@ it('点击树中文件发送 root + "/" + relPath 的绝对路径（中文与空
 
   findNode(root, '子目录/文件 A.md').click();
 
-  expect(lastPayload(posted, 'openFile')).toEqual({
-    relPath: 'C:\\笔记 目录/子目录/文件 A.md',
+  expect(lastPayload(posted, 'openTreeFile')).toEqual({
+    path: 'C:\\笔记 目录/子目录/文件 A.md',
   });
 });
 
@@ -259,7 +259,7 @@ it('根路径带尾随分隔符时点击文件拼出的绝对路径不出现双�
 
   findNode(root, 'a.md').click();
 
-  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\笔记 目录/a.md' });
+  expect(lastPayload(posted, 'openTreeFile')).toEqual({ path: 'C:\\笔记 目录/a.md' });
 });
 
 it('install 暴露 Task 14 的文件树 API', () => {

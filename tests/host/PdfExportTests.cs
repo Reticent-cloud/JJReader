@@ -105,6 +105,28 @@ public class PdfExportTests
         // PrintToPdfAsync 自身 60 s：UI 侧没有外层保护，必须由 ExportAsync 兜住永不返回的打印任务。
         Assert.Equal(60_000, PdfExport.PrintTimeoutMilliseconds);
         Assert.True(PdfExport.PrintTimeoutMilliseconds > PdfExport.ReadyTimeoutMilliseconds);
+        // M8：finally 里的退出打印模式脚本最多等 3 s。
+        Assert.Equal(3_000, PdfExport.ExitScriptTimeoutMilliseconds);
+    }
+
+    [Fact]
+    public async Task Exit_script_timeout_returns_without_hanging_and_resets_state()
+    {
+        var host = new FakePrintHost { ExitNeverCompletes = true };
+        var elapsed = Stopwatch.StartNew();
+
+        // M8：退出脚本卡住只记日志，不能把导出（以及 _exporting 状态）永远挂在 finally 里。
+        Assert.True(await PdfExport.ExportAsync(host, "exit-timeout.pdf", exitScriptTimeoutMs: 100));
+
+        elapsed.Stop();
+        Assert.True(
+            elapsed.Elapsed < TimeSpan.FromSeconds(3),
+            $"退出脚本超时应在约 100 ms 返回，实际 {elapsed.ElapsedMilliseconds} ms");
+        Assert.Equal(2, host.Scripts.Count);
+
+        host.ExitNeverCompletes = false;
+        Assert.True(await PdfExport.ExportAsync(host, "after-exit-timeout.pdf"));
+        Assert.Equal(4, host.Scripts.Count);
     }
 
     /// <summary>
@@ -117,6 +139,9 @@ public class PdfExportTests
 
         public bool PrintNeverCompletes { get; set; }
 
+        /// <summary>M8：退出打印模式脚本永不完成，用于验证 finally 的超时收口。</summary>
+        public bool ExitNeverCompletes { get; set; }
+
         public string? PrintedPath { get; private set; }
 
         public Task ExecuteScriptAsync(string script)
@@ -125,6 +150,11 @@ public class PdfExportTests
             if (script.Contains("enterPrintModeForPdf", StringComparison.Ordinal))
             {
                 PdfExport.NotifyReadyToPrint();
+            }
+
+            if (ExitNeverCompletes && script.Contains("exitPrintModeForPdf", StringComparison.Ordinal))
+            {
+                return new TaskCompletionSource().Task;
             }
 
             return Task.CompletedTask;

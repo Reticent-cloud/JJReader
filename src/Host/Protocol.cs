@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace JingjingReader;
 
 /// <summary>
-/// 前后端 JSON 消息的唯一协议定义处（spec §4.4 的 14 条 + 本计划新增的 dirListing / shellReady / recent / reload / openAbout）。
+/// 前后端 JSON 消息的唯一协议定义处（spec §4.4 的 14 条 + 本计划新增的 dirListing / shellReady / recent / reload / openAbout / openRecent / openTreeFile）。
 /// 消息体统一为 <c>{type, payload}</c>：宿主→前端用 <see cref="Load"/> 等构造方法生成 JSON 字符串，
 /// 再用 <c>PostWebMessageAsJson</c> 推送；前端→宿主用 <see cref="ParseInbound"/> 解析。
 /// </summary>
@@ -33,6 +33,8 @@ public static class Protocol
 
         // 前端 → 宿主
         "openFile",
+        "openRecent",
+        "openTreeFile",
         "pickFile",
         "pickFolder",
         "listDir",

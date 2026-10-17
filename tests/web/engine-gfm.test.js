@@ -232,12 +232,49 @@ describe('代码复制按钮', () => {
 });
 
 describe('enhance 外链与 shell 集成', () => {
-  it('外链加 target=_blank 与 rel=noopener', () => {
+  it('外链加 target=_blank 与 rel=noopener noreferrer', () => {
     const root = renderRoot('[外站](https://example.com)');
     JJ.enhance(root);
     const a = root.querySelector('a');
     expect(a.target).toBe('_blank');
-    expect(a.rel).toBe('noopener');
+    expect(a.rel).toBe('noopener noreferrer');
+  });
+
+  it('大小写混合协议与协议相对地址也按外链改写，javascript:/mailto: 不改写', () => {
+    const root = document.createElement('div');
+    root.innerHTML = [
+      '<a href="HTTPS://example.com/x">大写协议</a>',
+      '<a href="//example.com/y">协议相对</a>',
+      '<a href="javascript:alert(1)">脚本</a>',
+      '<a href="mailto:a@example.com">邮件</a>',
+      '<a href="#anchor">锚点</a>',
+    ].join('');
+    JJ.enhance(root);
+
+    const links = [...root.querySelectorAll('a')];
+    expect(links[0].getAttribute('target')).toBe('_blank');
+    expect(links[0].getAttribute('rel')).toBe('noopener noreferrer');
+    expect(links[1].getAttribute('target')).toBe('_blank');
+    expect(links[1].getAttribute('rel')).toBe('noopener noreferrer');
+    for (const link of links.slice(2)) {
+      expect(link.getAttribute('target')).toBeNull();
+    }
+  });
+
+  it('about:blank 文档下协议相对外链仍改写（URL 解析失败不回退成站内链接）', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<a href="//example.com/x">协议相对</a><a href="#anchor">锚点</a>';
+    Object.defineProperty(document, 'baseURI', { configurable: true, get: () => 'about:blank' });
+    try {
+      JJ.enhance(root);
+    } finally {
+      delete document.baseURI;
+    }
+
+    const [protocolRelative, anchor] = root.querySelectorAll('a');
+    expect(protocolRelative.getAttribute('target')).toBe('_blank');
+    expect(protocolRelative.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(anchor.getAttribute('target')).toBeNull();
   });
 
   it('站内相对链接不加 target', () => {

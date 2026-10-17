@@ -26,6 +26,9 @@ public partial class MainWindow : Window
     private Task? _webViewInitialization;
     private bool _shellReady;
     private bool _virtualHostMapped;
+
+    /// <summary>下一次 NavigationStarting 是初始 NavigateToString 装载（C2：只放行这一次整页导航）。</summary>
+    private bool _initialNavigationPending;
     private string? _pendingDocumentPath;
     private DocumentRead? _currentDocument;
 
@@ -103,10 +106,15 @@ public partial class MainWindow : Window
         settings.IsZoomControlEnabled = false;
         settings.IsPasswordAutosaveEnabled = false;
         settings.IsGeneralAutofillEnabled = false;
+        // NavigateToString 页没有可恢复的历史/内容：Reload/Back 等默认右键菜单项只会把页面弄坏。
+        settings.AreDefaultContextMenusEnabled = false;
 
         core.WebMessageReceived += OnWebMessageReceived;
         // Task 13：应用内不开第二个 WebView；http(s) 外链交给系统默认浏览器，其它协议忽略。
         core.NewWindowRequested += OnNewWindowRequested;
+        // C2：.md 内容可带任意链接；除初始装载与同文档 #fragment 外，WebView 内导航一律拦截。
+        core.NavigationStarting += OnNavigationStarting;
+        _initialNavigationPending = true;
         core.NavigateToString(BuildPageHtml());
 
         DebugLog.Write("WebView2 初始化完成，页面已导航");
@@ -126,6 +134,24 @@ public partial class MainWindow : Window
     private void PushDocument(string filePath)
     {
         var normalizedPath = FileHost.NormalizePath(filePath);
+
+        // M11：大文件同步 ReadAllBytes 会卡住 UI 线程；50 MB 以上直接拒绝（不做异步化改造）。
+        try
+        {
+            var size = new FileInfo(normalizedPath).Length;
+            if (FileHost.IsTooLarge(size))
+            {
+                DebugLog.Write($"拒绝打开过大文件 path={normalizedPath} size={size}");
+                Post(Protocol.Toast("文件过大，暂不支持打开（>50MB）", "warn"));
+                return;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            // 文件不存在/无权限：交给下面的 ReadDocument 统一报错（保持原有提示与标题行为）。
+            DebugLog.Write($"读取文件大小失败 path={normalizedPath}：{exception.Message}");
+        }
+
         DocumentRead document;
         try
         {
@@ -325,6 +351,13 @@ public partial class MainWindow : Window
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        // C2：只接受应用文档（about:blank）的消息；远程页面/未知来源即使拿到 WebView2 也不能驱动宿主。
+        if (!WebViewSecurityPolicy.IsTrustedMessageSource(e.Source))
+        {
+            DebugLog.Write($"忽略来源不可信的前端消息 source={e.Source}");
+            return;
+        }
+
         InboundMessage message;
         try
         {
@@ -382,6 +415,18 @@ public partial class MainWindow : Window
                 OpenFile(message.RelPath);
                 break;
 
+            case "openRecent":
+                OpenRecent(message.Path);
+                break;
+
+            case "openTreeFile":
+                OpenTreeFile(message.Path);
+                break;
+
+            case "openDefaultApps":
+                OpenDefaultApps();
+                break;
+
             case "pickFile":
                 PickFile();
                 break;
@@ -417,7 +462,7 @@ public partial class MainWindow : Window
                 break;
 
             default:
-                // 其余契约消息（如 openDefaultApps）暂不处理，只记日志。
+                // 其余契约消息（当前没有）只记日志。
                 DebugLog.Write($"忽略消息 type={message.Type}");
                 break;
         }
@@ -439,9 +484,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// openFile：绝对路径直接使用（保持既有语义）；相对路径交给 <see cref="OpenTargetResolver"/>：
-    /// 精确路径 → 无扩展名补 .md → <see cref="NoteResolver"/> 大小写不敏感/递归子目录寻文件；越界一律拒绝。
-    /// 最近文件面板与 Alt+←/→ 传绝对路径，wikilink/附件（Task 13）与文件树（Task 14）传相对路径，共用同一入口。
+    /// openFile（C1）：只接受文档目录内的**相对路径**（wikilink / 附件）。绝对路径、UNC、盘符相对
+    /// 与带 <c>..</c> 的路径一律拒绝并 toast，避免 .md 内容让宿主读取任意本地文件或触发 UNC 认证。
+    /// 解析走 <see cref="OpenTargetResolver"/>：精确路径 → 无扩展名补 .md → 大小写不敏感/递归子目录。
+    /// 最近文件与文件树分别走 <see cref="OpenRecent"/>/<see cref="OpenTreeFile"/>，不再共用绝对路径入口。
     /// </summary>
     private void OpenFile(string? relPath)
     {
@@ -452,14 +498,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!OpenPathPolicy.IsContentTargetAllowed(relPath))
+        {
+            DebugLog.Write($"拒绝 openFile 非相对路径 relPath={relPath}");
+            Post(Protocol.Toast("不支持打开该路径", "error"));
+            return;
+        }
+
         string? target = null;
         try
         {
-            if (Path.IsPathFullyQualified(relPath))
-            {
-                target = FileHost.NormalizePath(relPath);
-            }
-            else if (_currentDocument is { } document)
+            if (_currentDocument is { } document)
             {
                 var directory = Path.GetDirectoryName(document.Path);
                 if (!string.IsNullOrWhiteSpace(directory))
@@ -481,6 +530,81 @@ public partial class MainWindow : Window
         }
 
         OpenDocument(target);
+    }
+
+    /// <summary>
+    /// openRecent（C1）：只打开 recent.json 里归一化后命中的路径。前端最近面板/菜单/Alt+←→
+    /// 传来的绝对路径即使被篡改，也无法打开列表之外的任意文件。
+    /// </summary>
+    private void OpenRecent(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            DebugLog.Write("忽略 openRecent：缺少 path");
+            Post(Protocol.Toast("无法打开文件：缺少路径", "error"));
+            return;
+        }
+
+        string normalized;
+        try
+        {
+            normalized = FileHost.NormalizePath(path);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            DebugLog.Write($"拒绝 openRecent 非法路径 path={path}：{exception.Message}");
+            Post(Protocol.Toast("不支持打开该路径", "error"));
+            return;
+        }
+
+        if (!OpenPathPolicy.IsRecentPath(normalized, _store.LoadRecent()))
+        {
+            DebugLog.Write($"拒绝 openRecent 不在最近列表 path={normalized}");
+            Post(Protocol.Toast("不支持打开该路径", "error"));
+            return;
+        }
+
+        OpenDocument(normalized);
+    }
+
+    /// <summary>
+    /// openTreeFile（C1）：只打开浏览根内、扩展名为 Markdown/文本的文件。
+    /// 前端传来的绝对路径先经归一化包含性校验，越界/未选根/类型不符一律拒绝。
+    /// </summary>
+    private void OpenTreeFile(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(_browseRoot))
+        {
+            DebugLog.Write($"拒绝 openTreeFile：缺少路径或尚未打开文件夹 path={path}");
+            Post(Protocol.Toast("不支持打开该路径", "error"));
+            return;
+        }
+
+        var target = FileHost.ResolveInside(_browseRoot, path);
+        if (target is null || !FileHost.IsMarkdown(target))
+        {
+            DebugLog.Write($"拒绝 openTreeFile 越界或类型不支持 root={_browseRoot} path={path}");
+            Post(Protocol.Toast("不支持打开该路径", "error"));
+            return;
+        }
+
+        OpenDocument(target);
+    }
+
+    /// <summary>M6：打开系统「默认应用」设置页（openDefaultApps 落地，不再静默忽略）。</summary>
+    private void OpenDefaultApps()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("ms-settings:defaultapps") { UseShellExecute = true });
+            DebugLog.Write("打开系统默认应用设置");
+        }
+        catch (Exception exception)
+        {
+            // UI 边界：系统设置协议被策略拦截/无 shell 时只记日志并提示
+            DebugLog.Write($"打开系统默认应用设置失败：{exception.Message}");
+            Post(Protocol.Toast("无法打开默认应用设置", "error"));
+        }
     }
 
     /// <summary>pickFile：系统打开对话框（Markdown/所有文件），选中后走 <see cref="OpenDocument"/>；取消不做任何事。</summary>
@@ -696,25 +820,51 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// C2：WebView 内导航守卫。只放行初始 NavigateToString 与同文档 #fragment；
+    /// 其余导航取消，http(s) 改交系统默认浏览器（远程页不能在本 WebView 里继承 chrome.webview）。
+    /// </summary>
+    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        var isInitial = _initialNavigationPending;
+        if (isInitial)
+        {
+            _initialNavigationPending = false;
+        }
+
+        var current = WebView.CoreWebView2?.Source;
+        if (WebViewSecurityPolicy.IsAllowedNavigation(e.Uri, current, isInitial))
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        DebugLog.Write($"已拦截 WebView 内导航：{e.Uri}");
+
+        if (WebViewSecurityPolicy.TryGetHttpUri(e.Uri, out var uri) && uri is not null)
+        {
+            OpenExternalUri(uri);
+        }
+    }
+
+    /// <summary>
     /// 新窗口请求（target=_blank 外链，Task 6 carry-forward）：取消应用内新窗口；
     /// http(s) 交给系统默认浏览器，其它协议（file/javascript 等）忽略。
     /// </summary>
     private static void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
     {
         e.Handled = true;
-        if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri))
-        {
-            DebugLog.Write($"忽略无法解析的新窗口请求：{e.Uri}");
-            return;
-        }
-
-        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        if (!WebViewSecurityPolicy.TryGetHttpUri(e.Uri, out var uri) || uri is null)
         {
             DebugLog.Write($"忽略非 http(s) 新窗口请求：{e.Uri}");
             return;
         }
 
+        OpenExternalUri(uri);
+    }
+
+    /// <summary>http(s) 外链交给系统默认浏览器；启动失败只记日志。</summary>
+    private static void OpenExternalUri(Uri uri)
+    {
         try
         {
             Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
@@ -811,10 +961,26 @@ public partial class MainWindow : Window
         _ = RunPdfExportAsync(core, outputPath);
     }
 
-    /// <summary>执行导出并按结果 toast：成功提示文件名并用资源管理器定位；失败/异常提示错误。</summary>
+    /// <summary>执行导出并按结果 toast：成功提示完整路径并用资源管理器定位；失败删除半成品并提示错误。</summary>
     private async Task RunPdfExportAsync(Microsoft.Web.WebView2.Core.CoreWebView2 core, string outputPath)
     {
-        var fileName = Path.GetFileName(outputPath);
+        // 覆盖已有文件时，先记下原文件状态：导出失败且文件没被本次写入改动就保留用户原文件。
+        var existsBefore = false;
+        var writeTimeBefore = default(DateTime);
+        try
+        {
+            var before = new FileInfo(outputPath);
+            existsBefore = before.Exists;
+            if (existsBefore)
+            {
+                writeTimeBefore = before.LastWriteTimeUtc;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            DebugLog.Write($"exportPdf 读取目标文件状态失败 path={outputPath}：{exception.Message}");
+        }
+
         var success = false;
         try
         {
@@ -828,12 +994,45 @@ public partial class MainWindow : Window
 
         if (!success)
         {
+            // M8：失败时删除半成品，避免用户下次看到一份损坏的 PDF 冒充导出结果；
+            // 若目标文件是导出前就有且本次没被改写（例如进入打印模式就失败），保留用户原文件。
+            DeletePartialPdf(outputPath, existsBefore, writeTimeBefore);
             Post(Protocol.Toast("导出 PDF 失败", "error"));
             return;
         }
 
-        Post(Protocol.Toast("已导出 PDF：" + fileName));
+        // M8：成功提示完整路径（同名文件在不同目录时用户能确认落盘位置）。
+        Post(Protocol.Toast("已导出 PDF：" + outputPath));
         ShowInFolder(outputPath);
+    }
+
+    /// <summary>
+    /// 删除导出失败留下的半成品；文件不存在/被占用只记日志，绝不抛异常。
+    /// 导出前已存在且最后一次写入时间未变时视为「本次没写」，保留原文件。
+    /// </summary>
+    internal static void DeletePartialPdf(string path, bool existsBefore, DateTime writeTimeBefore)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            if (!file.Exists)
+            {
+                return;
+            }
+
+            if (existsBefore && file.LastWriteTimeUtc == writeTimeBefore)
+            {
+                DebugLog.Write($"exportPdf 失败但目标文件未被改写，保留原文件 path={path}");
+                return;
+            }
+
+            file.Delete();
+            DebugLog.Write($"exportPdf 已清理半成品 path={path}");
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"exportPdf 清理半成品失败 path={path}：{exception.Message}");
+        }
     }
 
     /// <summary>
@@ -879,9 +1078,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        // M3：切换文档时旧 key 的迟到 flush 不能把旧 key 写到新文档路径上。
+        if (!IsCurrentDocumentKey(message.Key, document.Key))
+        {
+            DebugLog.Write($"忽略 savePosition：key 与当前文档不匹配 key={message.Key} current={document.Key}");
+            return;
+        }
+
         _store.SavePosition(message.Key, document.Path, message.Ratio, DateTimeOffset.UtcNow);
         DebugLog.Write($"savePosition key={message.Key} ratio={message.Ratio:0.###}");
     }
+
+    /// <summary>M3：位置消息的 key 是否就是当前文档的 key（大小写不敏感；空值不接受）。</summary>
+    internal static bool IsCurrentDocumentKey(string? messageKey, string currentKey)
+        => !string.IsNullOrWhiteSpace(messageKey)
+            && string.Equals(messageKey, currentKey, StringComparison.OrdinalIgnoreCase);
 
     private void Post(string messageJson)
     {
@@ -912,10 +1123,7 @@ public partial class MainWindow : Window
         var indexHtml = ReadEmbeddedResource(assembly, ".index.html");
         var engineJs = ReadEmbeddedResource(assembly, ".md-engine.js");
 
-        // HTML 解析先于 JS：bundle 里只要出现字面 </script 就会提前结束脚本元素。
-        // 替换成 <\/script —— 在 JS 字符串/模板/正则里 \/ 等价于 /，语义不变。
-        var safeEngineJs = Regex.Replace(engineJs, "</script", "<\\/script", RegexOptions.IgnoreCase);
-        var engineTag = "<script id=\"md-engine\">" + safeEngineJs + "</script>";
+        var engineTag = "<script id=\"md-engine\">" + EscapeScriptContent(engineJs) + "</script>";
 
         if (indexHtml.Contains(EnginePlaceholder, StringComparison.Ordinal))
         {
@@ -925,6 +1133,21 @@ public partial class MainWindow : Window
         // 占位符被改动时兜底：插到 </body> 前，至少保证引擎会执行（否则 shellReady 永远不会来）。
         var bodyEnd = indexHtml.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         return bodyEnd >= 0 ? indexHtml.Insert(bodyEnd, engineTag) : indexHtml + engineTag;
+    }
+
+    /// <summary>
+    /// 把引擎源码里会提前结束/开启 HTML 解析的片段做等价转义（M10）：
+    /// <c>&lt;/script</c> → <c>&lt;\/script</c>，<c>&lt;script</c> → <c>&lt;\script</c>，
+    /// <c>&lt;!--</c> → <c>&lt;\!--</c>。三者在 JS 字符串/模板里语义不变（<c>\s</c>/<c>\!</c> 都是未识别转义），
+    /// 但 HTML 解析器不会再把它们当成标签/注释，避免未来产物把页面提前截断成空白窗口。幂等：已转义的片段不会二次命中。
+    /// </summary>
+    internal static string EscapeScriptContent(string script)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+
+        var escaped = Regex.Replace(script, "<!--", "<\\!--");
+        escaped = Regex.Replace(escaped, "<script", "<\\script", RegexOptions.IgnoreCase);
+        return Regex.Replace(escaped, "</script", "<\\/script", RegexOptions.IgnoreCase);
     }
 
     private static string ReadEmbeddedResource(Assembly assembly, string nameSuffix)

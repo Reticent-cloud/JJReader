@@ -625,10 +625,10 @@ export function mountShell({ root, post } = {}) {
   }
 
   // ── 最近文件（Task 12） ──
-  /** 打开最近文件项：绝对路径交给宿主（宿主也接受相对当前文档目录的路径）。 */
+  /** 打开最近文件项：走 openRecent（宿主只接受 recent.json 里命中的路径，C1）。 */
   function openRecentFile(path) {
     if (typeof path === 'string' && path !== '') {
-      send('openFile', { relPath: path });
+      send('openRecent', { path });
     }
   }
 
@@ -653,7 +653,7 @@ export function mountShell({ root, post } = {}) {
     );
   }
 
-  /** 菜单项选中：先收起菜单，再交给宿主打开（绝对路径按绝对处理）。 */
+  /** 菜单项选中：先收起菜单，再交给宿主按最近列表校验后打开。 */
   function openRecentFromMenu(path) {
     closeRecentMenu();
     openRecentFile(path);
@@ -690,11 +690,11 @@ export function mountShell({ root, post } = {}) {
     }
   }
 
-  /** Alt+←/→：按最近文件顺序切换上一份（更早）/下一份（更新）。 */
+  /** Alt+←/→：按最近文件顺序切换上一份（更早）/下一份（更新）；走 openRecent 受限入口。 */
   function openAdjacentRecent(direction) {
     const target = nextRecentPath(state.recent, state.path, direction);
     if (target) {
-      send('openFile', { relPath: target });
+      send('openRecent', { path: target });
     }
   }
 

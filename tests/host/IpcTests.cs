@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
@@ -200,6 +201,85 @@ public class IpcTests
     public void SingleInstance_mutex_name_is_global_and_shared()
     {
         Assert.Equal(@"Global\JingjingReader", SingleInstance.MutexName);
+    }
+
+    // ---------------- M9：读超时与发送重试 ----------------
+
+    [Fact]
+    public void ReadPayload_parses_first_line_and_strips_cr()
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("C:\\笔记\\a.md\r\nextra"));
+
+        Assert.Equal(@"C:\笔记\a.md", IpcServer.ReadPayload(stream, 1000));
+    }
+
+    [Fact]
+    public void ReadPayload_returns_null_for_oversized_line()
+    {
+        using var stream = new MemoryStream(
+            Encoding.UTF8.GetBytes(new string('x', IpcServer.MaxPayloadBytes + 1) + "\n"));
+
+        Assert.Null(IpcServer.ReadPayload(stream, 1000));
+    }
+
+    [Fact]
+    public void ReadPayload_times_out_on_silent_stream()
+    {
+        // 客户端连上但不发数据：读超时必须放弃该连接（返回 null），不能永久阻塞监听线程。
+        using var server = new AnonymousPipeServerStream(PipeDirection.In);
+        using var client = new AnonymousPipeClientStream(PipeDirection.Out, server.ClientSafePipeHandle);
+        var elapsed = Stopwatch.StartNew();
+
+        Assert.Null(IpcServer.ReadPayload(server, 100));
+
+        elapsed.Stop();
+        Assert.True(
+            elapsed.Elapsed < TimeSpan.FromSeconds(3),
+            $"读超时应在约 100 ms 返回，实际 {elapsed.ElapsedMilliseconds} ms");
+    }
+
+    [Fact]
+    public async Task Ipc_abandons_silent_connection_and_keeps_serving()
+    {
+        var pipe = NewPipeName();
+        var got = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IpcServer.Start(pipe, path => got.TrySetResult(path), readTimeoutMs: 150);
+        try
+        {
+            using (var silent = new NamedPipeClientStream(".", pipe, PipeDirection.Out))
+            {
+                silent.Connect(3000);
+                // 超过读超时后服务端放弃这条哑连接并重建管道实例。
+                await Task.Delay(700);
+            }
+
+            Assert.True(await IpcServer.SendAsync(pipe, "after-silent", 3000));
+            Assert.Equal("after-silent", await got.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+        }
+        finally
+        {
+            IpcServer.Stop();
+        }
+    }
+
+    [Fact]
+    public async Task SendWithRetry_retries_twice_then_gives_up()
+    {
+        var attempts = 0;
+        Assert.True(await IpcServer.SendWithRetryAsync(
+            _ => Task.FromResult(++attempts >= 3),
+            retryDelayMs: 1));
+        Assert.Equal(3, attempts);
+
+        var alwaysFailing = 0;
+        Assert.False(await IpcServer.SendWithRetryAsync(
+            _ =>
+            {
+                alwaysFailing += 1;
+                return Task.FromResult(false);
+            },
+            retryDelayMs: 1));
+        Assert.Equal(3, alwaysFailing);
     }
 
     /// <summary>绕过客户端 API 直接写一行（用于验证服务器对超长行的处理）；写失败是预期结果。</summary>

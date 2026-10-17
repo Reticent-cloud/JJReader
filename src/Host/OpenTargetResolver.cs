@@ -29,11 +29,13 @@ public static class OpenTargetResolver
             return null;
         }
 
-        // ① 精确路径（绝对路径同样要求落在文档目录内）；命中后恢复磁盘大小写
+        // ① 精确路径（绝对路径同样要求落在文档目录内）；命中后恢复磁盘大小写。
+        // 恢复失败（含路径段是隐藏目录/重解析点）时不再回退到未校验的 direct：否则 junction
+        // 可以把「文档目录内」的字符串前缀指到目录外，绕过 containment。
         var direct = FileHost.ResolveInside(docDir, target);
         if (direct is not null && File.Exists(direct))
         {
-            return NoteResolver.RecoverExisting(docDir, target)?.FullPath ?? direct;
+            return NoteResolver.RecoverExisting(docDir, target)?.FullPath;
         }
 
         if (Path.IsPathFullyQualified(target))
@@ -49,7 +51,7 @@ public static class OpenTargetResolver
             var resolved = FileHost.ResolveInside(docDir, withMarkdownExtension);
             if (resolved is not null && File.Exists(resolved))
             {
-                return NoteResolver.RecoverExisting(docDir, withMarkdownExtension)?.FullPath ?? resolved;
+                return NoteResolver.RecoverExisting(docDir, withMarkdownExtension)?.FullPath;
             }
         }
 

@@ -49,6 +49,9 @@ public sealed record AssocBackup(
     bool HadProgIdKey,
     // 安装前 ProgID 子树的完整值快照（hadProgIdKey=false 时为空数组）。
     AssocRegistryValue[]? ProgIdSnapshot,
+    // M4：安装前 OpenWithProgids\JingjingReader.md 的原值（HadOpenWithProgid=true 时有效；
+    // 旧备份缺该字段时反序列化为 null，卸载按空串恢复「值存在」）。
+    string? OpenWithProgidValue,
     string BackedUpAt);
 
 /// <summary>卸载结果：CLI 据此区分「已恢复」「备份缺失」「备份不可用」三种文案。</summary>
@@ -112,6 +115,13 @@ public static class Assoc
     /// <summary><c>.md</c> 的「打开方式」列表键：<c>Software\Classes\.md\OpenWithProgids</c>。</summary>
     public static string OpenWithProgidsKey() => DotMdKey() + @"\OpenWithProgids";
 
+    /// <summary>
+    /// M5：Win10/11 用户显式选择默认程序时写入的 UserChoice 键
+    /// （<c>HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice</c>）。
+    /// </summary>
+    public static string UserChoiceKey()
+        => @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice";
+
     /// <summary>shell\open\command 的值：<c>"C:\…\JingjingReader.exe" "%1"</c>。</summary>
     public static string CommandValue(string exePath)
     {
@@ -120,17 +130,20 @@ public static class Assoc
     }
 
     /// <summary>
-    /// 当前关联状态：Registered = <c>.md\OpenWithProgids</c> 里有本程序；IsDefault = <c>.md</c> 默认值就是本 ProgID。
+    /// 当前关联状态：Registered = <c>.md\OpenWithProgids</c> 里有本程序。
+    /// IsDefault（M5）：优先看 <c>FileExts\.md\UserChoice\ProgId</c>（Win10/11 用户实际生效的默认程序），
+    /// 没有 UserChoice 时才回退到 <c>Software\Classes\.md</c> 默认值——只看后者会把「用户已改默认」误报成默认。
     /// </summary>
     public static (bool Registered, bool IsDefault) GetState(IAssocRegistry registry)
     {
         ArgumentNullException.ThrowIfNull(registry);
 
         var registered = registry.GetValue(OpenWithProgidsKey(), ProgId) is not null;
-        var isDefault = string.Equals(
-            registry.GetValue(DotMdKey(), null),
-            ProgId,
-            StringComparison.OrdinalIgnoreCase);
+        var userChoice = registry.GetValue(UserChoiceKey(), "ProgId");
+        var effectiveDefault = string.IsNullOrWhiteSpace(userChoice)
+            ? registry.GetValue(DotMdKey(), null)
+            : userChoice;
+        var isDefault = string.Equals(effectiveDefault, ProgId, StringComparison.OrdinalIgnoreCase);
         return (registered, isDefault);
     }
 
@@ -147,7 +160,8 @@ public static class Assoc
 
         var dotMdDefault = registry.GetValue(DotMdKey(), null);
         var dotMdDefaultPresent = dotMdDefault is not null;
-        var hadOpenWithProgid = registry.GetValue(OpenWithProgidsKey(), ProgId) is not null;
+        var openWithProgidValue = registry.GetValue(OpenWithProgidsKey(), ProgId);
+        var hadOpenWithProgid = openWithProgidValue is not null;
         var hadProgIdKey = registry.KeyExists(ProgIdKey());
 
         // 只在没有备份时写：否则重复安装会把「安装后的状态」当成安装前状态，卸载无法恢复原默认程序。
@@ -164,6 +178,7 @@ public static class Assoc
                 hadOpenWithProgid,
                 hadProgIdKey,
                 snapshot.ToArray(),
+                openWithProgidValue,
                 DateTimeOffset.UtcNow.ToString(TimeFormat, CultureInfo.InvariantCulture));
             WriteBackup(backupJsonPath, backup);
         }
@@ -203,7 +218,7 @@ public static class Assoc
         }
 
         RestoreProgId(registry, backup);
-        registry.DeleteValue(OpenWithProgidsKey(), ProgId);
+        RestoreOpenWithProgid(registry, backup);
         RestoreDotMdDefault(registry, backup);
 
         if (File.Exists(backupJsonPath))
@@ -310,6 +325,21 @@ public static class Assoc
                 registry.SetValue(entry.KeyPath, entry.ValueName, entry.Value ?? string.Empty);
             }
         }
+    }
+
+    /// <summary>
+    /// M4：恢复 <c>.md\OpenWithProgids\JingjingReader.md</c>：安装前有该值 → 写回原值
+    /// （旧备份没有值字段时按空串恢复「值存在」）；安装前没有 → 删除本程序新增的值。
+    /// </summary>
+    private static void RestoreOpenWithProgid(IAssocRegistry registry, AssocBackup? backup)
+    {
+        if (backup is not null && backup.HadOpenWithProgid)
+        {
+            registry.SetValue(OpenWithProgidsKey(), ProgId, backup.OpenWithProgidValue ?? string.Empty);
+            return;
+        }
+
+        registry.DeleteValue(OpenWithProgidsKey(), ProgId);
     }
 
     /// <summary>

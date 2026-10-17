@@ -225,6 +225,12 @@ public class ProtocolTests
         var open = Protocol.ParseInbound("""{"type":"openFile","payload":{"relPath":"..\\b.md"}}""");
         Assert.Equal(@"..\b.md", open.RelPath);
 
+        var openRecent = Protocol.ParseInbound("""{"type":"openRecent","payload":{"path":"C:\\notes\\a.md"}}""");
+        Assert.Equal(@"C:\notes\a.md", openRecent.Path);
+
+        var openTreeFile = Protocol.ParseInbound("""{"type":"openTreeFile","payload":{"path":"C:\\notes\\sub\\a.md"}}""");
+        Assert.Equal(@"C:\notes\sub\a.md", openTreeFile.Path);
+
         var list = Protocol.ParseInbound("""{"type":"listDir","payload":{"path":"C:\\notes"}}""");
         Assert.Equal(@"C:\notes", list.Path);
 
@@ -253,6 +259,8 @@ public class ProtocolTests
     [InlineData("recent")]
     [InlineData("reload")]
     [InlineData("openFile")]
+    [InlineData("openRecent")]
+    [InlineData("openTreeFile")]
     [InlineData("pickFile")]
     [InlineData("pickFolder")]
     [InlineData("listDir")]

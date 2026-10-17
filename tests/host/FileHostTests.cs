@@ -391,4 +391,15 @@ public class FileHostTests
 
         Assert.Throws<FileNotFoundException>(() => FileHost.ReadDocument(missing));
     }
+
+    // ---------------- 大文件上限（M11） ----------------
+
+    [Fact]
+    public void IsTooLarge_allows_exactly_50_mb_and_rejects_more()
+    {
+        Assert.Equal(50L * 1024 * 1024, FileHost.MaxDocumentBytes);
+        Assert.False(FileHost.IsTooLarge(0));
+        Assert.False(FileHost.IsTooLarge(FileHost.MaxDocumentBytes));
+        Assert.True(FileHost.IsTooLarge(FileHost.MaxDocumentBytes + 1));
+    }
 }

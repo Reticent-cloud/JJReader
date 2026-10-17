@@ -33,6 +33,12 @@ public static class PdfExport
     /// </summary>
     public const int PrintTimeoutMilliseconds = 60_000;
 
+    /// <summary>
+    /// 退出打印模式的脚本调用上限（M8）：收尾脚本卡住时不能把导出任务永远挂在 finally 里，
+    /// 超时只记日志并继续复位导出状态。
+    /// </summary>
+    public const int ExitScriptTimeoutMilliseconds = 3_000;
+
     private const string EnterPrintModeScript = "window.JJ.enterPrintModeForPdf()";
     private const string ExitPrintModeScript = "window.JJ.exitPrintModeForPdf()";
 
@@ -125,17 +131,19 @@ public static class PdfExport
         IPrintHost host,
         string outputPath,
         int readyTimeoutMs = ReadyTimeoutMilliseconds,
-        int printTimeoutMs = PrintTimeoutMilliseconds)
+        int printTimeoutMs = PrintTimeoutMilliseconds,
+        int exitScriptTimeoutMs = ExitScriptTimeoutMilliseconds)
     {
         ArgumentNullException.ThrowIfNull(host);
-        return ExportAsyncCore(host, outputPath, readyTimeoutMs, printTimeoutMs);
+        return ExportAsyncCore(host, outputPath, readyTimeoutMs, printTimeoutMs, exitScriptTimeoutMs);
     }
 
     private static async Task<bool> ExportAsyncCore(
         IPrintHost host,
         string outputPath,
         int readyTimeoutMs,
-        int printTimeoutMs)
+        int printTimeoutMs,
+        int exitScriptTimeoutMs)
     {
         // 路径归一化必须在任何导出状态（_exporting/_readyToPrint）之前完成：
         // 非法路径（空串/NUL 等）直接返回 false，绝不能把导出状态留在进行中导致后续导出永久失败。
@@ -206,7 +214,17 @@ public static class PdfExport
         {
             try
             {
-                await host.ExecuteScriptAsync(ExitPrintModeScript);
+                // M8：收尾脚本最多等 3 s；超时只记日志，导出状态照常复位。
+                var exitTask = host.ExecuteScriptAsync(ExitPrintModeScript);
+                if (await Task.WhenAny(exitTask, Task.Delay(exitScriptTimeoutMs)) != exitTask)
+                {
+                    ObserveFault(exitTask);
+                    DebugLog.Write($"退出打印模式脚本超时（{exitScriptTimeoutMs} ms）");
+                }
+                else
+                {
+                    await exitTask;
+                }
             }
             catch (Exception exception)
             {

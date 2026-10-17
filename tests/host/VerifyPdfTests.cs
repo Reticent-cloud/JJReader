@@ -32,4 +32,21 @@ public class VerifyPdfTests
         // 再次清理（文件已不存在）仍应成功：导出失败的清理路径可能重复调用。
         Assert.True(VerifyPdf.TryDeleteOutput(path));
     }
+
+    [Fact]
+    public void IsSamePath_detects_input_output_collision_without_touching_files()
+    {
+        var dir = TestHelpers.TestDir();
+        var file = Path.Combine(dir, "same.md");
+        File.WriteAllText(file, "# keep me");
+
+        Assert.True(VerifyPdf.IsSamePath(file, file));
+        Assert.True(VerifyPdf.IsSamePath(file, Path.Combine(dir, ".", "SAME.MD")));
+        Assert.False(VerifyPdf.IsSamePath(file, Path.Combine(dir, "other.pdf")));
+        Assert.False(VerifyPdf.IsSamePath("", file));
+
+        // M7 的关键顺序：判定同路径发生在 TryDeleteOutput 之前，输入文件必须还在。
+        Assert.True(File.Exists(file));
+        Assert.Equal("# keep me", File.ReadAllText(file));
+    }
 }

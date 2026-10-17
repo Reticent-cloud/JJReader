@@ -36,7 +36,7 @@ public static class NoteResolver
         }
 
         var trimmed = relative.Trim();
-        if (trimmed.Length == 0 || Path.IsPathFullyQualified(trimmed))
+        if (trimmed.Length == 0)
         {
             return null;
         }
@@ -199,6 +199,13 @@ public static class NoteResolver
                 return null;
             }
 
+            // 与 BFS 路径一致的重解析点检查（C1）：显式目标也逐段拒绝 junction/symlink，
+            // 否则「文档目录内」的字符串前缀可以被重定向到目录外。隐藏目录仍允许显式指定。
+            if (!isFile && IsReparsePoint(match))
+            {
+                return null;
+            }
+
             current = match;
         }
 
@@ -261,10 +268,19 @@ public static class NoteResolver
             return true;
         }
 
+        return HasAnyAttribute(directory, FileAttributes.Hidden | FileAttributes.ReparsePoint);
+    }
+
+    /// <summary>目录是否是重解析点（junction/符号链接）；读属性失败按「是」处理，安全侧失败。</summary>
+    private static bool IsReparsePoint(string directory)
+        => HasAnyAttribute(directory, FileAttributes.ReparsePoint);
+
+    private static bool HasAnyAttribute(string directory, FileAttributes flags)
+    {
         try
         {
             var attributes = File.GetAttributes(directory);
-            return (attributes & (FileAttributes.Hidden | FileAttributes.ReparsePoint)) != 0;
+            return (attributes & flags) != 0;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {

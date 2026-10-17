@@ -53,6 +53,15 @@ public static class VerifyPdf
         var normalizedInput = FileHost.NormalizePath(inputPath);
         var fullOutput = Path.GetFullPath(outputPath);
 
+        // M7：输入与输出是同一个文件时先报参数错误（exit 2），绝不能先删输出把输入文档删掉。
+        if (IsSamePath(normalizedInput, fullOutput))
+        {
+            DebugLog.Write($"verify-pdf 参数错误：输入与输出是同一个文件 input={normalizedInput} output={fullOutput}");
+            ConsoleHelper.WriteLine($"PDF-FAILED 参数错误：输入与输出是同一个文件：{fullOutput}");
+            Application.Current?.Shutdown(2);
+            return;
+        }
+
         // 导出前先删旧输出：自检失败时不能留下上一次的旧 PDF 冒充本次结果。
         TryDeleteOutput(fullOutput);
 
@@ -137,6 +146,25 @@ public static class VerifyPdf
         DebugLog.Write($"verify-pdf PDF-READY output={fullOutput} bytes={file.Length}");
         ConsoleHelper.WriteLine("PDF-READY " + JsonSerializer.Serialize(result, ReadyJsonOptions));
         Application.Current?.Shutdown(0);
+    }
+
+    /// <summary>
+    /// 两个路径归一化后是否指向同一个文件（盘符大小写、斜杠方向、<c>.</c>/<c>..</c> 差异不算）。
+    /// 归一化失败返回 false，绝不抛异常。
+    /// </summary>
+    internal static bool IsSamePath(string first, string second)
+    {
+        try
+        {
+            return string.Equals(
+                FileHost.NormalizePath(first),
+                FileHost.NormalizePath(second),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

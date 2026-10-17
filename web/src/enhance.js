@@ -77,11 +77,35 @@ function bindCopyButton(btn) {
   });
 }
 
-/** 外链统一新窗口打开并带 noopener；只处理 href 以 http 开头的链接（站内锚点/相对链接不动）。 */
+/**
+ * 外链统一新窗口打开并带 noopener noreferrer（C2）：对每个 a[href] 解析，
+ * 显式 http:/https:（大小写不敏感）与协议相对地址（//host/...）补 target/rel；
+ * 站内锚点、相对链接、javascript:/mailto: 等不改写（javascript: 另由清洗白名单剥除）。
+ */
 function markExternalLinks(container) {
-  for (const link of container.querySelectorAll('a[href^="http"]')) {
+  for (const link of container.querySelectorAll('a[href]')) {
+    const href = (link.getAttribute('href') || '').trim();
+    if (href === '') {
+      continue;
+    }
+    // 协议相对地址在 about:blank 文档里无法按 baseURI 解析（WHATWG 对非特殊 scheme 的 // 引用会抛错），
+    // 但语义上仍是外部链接：按原串识别，不依赖 URL 解析结果。
+    const protocolRelative = href.startsWith('//');
+    // 只有显式带 scheme 的绝对地址才算外链：相对链接即使能按 baseURI 解析成 http(s) 也不改写。
+    const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(href);
+    let resolved = null;
+    try {
+      resolved = new URL(href, document.baseURI);
+    } catch {
+      resolved = null;
+    }
+    const externalHttp =
+      resolved !== null && hasScheme && (resolved.protocol === 'http:' || resolved.protocol === 'https:');
+    if (!externalHttp && !protocolRelative) {
+      continue;
+    }
     link.setAttribute('target', '_blank');
-    link.setAttribute('rel', 'noopener');
+    link.setAttribute('rel', 'noopener noreferrer');
   }
 }
 
