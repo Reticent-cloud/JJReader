@@ -96,10 +96,11 @@ export function buildAaPanel() {
 
 /**
  * 构建工具条骨架：打开文件 / 打开文件夹 / 浏览根（文件树，Task 14）/ 回到大纲 / 目录 / 最近 /
- * 导出 PDF（Task 15）/ 弹性空隙 / 主题 / Aa（既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮；
+ * 导出 PDF（Task 15）/ 弹性空隙 / 主题 / Aa / 关于（Task 16）（既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮；
  * Task 13 新增两个打开入口，与 Ctrl+O / Ctrl+Shift+O 同口径）。「最近」菜单的内容由 main.js 用 renderRecent 渲染到 #recent-menu。
- * 导出按钮在未打开文档时禁用（main.js 在 load 后启用），与 Ctrl+E 共用同一导出入口。
- * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, browseRoot: HTMLButtonElement, treeBack: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, exportPdf: HTMLButtonElement, themeToggle: HTMLButtonElement, aaToggle: HTMLButtonElement }}
+ * 导出按钮在未打开文档时禁用（main.js 在 load 后启用），与 Ctrl+E 共用同一导出入口；
+ * 「关于」的 title 会由 main.js 随宿主下发的 assocState 更新（默认 .md 程序 / 尚未设为默认）。
+ * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, browseRoot: HTMLButtonElement, treeBack: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, exportPdf: HTMLButtonElement, themeToggle: HTMLButtonElement, aaToggle: HTMLButtonElement, about: HTMLButtonElement }}
  */
 export function createToolbar() {
   const toolbar = document.createElement('header');
@@ -124,6 +125,8 @@ export function createToolbar() {
   const aaToggle = createToolbarButton('Aa', 'aa-toggle', '排版设置（Ctrl+,）');
   aaToggle.setAttribute('aria-expanded', 'false');
   aaToggle.setAttribute('aria-controls', 'aa-panel');
+  // Task 16：关于面板入口（打开后由宿主弹出模态窗口；title 随 assocState 更新）
+  const about = createToolbarButton('关于', 'about', '关于鲸鲸阅读器');
   const spacer = document.createElement('div');
   spacer.className = 'toolbar-spacer';
   toolbar.append(
@@ -137,6 +140,7 @@ export function createToolbar() {
     spacer,
     themeToggle,
     aaToggle,
+    about,
   );
 
   return {
@@ -150,6 +154,7 @@ export function createToolbar() {
     exportPdf,
     themeToggle,
     aaToggle,
+    about,
   };
 }
 

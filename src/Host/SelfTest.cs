@@ -12,11 +12,14 @@ public static class SelfTest
     private const string WebView2ClientKey =
         @"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 
+    /// <summary>WebView2 运行时版本；未安装/读取失败时返回「未检测到」（关于面板与自检共用）。</summary>
+    public static string WebView2Version => TryReadWebView2Version() ?? "未检测到";
+
     /// <summary>采集真实环境信息；任何一项读取失败都不抛异常（WebView2 缺失时写「未检测到」）。</summary>
     public static string Run()
     {
         var dotnetVersion = Environment.Version.ToString();
-        var webview2Version = TryReadWebView2Version() ?? "未检测到";
+        var webview2Version = WebView2Version;
         var osVersion = Environment.OSVersion.Version.ToString();
         return Format(ProductName, dotnetVersion, webview2Version, osVersion);
     }

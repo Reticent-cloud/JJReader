@@ -12,11 +12,8 @@ internal static class DebugLog
     private static readonly object Gate = new();
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    /// <summary>日志路径按当前环境变量实时计算（测试/迁移环境不需要缓存）。</summary>
-    private static string LogPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "JingjingReader",
-        "debug.log");
+    /// <summary>日志路径统一由 <see cref="AppPaths"/> 计算（与 Store / 备份文件同一数据目录）。</summary>
+    private static string LogPath => AppPaths.DebugLogPath;
 
     /// <summary>追加一行带本地时间戳的日志；失败静默。</summary>
     public static void Write(string message)

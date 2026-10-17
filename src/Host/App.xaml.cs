@@ -1,3 +1,5 @@
+using System.IO;
+using System.Reflection;
 using System.Windows;
 
 namespace JingjingReader;
@@ -42,6 +44,19 @@ public partial class App : Application
             }
 
             _ = VerifyPdf.Run(e.Args[verifyPdfIndex + 1], e.Args[verifyPdfIndex + 2]);
+            return;
+        }
+
+        // --install / --uninstall（Task 16）：只写/删 HKCU 下的 .md 关联，不显示窗口。
+        if (e.Args.Contains("--install"))
+        {
+            RunAssociationCommand(install: true);
+            return;
+        }
+
+        if (e.Args.Contains("--uninstall"))
+        {
+            RunAssociationCommand(install: false);
             return;
         }
 
@@ -90,5 +105,65 @@ public partial class App : Application
         }
 
         window.Show();
+    }
+
+    /// <summary>
+    /// <c>--install</c> / <c>--uninstall</c> 的命令行入口：不建窗口、不参与单实例，只操作 HKCU 并输出中文结果。
+    /// 成功退出码 0、失败 1；异常必须转成消息 + 退出码，不能冒泡成未处理异常。
+    /// </summary>
+    private void RunAssociationCommand(bool install)
+    {
+        try
+        {
+            var registry = new Win32AssocRegistry();
+            if (install)
+            {
+                var exePath = ResolveExecutablePath();
+                Assoc.Install(registry, exePath, AppPaths.AssocBackupPath);
+                var state = Assoc.GetState(registry);
+                ConsoleHelper.WriteLine($"已注册 .md 的打开方式：{exePath}");
+                ConsoleHelper.WriteLine(state.IsDefault
+                    ? "鲸鲸阅读器已是默认 .md 程序。"
+                    : "若 .md 已有默认程序，请到 设置→默认应用 选择鲸鲸阅读器。");
+            }
+            else
+            {
+                // 卸载前判断备份是否存在，用于区分「恢复安装前状态」与「备份缺失的尽力还原」。
+                var hadBackup = File.Exists(AppPaths.AssocBackupPath);
+                Assoc.Uninstall(registry, AppPaths.AssocBackupPath);
+                ConsoleHelper.WriteLine(hadBackup
+                    ? "已卸载 .md 文件关联，并恢复安装前的状态。"
+                    : "未找到备份，已还原为本程序可识别的部分。");
+            }
+
+            DebugLog.Write(install ? "install 完成" : "uninstall 完成");
+            Shutdown(0);
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"{(install ? "install" : "uninstall")} 失败：{exception}");
+            ConsoleHelper.WriteLine($"{(install ? "安装" : "卸载")}文件关联失败：{exception.Message}");
+            Shutdown(1);
+        }
+    }
+
+    /// <summary>带 --install 启动的程序自身路径：优先进程路径（publish 后的 exe），回退程序集位置。</summary>
+    private static string ResolveExecutablePath()
+    {
+        var path = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            // 单文件发布时 Assembly.Location 为空字符串，这里只是 ProcessPath 缺失时的兜底。
+#pragma warning disable IL3000
+            path = Assembly.GetEntryAssembly()?.Location;
+#pragma warning restore IL3000
+        }
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException("无法确定程序自身路径");
+        }
+
+        return Path.GetFullPath(path);
     }
 }

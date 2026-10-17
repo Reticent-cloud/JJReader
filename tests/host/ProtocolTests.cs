@@ -262,6 +262,7 @@ public class ProtocolTests
     [InlineData("readyToPrint")]
     [InlineData("showInFolder")]
     [InlineData("openDefaultApps")]
+    [InlineData("openAbout")]
     [InlineData("renderDone")]
     [InlineData("shellReady")]
     public void ParseInbound_recognizes_every_contract_type(string type)

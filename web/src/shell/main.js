@@ -101,6 +101,7 @@ export function mountShell({ root, post } = {}) {
     exportPdf: exportPdfButton,
     themeToggle,
     aaToggle,
+    about: aboutButton,
   } = toolbarParts;
   const toc = document.createElement('aside');
   toc.id = 'toc';
@@ -155,7 +156,8 @@ export function mountShell({ root, post } = {}) {
     baseUrl: '',
     settings: normalizeSettings(DEFAULT_SETTINGS),
     position: null,
-    assoc: null,
+    // Task 16：宿主下发的 .md 关联状态 { registered, isDefault }（关于按钮 title 用）
+    assocState: null,
     dirListing: null,
     // Task 12：是否收到过 load（空白启动页显示最近文件面板）、最近文件列表（Alt+←/→ 切换用）
     loaded: false,
@@ -873,7 +875,11 @@ export function mountShell({ root, post } = {}) {
         }
         break;
       case 'assocState':
-        state.assoc = { registered: Boolean(payload.registered), isDefault: Boolean(payload.isDefault) };
+        // Task 16：记录关联状态，并把「关于」按钮的 title 换成用户能直接看懂的默认程序提示。
+        state.assocState = { registered: Boolean(payload.registered), isDefault: Boolean(payload.isDefault) };
+        aboutButton.title = state.assocState.isDefault
+          ? '默认 .md 程序'
+          : '尚未设为默认 .md 程序（可在关于中设置）';
         break;
       case 'dirListing':
         state.dirListing = payload;
@@ -905,6 +911,10 @@ export function mountShell({ root, post } = {}) {
   });
   // Task 15：工具条「导出 PDF」与 Ctrl+E 共用 exportCurrentPdf（无文档时提示，不发消息）
   exportPdfButton.addEventListener('click', exportCurrentPdf);
+  // Task 16：工具条「关于」→ 宿主打开模态关于面板（不经过快捷键；面板里再做关联设置）
+  aboutButton.addEventListener('click', () => {
+    send('openAbout');
+  });
   themeToggle.addEventListener('click', () => {
     updateSettings({ theme: nextTheme(state.settings.theme) });
   });

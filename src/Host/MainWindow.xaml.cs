@@ -20,8 +20,6 @@ public partial class MainWindow : Window
     /// <summary>index.html 里等待宿主内联 md-engine.js 的占位标签。</summary>
     private const string EnginePlaceholder = "<script id=\"md-engine\"></script>";
 
-    private const string DataDirectoryName = "JingjingReader";
-
     private readonly Store _store;
     private readonly string _webViewDataFolder;
 
@@ -30,6 +28,9 @@ public partial class MainWindow : Window
     private bool _virtualHostMapped;
     private string? _pendingDocumentPath;
     private DocumentRead? _currentDocument;
+
+    /// <summary>关于面板（Task 16）：模态打开，字段防重复创建。</summary>
+    private AboutWindow? _aboutWindow;
 
     /// <summary>pickFolder 选中的文件夹：文件树浏览根（Task 14），同时用作下次对话框的初始目录。</summary>
     private string? _browseRoot;
@@ -41,13 +42,11 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        var appData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            DataDirectoryName);
-        _store = new Store(appData);
+        // 数据目录统一由 AppPaths 计算（不存在时创建）；WebView2 缓存仍留在 %LOCALAPPDATA%。
+        _store = new Store(AppPaths.DataDir);
         _webViewDataFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            DataDirectoryName,
+            AppPaths.DataDirectoryName,
             "WebView2");
 
         Loaded += OnLoaded;
@@ -191,6 +190,45 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Task 16：把当前 .md 关联状态推给前端（关于按钮 title 与后续提示用）。
+    /// 注册表读取失败只记日志：关联状态不能影响 shell 握手与正文推送。
+    /// </summary>
+    private void PostAssocState()
+    {
+        try
+        {
+            var state = Assoc.GetState(new Win32AssocRegistry());
+            Post(Protocol.AssocState(state.Registered, state.IsDefault));
+            DebugLog.Write($"assocState registered={state.Registered} isDefault={state.IsDefault}");
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"读取 .md 关联状态失败：{exception.Message}");
+        }
+    }
+
+    /// <summary>Task 16：打开关于面板（模态、居中于主窗口；同一时刻只允许一个）。</summary>
+    private void ShowAbout()
+    {
+        if (_aboutWindow is not null)
+        {
+            _aboutWindow.Activate();
+            return;
+        }
+
+        var window = new AboutWindow { Owner = this };
+        _aboutWindow = window;
+        try
+        {
+            window.ShowDialog();
+        }
+        finally
+        {
+            _aboutWindow = null;
+        }
+    }
+
+    /// <summary>
     /// 把最近文件（最新在前，最多 20 条）推给前端：空白启动时渲染「最近文件」面板，
     /// 打开文档后供 Alt+←/→ 切换。显示名/目录在宿主侧算好，前端不做路径解析。
     /// </summary>
@@ -321,6 +359,8 @@ public partial class MainWindow : Window
                 TryPushPendingDocument();
                 // 无论是否推了 load 都发最近文件：空白启动页要靠它渲染面板。
                 PostRecent();
+                // Task 16：把 .md 关联状态推给前端（工具条「关于」按钮 title）。
+                PostAssocState();
                 break;
 
             case "renderDone":
@@ -371,8 +411,13 @@ public partial class MainWindow : Window
                 PdfExport.NotifyReadyToPrint();
                 break;
 
+            case "openAbout":
+                // Task 16：工具条「关于」入口。
+                ShowAbout();
+                break;
+
             default:
-                // 其余契约消息（openDefaultApps/assocState 等）属 Task 16，本任务只记日志。
+                // 其余契约消息（如 openDefaultApps）暂不处理，只记日志。
                 DebugLog.Write($"忽略消息 type={message.Type}");
                 break;
         }
