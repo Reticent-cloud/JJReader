@@ -255,6 +255,27 @@ export function createRenderer({ content, getState, tocController, send, showToa
   }
 
   /**
+   * 导出 PDF 前把分块懒渲染剩下的块一次性同步渲染出来（Task 15 修复：>512 KB 文档原来只导出已渲染块）。
+   * 无分块（一次性渲染/引擎缺失）或已全部渲染时直接返回 false，是同步空操作——不重复解析任何块；
+   * 有剩余块时调 renderer.renderAll()（同步，含最后一次 DOM 插入与增强）并返回 true。
+   * @returns {boolean} 是否真的渲染了剩余块
+   */
+  function ensureAllRendered() {
+    const chunked = state().chunked;
+    if (!chunked || typeof chunked.renderAll !== 'function') {
+      return false;
+    }
+    const stats = state().chunkBytes;
+    const totalBlocks = stats && Number.isFinite(stats.totalBlocks) ? stats.totalBlocks : 0;
+    const rendered = typeof chunked.renderedCount === 'function' ? chunked.renderedCount() : totalBlocks;
+    if (totalBlocks > 0 && rendered >= totalBlocks) {
+      return false;
+    }
+    chunked.renderAll();
+    return true;
+  }
+
+  /**
    * 正文渲染入口：优先走 JJ.renderMarkdown（与宿主共用同一 markdown-it 实现，baseUrl 用于解析相对图片）。
    * 每次渲染都传新的 env 字面量（T8 carry-forward：env 会被写入 frontmatter，复用会串文档）。
    * Task 11 起按大小切换策略：> CHUNK_THRESHOLD 或 isHuge → 分块（首屏 INITIAL_BYTES，huge 关高亮/停联动）；
@@ -286,5 +307,5 @@ export function createRenderer({ content, getState, tocController, send, showToa
     return renderSingle(markdown, huge, engine);
   }
 
-  return { render, clearChunked };
+  return { render, clearChunked, ensureAllRendered };
 }

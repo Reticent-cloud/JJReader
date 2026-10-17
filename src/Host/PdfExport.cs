@@ -17,8 +17,11 @@ public sealed record PdfOptions(
 /// </summary>
 public static class PdfExport
 {
-    /// <summary>等待前端 readyToPrint 的上限（brief：5 s）。</summary>
-    public const int ReadyTimeoutMilliseconds = 5_000;
+    /// <summary>
+    /// 等待前端 readyToPrint 的上限：前端进入打印模式前要先同步 <c>renderAll</c> 大文档尚未渲染的块
+    /// （&gt;512 KB 走分块懒渲染），因此从 5 s 放宽到 10 s；<c>--verify-pdf</c> 的外层 60 s 保护不变。
+    /// </summary>
+    public const int ReadyTimeoutMilliseconds = 10_000;
 
     private const string EnterPrintModeScript = "window.JJ.enterPrintModeForPdf()";
     private const string ExitPrintModeScript = "window.JJ.exitPrintModeForPdf()";
@@ -81,7 +84,7 @@ public static class PdfExport
     }
 
     /// <summary>
-    /// 导出当前页面为 PDF：进入打印模式 → 等 readyToPrint（5 s）→ PrintToPdfAsync → 恢复界面。
+    /// 导出当前页面为 PDF：进入打印模式 → 等 readyToPrint（10 s，含大文档同步 renderAll）→ PrintToPdfAsync → 恢复界面。
     /// 任何失败/超时都返回 false（并记录日志），界面恢复放在 finally 里保证执行。
     /// </summary>
     /// <param name="webView">已初始化完成的 WebView2 核心对象。</param>

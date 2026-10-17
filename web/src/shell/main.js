@@ -188,6 +188,15 @@ export function mountShell({ root, post } = {}) {
     showToast,
   });
 
+  // Task 15 修复：PDF 导出前由 print.js 调用，把分块懒渲染的剩余块同步渲染出来再进打印模式。
+  // 无分块/已全渲染时同步返回 false（空操作）；destroy 时若仍指向本次装配则清掉，避免旧闭包残留。
+  function ensureAllRendered() {
+    return renderer.ensureAllRendered();
+  }
+  if (globalThis.JJ && typeof globalThis.JJ === 'object') {
+    globalThis.JJ.__ensureAllRendered = ensureAllRendered;
+  }
+
   // 标题 top 快照只在渲染时采集一次，以下场景会重排而失效：字号/行距/行宽变化（Aa 面板/快捷键）、
   // TOC 侧栏拖宽、图片异步加载或占位替换、窗口尺寸变化。重排后重新采集交给 spy，点击定位另外实时读元素（双保险）。
   /** 把刷新合并到下一帧（标题位置重采集见 headings.js 的 scheduleRefresh）。 */
@@ -979,6 +988,10 @@ export function mountShell({ root, post } = {}) {
     // Task 15：解除打印流程的 post 引用（仍是本次装配时才清），避免销毁后继续往旧通道发消息
     if (globalThis.JJ && globalThis.JJ.__post === send) {
       delete globalThis.JJ.__post;
+    }
+    // Task 15 修复：同样解除导出前的全文渲染入口
+    if (globalThis.JJ && globalThis.JJ.__ensureAllRendered === ensureAllRendered) {
+      delete globalThis.JJ.__ensureAllRendered;
     }
   }
 

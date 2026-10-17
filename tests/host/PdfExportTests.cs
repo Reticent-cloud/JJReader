@@ -52,4 +52,12 @@ public class PdfExportTests
         PdfExport.NotifyReadyToPrint();
         PdfExport.NotifyReadyToPrint();
     }
+
+    [Fact]
+    public void ReadyTimeout_covers_synchronous_render_all_for_large_documents()
+    {
+        // >512 KB 的分块文档进入打印模式前要先同步 renderAll 全文，5 s 不够；放宽到 10 s（--verify-pdf 外层 60 s 不变）。
+        Assert.Equal(10_000, PdfExport.ReadyTimeoutMilliseconds);
+        Assert.True(PdfExport.ReadyTimeoutMilliseconds > 5_000);
+    }
 }

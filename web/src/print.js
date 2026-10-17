@@ -84,6 +84,22 @@ function resolvePrintPost() {
 }
 
 /**
+ * 导出前把分块懒渲染剩下的块同步渲染出来（shell 经 JJ.__ensureAllRendered 暴露：无分块/已全渲染时是空操作）。
+ * 未装配 shell（函数缺失）或渲染异常都只跳过：导出宁可少内容也不能卡在 readyToPrint 之前。
+ */
+function ensureAllRendered() {
+  const api = globalThis.JJ;
+  if (!api || typeof api.__ensureAllRendered !== 'function') {
+    return;
+  }
+  try {
+    api.__ensureAllRendered();
+  } catch {
+    log('同步渲染全文失败，按当前已渲染内容导出');
+  }
+}
+
+/**
  * 宿主调用（ExecuteScriptAsync）：进入打印模式，保存退出函数到 window.__jjPrintExit，
  * 再经消息通道回报 readyToPrint（宿主收到后才 PrintToPdfAsync）。任何一步失败都不抛。
  */
@@ -99,6 +115,9 @@ export function enterPrintModeForPdf() {
       // 旧状态清理失败不影响本次进入
     }
   }
+
+  // Task 15 修复：>512 KB 文档分块懒渲染，导出前必须先渲染全文，否则 PDF 只含已渲染块（spec §2.3）
+  ensureAllRendered();
 
   const exit = enterPrintMode({ document: globalThis.document });
   if (win) {
