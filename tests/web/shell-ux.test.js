@@ -84,6 +84,93 @@ function stubVisibility(state) {
   };
 }
 
+/** IntersectionObserver 桩：分块渲染保留哨兵（jsdom 缺该 API 时 chunk.js 会兜底 renderAll）。 */
+function installObserverStub() {
+  const previous = globalThis.IntersectionObserver;
+  class FakeIntersectionObserver {
+    constructor(callback) {
+      this.callback = callback;
+    }
+
+    observe() {}
+
+    unobserve() {}
+
+    disconnect() {}
+  }
+  globalThis.IntersectionObserver = FakeIntersectionObserver;
+  return {
+    restore() {
+      if (previous === undefined) {
+        delete globalThis.IntersectionObserver;
+      } else {
+        globalThis.IntersectionObserver = previous;
+      }
+    },
+  };
+}
+
+/** 分块文档的滚动容器桩：有哨兵（只渲染首屏）时矮，renderAll 移除哨兵后撑满。 */
+function stubChunkedHeight(content, { initialHeight = 1000, fullHeight = 5000, clientHeight = 1000 } = {}) {
+  let value = 0;
+  Object.defineProperty(content, 'scrollHeight', {
+    configurable: true,
+    get: () => (content.querySelector('.chunk-sentinel') ? initialHeight : fullHeight),
+  });
+  Object.defineProperty(content, 'clientHeight', { configurable: true, get: () => clientHeight });
+  Object.defineProperty(content, 'scrollTop', {
+    configurable: true,
+    get: () => value,
+    set: (next) => {
+      value = next;
+    },
+  });
+  return { get: () => value };
+}
+
+/** 多块小文档（降阈值后足以触发分块渲染）。 */
+function chunkedMarkdown() {
+  return [
+    '# 甲',
+    '',
+    '第一段',
+    '',
+    '## 乙',
+    '',
+    '第二段',
+    '',
+    '## 丙',
+    '',
+    '第三段',
+    '',
+    '## 丁',
+    '',
+    '第四段',
+    '',
+  ].join('\n');
+}
+
+/** 包一层 createChunkedRenderer，统计 renderAll 调用次数（恢复位置用）。 */
+function spyRenderAll() {
+  const original = JJ.createChunkedRenderer;
+  const state = { calls: 0 };
+  JJ.createChunkedRenderer = (options) => {
+    const renderer = original(options);
+    const originalRenderAll = renderer.renderAll;
+    renderer.renderAll = (...args) => {
+      state.calls += 1;
+      return originalRenderAll(...args);
+    };
+    return renderer;
+  };
+  return {
+    state,
+    restore() {
+      JJ.createChunkedRenderer = original;
+    },
+  };
+}
+
 beforeEach(() => {
   vi.useRealTimers();
   document.body.innerHTML = '';
@@ -296,7 +383,7 @@ it('位置比例夹紧到 [0,1]', () => {
 
 // ── 进度条 / 回到顶部 ──
 
-it('updateChrome 写进度条宽度百分比，并按 400px 阈值显隐回到顶部', () => {
+it('updateChrome 写竖向进度条高度百分比（spec §5.1），并按 400px 阈值显隐回到顶部', () => {
   const scroller = document.createElement('div');
   const scroll = stubScroll(scroller, { scrollHeight: 3000, clientHeight: 800 });
   const progressEl = document.createElement('div');
@@ -308,13 +395,15 @@ it('updateChrome 写进度条宽度百分比，并按 400px 阈值显隐回到�
   scroll.set(100);
   JJ.updateChrome({ scroller, progressEl, backToTopEl });
   expect(backToTopEl.hidden).toBe(true);
-  expect(parseFloat(progressEl.style.width)).toBeCloseTo((100 / 2200) * 100, 2);
-  expect(progressEl.style.width.endsWith('%')).toBe(true);
+  // 右侧 3px 竖向条：填充元素按 height 比例增长，不再写横向 width
+  expect(parseFloat(progressEl.style.height)).toBeCloseTo((100 / 2200) * 100, 2);
+  expect(progressEl.style.height.endsWith('%')).toBe(true);
+  expect(progressEl.style.width).toBe('');
 
   scroll.set(900);
   JJ.updateChrome({ scroller, progressEl, backToTopEl });
   expect(backToTopEl.hidden).toBe(false);
-  expect(parseFloat(progressEl.style.width)).toBeCloseTo((900 / 2200) * 100, 2);
+  expect(parseFloat(progressEl.style.height)).toBeCloseTo((900 / 2200) * 100, 2);
 
   // 点击回到顶部：平滑滚到 0；重复 updateChrome 不会重复绑定
   backToTopEl.click();
@@ -332,13 +421,13 @@ it('updateChrome 在不可滚动容器上进度为 0，阈值可配置', () => {
   const progressEl = document.createElement('div');
   const backToTopEl = document.createElement('button');
   JJ.updateChrome({ scroller, progressEl, backToTopEl, thresholdPx: 0 });
-  expect(parseFloat(progressEl.style.width)).toBe(0);
+  expect(parseFloat(progressEl.style.height)).toBe(0);
   expect(backToTopEl.hidden).toBe(true);
 
   // 不可滚动容器的分母兜底为 1：scrollTop > 0 时比例夹紧到 1
   scroll.set(1);
   JJ.updateChrome({ scroller, progressEl, backToTopEl, thresholdPx: 0 });
-  expect(parseFloat(progressEl.style.width)).toBe(100);
+  expect(parseFloat(progressEl.style.height)).toBe(100);
   expect(backToTopEl.hidden).toBe(false);
 });
 
@@ -422,6 +511,66 @@ it('空白页最近文件项点击/Enter 发送 openFile 绝对路径，Esc 关�
   expect(root.querySelector('#content .recent-panel')).toBeNull();
 });
 
+// ── 工具条「最近」菜单（spec §5.6：与空白启动页共用最近列表） ──
+
+it('工具条「最近」按钮弹出最近文件菜单，选中项发送 openFile', () => {
+  const { root, shell, posted } = mount();
+  shell.onMessage({
+    type: 'recent',
+    payload: { items: [recentItem('C:\\a.md', 'a.md'), recentItem('C:\\b.md', 'b.md')] },
+  });
+  const toggle = root.querySelector('#toolbar #recent-toggle');
+  const menu = root.querySelector('#recent-menu');
+  expect(toggle).toBeTruthy();
+  expect(menu.hidden).toBe(true);
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+  toggle.click();
+  expect(menu.hidden).toBe(false);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  // 与空白启动页同一份 state.recent：菜单里就是最近消息的两项
+  const items = menu.querySelectorAll('.recent-panel [data-path]');
+  expect(items).toHaveLength(2);
+  expect([...items].map((item) => item.dataset.path)).toEqual(['C:\\a.md', 'C:\\b.md']);
+
+  items[1].click();
+  expect(lastPayload(posted, 'openFile')).toEqual({ relPath: 'C:\\b.md' });
+  expect(menu.hidden).toBe(true);
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+});
+
+it('工具条最近菜单：点击外部与 Esc 关闭，打开期间 recent 刷新同一份列表', () => {
+  const { root, shell } = mount();
+  const toggle = root.querySelector('#recent-toggle');
+  const menu = root.querySelector('#recent-menu');
+  shell.onMessage({ type: 'recent', payload: { items: [recentItem('C:\\a.md', 'a.md')] } });
+
+  toggle.click();
+  expect(menu.hidden).toBe(false);
+  // 打开期间收到新列表：菜单同步渲染（共用 state.recent，无需重新打开）
+  shell.onMessage({
+    type: 'recent',
+    payload: { items: [recentItem('C:\\b.md', 'b.md'), recentItem('C:\\a.md', 'a.md')] },
+  });
+  expect(menu.querySelectorAll('.recent-panel [data-path]')).toHaveLength(2);
+
+  document.body.click(); // 点击菜单/按钮之外
+  expect(menu.hidden).toBe(true);
+
+  toggle.click();
+  expect(menu.hidden).toBe(false);
+  press('Escape');
+  expect(menu.hidden).toBe(true);
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+  // 打开文档后空白页面板消失，但工具条菜单仍读同一份 state.recent（空白页与菜单共用的口径）
+  load(shell, { path: 'C:\\b.md' });
+  expect(root.querySelector('#content .recent-panel')).toBeNull();
+  toggle.click();
+  expect(menu.hidden).toBe(false);
+  expect(menu.querySelectorAll('.recent-panel [data-path]')).toHaveLength(2);
+});
+
 // ── 位置恢复 ──
 
 it('load 带 position 时恢复 scrollTop 并提示「已回到上次位置 · 回到顶部」', () => {
@@ -433,7 +582,7 @@ it('load 带 position 时恢复 scrollTop 并提示「已回到上次位置 · �
 
   load(shell, { position: 0.5 });
   expect(scroll.get()).toBe(500);
-  expect(parseFloat(root.querySelector('#progress-bar').style.width)).toBeCloseTo(50, 2);
+  expect(parseFloat(root.querySelector('#progress-bar').style.height)).toBeCloseTo(50, 2);
 
   const toast = root.querySelector('#toast .toast');
   expect(toast).toBeTruthy();
@@ -462,6 +611,59 @@ it('load 的 position 超出 [0,1] 时夹紧', () => {
   expect(scroll.get()).toBe(1000);
 });
 
+it('分块文档恢复位置：先 renderAll 再按渲染后的实时 scrollHeight 计算 scrollTop', () => {
+  const observer = installObserverStub();
+  const originalThreshold = JJ.CHUNK_THRESHOLD;
+  const originalInitial = JJ.INITIAL_BYTES;
+  const renderAllSpy = spyRenderAll();
+  JJ.CHUNK_THRESHOLD = 1; // 任意非空文档走分块
+  JJ.INITIAL_BYTES = 1; // 首屏只渲染第一块，其余留哨兵
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubChunkedHeight(content, { initialHeight: 1000, fullHeight: 5000 });
+    load(shell, { markdown: chunkedMarkdown(), position: 0.8 });
+
+    expect(renderAllSpy.state.calls).toBe(1);
+    expect(content.querySelector('.chunk-sentinel')).toBeNull();
+    expect(content.textContent).toContain('第四段');
+    // 旧实现按首屏 scrollHeight 恢复（0.8 × (1000-1000) = 0）；新实现按 renderAll 后的 5000 计算
+    expect(scroll.get()).toBeCloseTo(0.8 * (5000 - 1000), 5);
+    expect([...root.querySelectorAll('#toast .toast')].at(-1).textContent).toContain(
+      '已回到上次位置 · 回到顶部',
+    );
+  } finally {
+    renderAllSpy.restore();
+    JJ.CHUNK_THRESHOLD = originalThreshold;
+    JJ.INITIAL_BYTES = originalInitial;
+    observer.restore();
+  }
+});
+
+it('huge 模式分块文档同样先 renderAll 再恢复位置', () => {
+  const observer = installObserverStub();
+  const originalIsHuge = JJ.isHuge;
+  const originalInitial = JJ.INITIAL_BYTES;
+  const renderAllSpy = spyRenderAll();
+  JJ.isHuge = () => true;
+  JJ.INITIAL_BYTES = 1;
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubChunkedHeight(content, { initialHeight: 1000, fullHeight: 5000 });
+    load(shell, { markdown: chunkedMarkdown(), position: 0.5 });
+
+    expect(renderAllSpy.state.calls).toBe(1);
+    expect(content.querySelector('.chunk-sentinel')).toBeNull();
+    expect(scroll.get()).toBeCloseTo(0.5 * (5000 - 1000), 5);
+  } finally {
+    renderAllSpy.restore();
+    JJ.isHuge = originalIsHuge;
+    JJ.INITIAL_BYTES = originalInitial;
+    observer.restore();
+  }
+});
+
 // ── 滚动驱动 chrome 与位置上报 ──
 
 it('滚动驱动进度条与回到顶部，并按 500ms 节流发 savePosition', () => {
@@ -474,7 +676,7 @@ it('滚动驱动进度条与回到顶部，并按 500ms 节流发 savePosition',
   scroll.set(900);
   content.dispatchEvent(new Event('scroll'));
   expect(root.querySelector('#back-to-top').hidden).toBe(false);
-  expect(parseFloat(root.querySelector('#progress-bar').style.width)).toBeCloseTo((900 / 2200) * 100, 2);
+  expect(parseFloat(root.querySelector('#progress-bar').style.height)).toBeCloseTo((900 / 2200) * 100, 2);
   expect(posted.filter((message) => message.type === 'savePosition')).toHaveLength(0);
 
   vi.advanceTimersByTime(500);

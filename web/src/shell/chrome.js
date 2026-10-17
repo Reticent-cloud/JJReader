@@ -1,6 +1,6 @@
 // 阅读 chrome（Task 12）：位置追踪、阅读进度条 / 回到顶部、toast。
 // 位置：滚动节流 500ms 上报（比例 = scrollTop / max(1, scrollHeight - clientHeight)，夹紧 [0,1]），
-// 关闭/隐藏页面时强制 flush；进度条宽度与回到顶部显隐按 400px 阈值随滚动更新。
+// 关闭/隐藏页面时强制 flush；进度条（spec §5.1 右侧 3px 竖向条）高度与回到顶部显隐按 400px 阈值随滚动更新。
 // toast：3 秒自动消失，可带一个可点击 action（「已回到上次位置 · 回到顶部」用）。
 
 /** 位置上报节流（Global Constraints：500ms）。 */
@@ -175,7 +175,7 @@ function bindBackToTop(backToTopEl, scroller) {
 }
 
 /**
- * 更新阅读 chrome：进度条宽度 = 滚动比例（CSS width %）；scrollTop > thresholdPx 时显示回到顶部；
+ * 更新阅读 chrome：竖向进度条高度 = 滚动比例（CSS height %）；scrollTop > thresholdPx 时显示回到顶部；
  * 点击回到顶部平滑滚到顶部（同一元素/容器只绑定一次）。
  * @param {{scroller: HTMLElement, progressEl?: HTMLElement, backToTopEl?: HTMLElement, thresholdPx?: number}} options
  */
@@ -183,7 +183,7 @@ export function updateChrome({ scroller, progressEl, backToTopEl, thresholdPx = 
   const scrollRoot = scroller && typeof scroller === 'object' ? scroller : null;
   const { ratio, scrollTop } = readScrollRatio(scrollRoot);
   if (progressEl && progressEl.style) {
-    progressEl.style.width = `${(ratio * 100).toFixed(2)}%`;
+    progressEl.style.height = `${(ratio * 100).toFixed(2)}%`;
   }
 
   const thresholdNumber = Number(thresholdPx);
@@ -194,7 +194,7 @@ export function updateChrome({ scroller, progressEl, backToTopEl, thresholdPx = 
   }
 }
 
-/** 阅读 chrome 的骨架元素：顶部 3px 进度条（内层 #progress-bar 由 updateChrome 写宽度）+ 回到顶部按钮。 */
+/** 阅读 chrome 的骨架元素：右侧 3px 竖向进度条（内层 #progress-bar 由 updateChrome 写高度）+ 回到顶部按钮。 */
 export function createChromeElements() {
   const progress = document.createElement('div');
   progress.id = 'progress';

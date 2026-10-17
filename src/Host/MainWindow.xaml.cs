@@ -162,8 +162,12 @@ public partial class MainWindow : Window
             Post(Protocol.Toast("该文件不是文本文件，已拒绝渲染", "warn"));
         }
 
-        // 成功读取（含二进制拒绝渲染）都记入最近文件：空白启动页与 Alt+←/→ 依赖它。
-        RememberRecent(document);
+        // 只有可渲染的文本文档才记入最近文件（裁定 4）：二进制拒绝渲染时 recent.json 与前端列表都保持原样。
+        // 空白启动页与 Alt+←/→ 依赖最近列表，点击一个只会被拒绝的文件没有意义。
+        if (RecentPolicy.ShouldRecord(document))
+        {
+            RememberRecent(document);
+        }
     }
 
     /// <summary>把当前文档写入 recent.json（失败只记日志），随后把最新列表推给前端。</summary>

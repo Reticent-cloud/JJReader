@@ -74,12 +74,12 @@ export function mountShell({ root, post } = {}) {
   const send = typeof post === 'function' ? post : () => {};
 
   // 固定骨架：#app > header#toolbar、aside#toc、div.toc-resizer（拖拽调宽分隔条）、main#content（滚动容器）、
-  // div#progress（阅读进度条）、button#back-to-top、div#aa-panel、div#toast。
+  // div#progress（阅读进度条）、button#back-to-top、div#aa-panel、div#recent-menu（工具条最近菜单）、div#toast。
   // 分隔条绝对定位在侧栏右缘（不占网格列），折叠时隐藏；进度条/回到顶部/工具条都是 fixed 悬浮层。
   root.replaceChildren();
   const toolbarParts = createToolbar();
   const toolbar = toolbarParts.element;
-  const { tocToggle, themeToggle, aaToggle } = toolbarParts;
+  const { tocToggle, recentToggle, themeToggle, aaToggle } = toolbarParts;
   const toc = document.createElement('aside');
   toc.id = 'toc';
   toc.setAttribute('aria-label', '大纲');
@@ -96,11 +96,15 @@ export function mountShell({ root, post } = {}) {
   const content = document.createElement('main');
   content.id = 'content';
   const aaPanel = buildAaPanel();
+  const recentMenu = document.createElement('div');
+  recentMenu.id = 'recent-menu';
+  recentMenu.className = 'recent-menu';
+  recentMenu.hidden = true;
   const toast = document.createElement('div');
   toast.id = 'toast';
   toast.hidden = true;
   const { progress, progressEl, backToTopEl } = createChromeElements();
-  root.append(toolbar, toc, tocResizer, content, progress, backToTopEl, aaPanel, toast);
+  root.append(toolbar, toc, tocResizer, content, progress, backToTopEl, aaPanel, recentMenu, toast);
   setToastContainer(toast);
   // 悬浮工具条默认隐藏：鼠标进顶部 40px 或按 Alt 才显示（隐藏时键盘快捷键照常可用）。
   root.dataset.toolbar = 'hidden';
@@ -301,19 +305,21 @@ export function mountShell({ root, post } = {}) {
     }
   }
 
-  /** 点击面板外部关闭；面板/触发按钮内部的点击不关闭（触发按钮那一下会在打开后冒泡到这里）。 */
+  /**
+   * 点击浮层外部关闭（Aa 面板与工具条最近菜单各自判断；面板/触发按钮内部的点击不关闭，
+   * 触发按钮那一下会在打开后冒泡到这里）。
+   */
   function onDocumentClick(event) {
-    if (aaPanel.hidden) {
-      return;
-    }
     const target = event.target;
     if (!target) {
       return;
     }
-    if (aaPanel.contains(target) || aaToggle.contains(target)) {
-      return;
+    if (!aaPanel.hidden && !aaPanel.contains(target) && !aaToggle.contains(target)) {
+      closeAaPanel();
     }
-    closeAaPanel();
+    if (!recentMenu.hidden && !recentMenu.contains(target) && !recentToggle.contains(target)) {
+      closeRecentMenu();
+    }
   }
 
   /** Aa 面板控件变更（input 覆盖滑杆拖动，change 覆盖下拉选择）→ 即时应用并持久化。 */
@@ -412,6 +418,8 @@ export function mountShell({ root, post } = {}) {
   /**
    * 恢复阅读位置：load 带 position 时按比例写 scrollTop（夹紧 [0,1]），并提示可点击回到顶部；
    * 没有 position（新文档/文件被外部修改换了 key）时回到顶部，不沿用上一份文档的滚动位置（T10 Minor）。
+   * 分块/大文件模式首屏只渲染了预算内的块，scrollHeight 远小于全文——先 renderAll 补全，
+   * 再按实时 scrollHeight 计算，否则恢复位置会严重偏前（裁定 3）。ratio=0（回到顶部）无需补全全量。
    */
   function restoreScrollPosition() {
     const position = state.position;
@@ -421,6 +429,14 @@ export function mountShell({ root, post } = {}) {
       return;
     }
     const ratio = Math.min(1, Math.max(0, position));
+    if (state.chunked && ratio > 0) {
+      showToast('正在恢复到上次阅读位置…', 'info');
+      try {
+        state.chunked.renderAll();
+      } catch {
+        // 补全失败时仍按当前（首屏）高度恢复，不能因为位置恢复让正文消失
+      }
+    }
     content.scrollTop = ratio * scrollableHeight();
     refreshChrome();
     if (ratio > 0) {
@@ -481,6 +497,42 @@ export function mountShell({ root, post } = {}) {
     );
   }
 
+  // ── 工具条「最近」菜单（spec §5.6：与空白启动页共用同一份 state.recent） ──
+
+  /** 用当前 state.recent 渲染菜单内容（复用 renderRecent 的同一列表与键盘行为）。 */
+  function renderRecentMenu() {
+    recentMenu.replaceChildren(
+      renderRecent(state.recent, { onOpen: openRecentFromMenu, onClose: closeRecentMenu }),
+    );
+  }
+
+  /** 菜单项选中：先收起菜单，再交给宿主打开（绝对路径按绝对处理）。 */
+  function openRecentFromMenu(path) {
+    closeRecentMenu();
+    openRecentFile(path);
+  }
+
+  /** 打开菜单（每次打开都按最新最近列表重渲染）并同步按钮展开状态。 */
+  function openRecentMenu() {
+    renderRecentMenu();
+    recentMenu.hidden = false;
+    recentToggle.setAttribute('aria-expanded', 'true');
+  }
+
+  /** 收起菜单并同步按钮展开状态（Esc / 点击外部 / 选中项 / load 都走这里）。 */
+  function closeRecentMenu() {
+    recentMenu.hidden = true;
+    recentToggle.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleRecentMenu() {
+    if (recentMenu.hidden) {
+      openRecentMenu();
+    } else {
+      closeRecentMenu();
+    }
+  }
+
   /** Alt+←/→：按最近文件顺序切换上一份（更早）/下一份（更新）。 */
   function openAdjacentRecent(direction) {
     const target = nextRecentPath(state.recent, state.path, direction);
@@ -502,6 +554,8 @@ export function mountShell({ root, post } = {}) {
     if (key === 'Escape') {
       if (!aaPanel.hidden) {
         closeAaPanel();
+      } else if (!recentMenu.hidden) {
+        closeRecentMenu();
       } else if (!state.loaded && content.querySelector('.recent-panel')) {
         closeRecentPanel();
       }
@@ -581,6 +635,8 @@ export function mountShell({ root, post } = {}) {
     state.baseUrl = typeof payload.baseUrl === 'string' ? payload.baseUrl : '';
     state.position = typeof payload.position === 'number' && Number.isFinite(payload.position) ? payload.position : null;
     state.loaded = true;
+    // 文档已打开：工具条最近菜单不再需要（避免浮层盖住新正文）
+    closeRecentMenu();
     // 换文档先解绑旧位置追踪器（旧 key 的滚动上报不能带到新文档）
     stopPositionTracker();
 
@@ -628,10 +684,14 @@ export function mountShell({ root, post } = {}) {
         showToast(payload.text, payload.level);
         break;
       case 'recent':
-        // 宿主每次打开文档后都会推最新列表；空白启动页用它渲染面板（已有文档时只更新 state）
+        // 宿主每次打开文档后都会推最新列表；空白启动页用它渲染面板（已有文档时只更新 state）。
+        // 工具条最近菜单与空白页共用 state.recent：菜单打开时就地刷新同一份列表。
         state.recent = normalizeRecentItems(payload.items);
         if (!state.loaded) {
           renderRecentPanel();
+        }
+        if (!recentMenu.hidden) {
+          renderRecentMenu();
         }
         break;
       case 'assocState':
@@ -662,6 +722,7 @@ export function mountShell({ root, post } = {}) {
     updateSettings({ tocVisible: !state.settings.tocVisible });
   });
   aaToggle.addEventListener('click', toggleAaPanel);
+  recentToggle.addEventListener('click', toggleRecentMenu);
   aaPanel.addEventListener('input', onAaControlChange);
   aaPanel.addEventListener('change', onAaControlChange);
   toc.addEventListener('click', onTocClick);
@@ -719,6 +780,7 @@ export function mountShell({ root, post } = {}) {
     }
     aaPanel.removeEventListener('input', onAaControlChange);
     aaPanel.removeEventListener('change', onAaControlChange);
+    recentToggle.removeEventListener('click', toggleRecentMenu);
     tocResizerControl.destroy();
     // Task 11：分块渲染器（哨兵观察器）与 huge-mode class 一并清理，避免跨实例/跨文档残留
     renderer.clearChunked();

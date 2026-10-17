@@ -426,21 +426,24 @@ nav.toc-inline li[data-level='6'] {
   display: none;
 }
 
-/* 阅读进度条：视口顶部 3px，内层 #progress-bar 的 width 由 updateChrome 按滚动比例写入 */
+/* 阅读进度条（spec §5.1）：右侧 3px 竖向条，内层 #progress-bar 的 height 由 updateChrome 按滚动比例写入 */
 #progress {
   position: fixed;
   top: 0;
-  left: 0;
   right: 0;
+  bottom: 0;
   z-index: 35; /* 高于工具条（30），隐藏时也提示进度 */
-  height: 3px;
+  width: 3px;
   background: transparent;
   pointer-events: none;
 }
 
 #progress-bar {
-  width: 0;
-  height: 100%;
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 0;
   background: var(--accent);
 }
 
@@ -473,26 +476,51 @@ nav.toc-inline li[data-level='6'] {
   display: none;
 }
 
-/* 空白启动页的最近文件面板 */
+/* 空白启动页的最近文件面板（与工具条菜单共用 renderRecent 的 .recent-* 结构） */
 #content .recent-panel {
   max-width: 640px;
   margin: 8vh auto 0;
   padding: 0 4px;
 }
 
-#content .recent-title {
+/* 工具条「最近」菜单（spec §5.6）：固定浮层，点击外部/Esc 由 shell 收起 */
+#recent-menu {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 6px);
+  right: 12px;
+  z-index: 29; /* 在工具条（30）之下、正文之上 */
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  box-shadow: var(--panel-shadow);
+}
+
+#recent-menu[hidden] {
+  display: none;
+}
+
+#recent-menu .recent-panel {
+  margin: 0;
+  padding: 0;
+}
+
+.recent-panel .recent-title {
   margin: 0 0 12px;
   font-size: 1.4em;
   font-weight: 650;
 }
 
-#content .recent-list {
+.recent-panel .recent-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-#content .recent-item {
+.recent-panel .recent-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-auto-rows: auto;
@@ -507,21 +535,21 @@ nav.toc-inline li[data-level='6'] {
   cursor: pointer;
 }
 
-#content .recent-item:hover,
-#content .recent-item:focus-visible {
+.recent-panel .recent-item:hover,
+.recent-panel .recent-item:focus-visible {
   border-color: var(--accent);
   background: var(--bg-muted);
   outline: none;
 }
 
-#content .recent-name {
+.recent-panel .recent-name {
   overflow: hidden;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#content .recent-dir {
+.recent-panel .recent-dir {
   overflow: hidden;
   color: var(--fg-muted);
   font-size: 12px;
@@ -529,7 +557,7 @@ nav.toc-inline li[data-level='6'] {
   white-space: nowrap;
 }
 
-#content .recent-time {
+.recent-panel .recent-time {
   grid-column: 2;
   grid-row: 1 / span 2;
   align-self: center;
@@ -538,12 +566,12 @@ nav.toc-inline li[data-level='6'] {
   white-space: nowrap;
 }
 
-#content .recent-empty {
+.recent-panel .recent-empty {
   margin: 0;
   color: var(--fg-muted);
 }
 
-#content .recent-hint {
+.recent-panel .recent-hint {
   margin: 16px 0 0;
   color: var(--fg-muted);
   font-size: 13px;
