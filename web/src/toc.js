@@ -2,6 +2,10 @@
 // buildToc 只产出结构（文本/href 全部用 DOM API 写入，绝不拼 HTML 字符串）；
 // createScrollSpy 负责「滚动位置 → 当前标题」：scroll 事件经 requestAnimationFrame 节流，
 // 索引变化时才回调（避免每次滚动都改 DOM）。点击跳转由 shell 装配（它持有滚动容器与工具条偏移）。
+// 评审修复：标题 top 快照会因重排失效，shell 用 setHeadings 刷新；update() 不假定 top 严格升序
+// （折叠 details / 图片占位后可能出现 offsetTop=0 的乱序标题），隐藏标题跳过。
+
+import { cancelScheduledFrame, scheduleFrame } from './frame.js';
 
 /** 跳转偏移：悬浮工具条高度占位（spec §5.3「目标标题带固定偏移，避免被工具条遮挡」）。 */
 export const TOC_TOOLBAR_OFFSET = 80;
@@ -16,27 +20,6 @@ const MAX_LEVEL = 6;
 function normalizeLevel(level) {
   const value = Number(level);
   return Number.isInteger(value) && value >= MIN_LEVEL && value <= MAX_LEVEL ? value : MIN_LEVEL;
-}
-
-/** rAF 调度（无 rAF 的环境退回 16ms 定时器，保证节流语义一致）。 */
-function scheduleFrame(callback) {
-  if (typeof globalThis.requestAnimationFrame === 'function') {
-    return { type: 'raf', id: globalThis.requestAnimationFrame(callback) };
-  }
-  return { type: 'timeout', id: setTimeout(callback, 16) };
-}
-
-function cancelScheduledFrame(frame) {
-  if (!frame) {
-    return;
-  }
-  if (frame.type === 'raf') {
-    if (typeof globalThis.cancelAnimationFrame === 'function') {
-      globalThis.cancelAnimationFrame(frame.id);
-    }
-    return;
-  }
-  clearTimeout(frame.id);
 }
 
 /**
@@ -72,14 +55,14 @@ export function buildToc(headings) {
  * 滚动联动：监听 scroller 的 scroll（rAF 节流）并计算当前标题。
  * @param {{
  *   scroller: HTMLElement,
- *   headings: {id: string, text: string, level: number, top: number}[],
+ *   headings: {id: string, text: string, level: number, top: number, hidden?: boolean}[],
  *   onActive?: (heading: object, index: number) => void,
  *   thresholdPx?: number,
  * }} options
- * @returns {{ update: () => void, destroy: () => void }}
+ * @returns {{ update: () => void, setHeadings: (headings: object[]) => void, destroy: () => void }}
  */
 export function createScrollSpy({ scroller, headings, onActive, thresholdPx = DEFAULT_THRESHOLD_PX } = {}) {
-  const list = Array.isArray(headings) ? headings.filter((heading) => heading && typeof heading === 'object') : [];
+  let list = Array.isArray(headings) ? headings.filter((heading) => heading && typeof heading === 'object') : [];
   const scrollRoot = scroller && typeof scroller === 'object' ? scroller : null;
   const thresholdNumber = Number(thresholdPx);
   const threshold = Number.isFinite(thresholdNumber) ? thresholdNumber : DEFAULT_THRESHOLD_PX;
@@ -88,27 +71,44 @@ export function createScrollSpy({ scroller, headings, onActive, thresholdPx = DE
   let frame = null;
   let destroyed = false;
 
-  /** 标题按 top 升序：二分找「top ≤ scrollTop + threshold 的最后一个」；没有则高亮第一个。 */
+  /**
+   * 当前标题：线性扫描取「top ≤ scrollTop + threshold 的最大 top」。
+   * 不假定 top 严格升序——标题在折叠 details / 图片占位替换 / 字号变化后会重排，快照可能乱序，
+   * 二分会在乱序数组上返回错误索引；n = 标题数，O(n) 完全可接受。
+   * hidden === true（折叠 details 内等不可见标题，offsetTop 恒 0）跳过：不能让隐藏标题抢高亮。
+   */
   function findIndex(scrollTop) {
     if (list.length === 0) {
       return -1;
     }
     const limit = scrollTop + threshold;
-    let low = 0;
-    let high = list.length - 1;
     let found = -1;
-    while (low <= high) {
-      const mid = (low + high) >> 1;
-      const top = Number(list[mid].top);
-      if (Number.isFinite(top) && top <= limit) {
-        found = mid;
-        low = mid + 1;
-      } else {
-        high = mid - 1;
+    let foundTop = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < list.length; i += 1) {
+      const heading = list[i];
+      if (!heading || heading.hidden === true) {
+        continue;
+      }
+      const top = Number(heading.top);
+      if (!Number.isFinite(top) || top > limit) {
+        continue;
+      }
+      if (top >= foundTop) {
+        found = i;
+        foundTop = top;
       }
     }
-    // 文档顶部、首个标题尚未进入阈值时仍高亮第一项：阅读位置在大纲第一项之前，不能没有当前项。
-    return found < 0 ? 0 : found;
+    if (found >= 0) {
+      return found;
+    }
+    // 文档顶部、首个可见标题尚未进入阈值时仍高亮第一项：阅读位置在大纲第一项之前，不能没有当前项。
+    for (let i = 0; i < list.length; i += 1) {
+      if (list[i] && list[i].hidden !== true) {
+        return i;
+      }
+    }
+    // 全部标题都被隐藏（极端：整篇都在闭合 details 里）：退回第一项，保持「总有当前项」的既有口径。
+    return 0;
   }
 
   /** 同步计算一次当前标题；索引变化才回调。 */
@@ -150,6 +150,17 @@ export function createScrollSpy({ scroller, headings, onActive, thresholdPx = DE
 
   return {
     update,
+    /**
+     * 替换标题表（shell 在重排后刷新 top 时调用）：重置选中索引，下一次 update 会重新计算并按需回调。
+     * 不清空标题表语义（无标题时传空数组等价于空文档）。destroy 后调用是空操作。
+     */
+    setHeadings(nextHeadings) {
+      if (destroyed) {
+        return;
+      }
+      list = Array.isArray(nextHeadings) ? nextHeadings.filter((heading) => heading && typeof heading === 'object') : [];
+      activeIndex = -1;
+    },
     destroy() {
       destroyed = true;
       cancelScheduledFrame(frame);

@@ -133,6 +133,7 @@ beforeEach(() => {
   document.body.innerHTML = '';
   document.documentElement.removeAttribute('data-theme');
   delete window.matchMedia;
+  delete window.ResizeObserver;
 });
 
 afterEach(() => {
@@ -871,4 +872,264 @@ it('TOC 分隔条：方向键 ±10 调宽并持久化', () => {
   resizer.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
   expect(style.getPropertyValue('--toc-width')).toBe('240px');
   expect(lastPatch(posted)).toEqual({ tocWidth: 240 });
+});
+
+// ── 标题位置刷新（评审修复：top 快照只采集一次，重排后会失效） ──
+// 触发重排的真实场景：字号/行距/行宽变化（Aa 面板/快捷键）、TOC 侧栏拖宽、图片异步加载或占位替换、窗口尺寸变化。
+// jsdom 没有真实布局/ResizeObserver：位置用 Object.defineProperty 覆盖 offsetTop 模拟，尺寸变化用可手动触发的桩。
+
+/** 覆盖单个元素的 offsetTop（模拟重排后的实时位置）；返回可改写句柄。 */
+function defineTop(element, initial) {
+  let value = initial;
+  Object.defineProperty(element, 'offsetTop', {
+    configurable: true,
+    get: () => value,
+    set: (next) => {
+      value = next;
+    },
+  });
+  return {
+    get: () => value,
+    set: (next) => {
+      value = next;
+    },
+  };
+}
+
+/** ResizeObserver 桩（jsdom 无该 API）：捕获 shell 注册的回调，可手动 trigger 模拟 #content 尺寸变化。 */
+function stubResizeObserver() {
+  const previous = window.ResizeObserver;
+  const observers = [];
+  class StubResizeObserver {
+    constructor(callback) {
+      this.callback = callback;
+      observers.push(this);
+    }
+
+    observe(target) {
+      this.target = target;
+    }
+
+    disconnect() {
+      this.target = null;
+    }
+
+    trigger() {
+      this.callback([{ target: this.target }], this);
+    }
+  }
+  window.ResizeObserver = StubResizeObserver;
+  return {
+    observers,
+    restore: () => {
+      if (previous) {
+        window.ResizeObserver = previous;
+      } else {
+        delete window.ResizeObserver;
+      }
+    },
+  };
+}
+
+it('字号变化（applySettings 路径）后刷新标题 top，高亮与点击都用新位置', async () => {
+  const restore = stubHeadingTops({ H1: 0, H2: 400 });
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubScrollTop(content, 0);
+    load(shell, { markdown: '# 甲\n\n正文\n\n## 乙' });
+    await nextFrame(); // 等 load 后的首帧校准落定，再模拟重排
+    const h2 = root.querySelector('#content h2');
+    defineTop(h2, 1200); // 字号 16→17 后标题下移（相对 #content 的真实位置）
+
+    scroll.set(900);
+    content.dispatchEvent(new Event('scroll'));
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('乙'); // 旧快照 top=400：900+80 已越过
+
+    press('=', { ctrlKey: true }); // applySettings 路径 → 刷新（rAF 合并）
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('甲'); // 新 top=1200：900+80 还没到乙
+
+    const calls = [];
+    content.scrollTo = (options) => calls.push(options);
+    root.querySelectorAll('#toc a')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(calls).toEqual([{ top: 1120, behavior: 'smooth' }]); // 1200 - 80，而不是快照 400 - 80
+  } finally {
+    restore();
+  }
+});
+
+it('#content 尺寸变化（ResizeObserver）触发标题位置刷新', async () => {
+  const restore = stubHeadingTops({ H1: 0, H2: 400 });
+  const observer = stubResizeObserver();
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubScrollTop(content, 0);
+    load(shell, { markdown: '# 甲\n\n## 乙' });
+    expect(observer.observers).toHaveLength(1);
+    expect(observer.observers[0].target).toBe(content); // 观察正文滚动列
+
+    defineTop(root.querySelector('#content h2'), 1200); // 侧栏拖宽/窗口尺寸变化导致的重排
+    observer.observers[0].trigger();
+    await nextFrame();
+
+    scroll.set(900);
+    content.dispatchEvent(new Event('scroll'));
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('甲');
+  } finally {
+    observer.restore();
+    restore();
+  }
+});
+
+it('TOC 侧栏拖拽预览/松手后也刷新标题位置', async () => {
+  const restore = stubHeadingTops({ H1: 0, H2: 400 });
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubScrollTop(content, 0);
+    load(shell, { markdown: '# 甲\n\n## 乙' });
+    defineTop(root.querySelector('#content h2'), 1200); // 拖宽后重排
+
+    const resizer = resizerOf(root);
+    resizer.dispatchEvent(pointerEvent('pointerdown', 300));
+    resizer.dispatchEvent(pointerEvent('pointermove', 350)); // 拖拽预览
+    resizer.dispatchEvent(pointerEvent('pointerup', 350)); // 松手 commit
+    await nextFrame();
+
+    scroll.set(900);
+    content.dispatchEvent(new Event('scroll'));
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('甲');
+  } finally {
+    restore();
+  }
+});
+
+it('TOC 点击实时读取元素位置，快照过期也不跳错', () => {
+  const restore = stubHeadingTops({ H1: 500, H2: 900 });
+  try {
+    const { root, shell } = mount();
+    load(shell, { markdown: '# 甲\n\n## 乙' });
+    const content = root.querySelector('#content');
+    const calls = [];
+    content.scrollTo = (options) => calls.push(options);
+
+    defineTop(root.querySelector('#content h2'), 1400); // 快照仍为 900，且不触发任何刷新
+    root.querySelectorAll('#toc a')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(calls).toEqual([{ top: 1320, behavior: 'smooth' }]); // 实时 1400 - 80
+  } finally {
+    restore();
+  }
+});
+
+it('scroll spy 不假定 top 单调：乱序标题线性扫描取最大命中 top', () => {
+  const scroller = document.createElement('div');
+  const headings = [
+    { id: 'a', text: 'A', level: 1, top: 0 },
+    { id: 'b', text: 'B', level: 2, top: 800 },
+    { id: 'c', text: 'C', level: 2, top: 400 },
+  ];
+  const active = [];
+  const spy = JJ.createScrollSpy({ scroller, headings, onActive: (heading) => active.push(heading.id), thresholdPx: 80 });
+  stubScrollTop(scroller, 500); // 500+80=580：命中 a(0) 与 c(400)，最大 top 是 c
+
+  expect(() => spy.update()).not.toThrow();
+  expect(active.at(-1)).toBe('c');
+  expect(active.every((id) => typeof id === 'string' && id !== '')).toBe(true);
+  spy.destroy();
+});
+
+it('折叠 details 内标题（hidden 标记）不抢滚动高亮', () => {
+  const scroller = document.createElement('div');
+  const headings = [
+    { id: 'a', text: 'A', level: 1, top: 0 },
+    { id: 'b', text: 'B', level: 2, top: 0, hidden: true }, // 折叠 details 内：offsetTop=0
+    { id: 'c', text: 'C', level: 2, top: 400 },
+  ];
+  const active = [];
+  const spy = JJ.createScrollSpy({ scroller, headings, onActive: (heading) => active.push(heading.id), thresholdPx: 80 });
+  stubScrollTop(scroller, 0);
+  spy.update();
+  expect(active.at(-1)).toBe('a'); // a 与 b 的 top 相同，隐藏的 b 不能后来居上
+  spy.destroy();
+});
+
+it('scroll spy setHeadings 替换标题表后立即重算高亮', () => {
+  const scroller = document.createElement('div');
+  const headings = [
+    { id: 'a', text: 'A', level: 1, top: 0 },
+    { id: 'b', text: 'B', level: 2, top: 400 },
+  ];
+  const active = [];
+  const spy = JJ.createScrollSpy({ scroller, headings, onActive: (heading) => active.push(heading.id), thresholdPx: 80 });
+  stubScrollTop(scroller, 500); // 500+80=580 → 旧 top 400 命中 b
+  spy.update();
+  expect(active.at(-1)).toBe('b');
+  expect(typeof spy.setHeadings).toBe('function');
+
+  spy.setHeadings([
+    { id: 'a', text: 'A', level: 1, top: 0 },
+    { id: 'b', text: 'B', level: 2, top: 900 }, // 重排后的新位置
+  ]);
+  spy.update();
+  expect(active.at(-1)).toBe('a');
+  spy.destroy();
+});
+
+it('折叠 details 内的标题在刷新后不抢高亮（shell 采集 hidden）', async () => {
+  const restore = stubHeadingTops({ H1: 0, H2: 400 });
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubScrollTop(content, 0);
+    load(shell, { markdown: '# 甲\n\n## 乙' });
+
+    scroll.set(500);
+    content.dispatchEvent(new Event('scroll'));
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('乙');
+
+    // 把乙包进闭合 <details>：真实浏览器里它的 offsetTop / offsetHeight 都会归 0
+    const h2 = root.querySelector('#content h2');
+    const details = document.createElement('details');
+    h2.replaceWith(details);
+    details.append(h2);
+    defineTop(h2, 0);
+
+    press('=', { ctrlKey: true }); // 设置变化触发刷新
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('甲'); // 隐藏标题按跳过处理
+    expect(root.querySelectorAll('#toc a.active')).toHaveLength(1);
+  } finally {
+    restore();
+  }
+});
+
+it('图片加载失败换占位后刷新标题位置，高亮跟随', async () => {
+  const restore = stubHeadingTops({ H1: 0, H2: 400 });
+  try {
+    const { root, shell } = mount();
+    const content = root.querySelector('#content');
+    const scroll = stubScrollTop(content, 0);
+    load(shell, { markdown: '# 甲\n\n![图](a.png)\n\n## 乙' });
+    const img = root.querySelector('#content img');
+    expect(img).toBeTruthy();
+    defineTop(root.querySelector('#content h2'), 1200); // 占位替换后标题下移
+
+    img.dispatchEvent(new Event('error')); // capture 阶段监听 → 刷新（rAF 合并）
+    await nextFrame();
+    expect(root.querySelector('#content .img-placeholder')).toBeTruthy(); // enhance 已换占位
+
+    scroll.set(900);
+    content.dispatchEvent(new Event('scroll'));
+    await nextFrame();
+    expect(root.querySelector('#toc a.active').textContent).toBe('甲');
+  } finally {
+    restore();
+  }
 });

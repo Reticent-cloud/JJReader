@@ -4,6 +4,7 @@
 // 设计约束：所有设置变更「先应用再上报」——applySettings/applyTheme 同步写 CSS 变量，随后 post('saveSettings', {patch})，
 // 只发变化字段（宿主合并后落盘）；任何一步失败都不能影响正文渲染。
 
+import { cancelScheduledFrame, scheduleFrame } from '../frame.js';
 import {
   applySettings,
   DEFAULT_SETTINGS,
@@ -56,6 +57,18 @@ function utf8Length(text) {
     bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
   }
   return bytes;
+}
+
+/**
+ * 标题是否不可见（在闭合的 <details> / hidden 容器里）。
+ * 这类标题的 offsetTop / offsetHeight 都是 0：既不能参与滚动高亮（会与首标题抢），
+ * 也不能按位置排序（破坏 top 单调性）。真实浏览器与 jsdom 口径一致（只看结构，不看布局）。
+ */
+function isHeadingHidden(element) {
+  if (!element || typeof element.closest !== 'function') {
+    return false;
+  }
+  return element.closest('details:not([open])') !== null || element.closest('[hidden]') !== null;
 }
 
 // 工具条按钮：全部用 DOM API 创建（不拼 HTML），统一的 class/title 便于 CSS 与可访问性。
@@ -372,9 +385,77 @@ export function mountShell({ root, post } = {}) {
         text,
         level: readHeadingLevel(element),
         top: readHeadingTop(element),
+        hidden: isHeadingHidden(element),
       });
     }
     return headings;
+  }
+
+  // 标题 top 快照只在渲染时采集一次，以下场景会重排而失效：字号/行距/行宽变化（Aa 面板/快捷键）、
+  // TOC 侧栏拖宽、图片异步加载或占位替换、窗口尺寸变化。重排后重新采集交给 spy，点击定位另外实时读元素（双保险）。
+  let refreshFrame = null;
+  let destroyed = false;
+
+  /** 采集标题元素相对 #content 的实时位置（保持 id/text/level，只更新 top 与 hidden）。 */
+  function collectHeadingTops() {
+    const byId = new Map();
+    for (const element of content.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+      if (element.id) {
+        byId.set(element.id, element);
+      }
+    }
+    for (const heading of state.headings) {
+      const element = byId.get(heading.id) || null;
+      if (!element) {
+        continue;
+      }
+      heading.top = readHeadingTop(element);
+      heading.hidden = isHeadingHidden(element);
+    }
+    return state.headings;
+  }
+
+  /** 重建滚动联动：旧实例必须先 destroy，避免 scroll 监听泄漏（spy 无 setHeadings 时的兜底路径也走这里）。 */
+  function rebuildSpy(headings) {
+    if (state.spy) {
+      state.spy.destroy();
+      state.spy = null;
+    }
+    if (!Array.isArray(headings) || headings.length === 0) {
+      return;
+    }
+    state.spy = createScrollSpy({
+      scroller: content,
+      headings,
+      onActive: (heading) => highlightToc(heading),
+      thresholdPx: TOC_TOOLBAR_OFFSET,
+    });
+    state.spy.update();
+  }
+
+  /** 重排后刷新标题位置：更新快照并让滚动联动按新位置重算高亮（不重建 DOM，不闪）。 */
+  function refreshHeadingTops() {
+    if (destroyed || !state.spy || state.headings.length === 0) {
+      return;
+    }
+    const headings = collectHeadingTops();
+    if (typeof state.spy.setHeadings === 'function') {
+      state.spy.setHeadings(headings);
+      state.spy.update();
+      return;
+    }
+    rebuildSpy(headings);
+  }
+
+  /** 把刷新合并到下一帧：拖拽/图片/排版变化会连续触发，逐次采集会造成抖动。 */
+  function scheduleRefreshHeadingTops() {
+    if (destroyed || refreshFrame !== null) {
+      return;
+    }
+    refreshFrame = scheduleFrame(() => {
+      refreshFrame = null;
+      refreshHeadingTops();
+    });
   }
 
   /** 高亮 TOC 中当前标题的链接（aria-current 同步，供键盘/读屏识别）。 */
@@ -415,13 +496,7 @@ export function mountShell({ root, post } = {}) {
       toc.append(empty);
       return;
     }
-    state.spy = createScrollSpy({
-      scroller: content,
-      headings,
-      onActive: (heading) => highlightToc(heading),
-      thresholdPx: TOC_TOOLBAR_OFFSET,
-    });
-    state.spy.update();
+    rebuildSpy(headings);
   }
 
   /** 主题：写 data-theme（system 跟随系统）并同步按钮文案。 */
@@ -495,6 +570,8 @@ export function mountShell({ root, post } = {}) {
     }
     applySettings(state.settings);
     syncAaControls();
+    // 字号/行距/行宽（以及侧栏宽度）变化都会重排正文：刷新标题位置快照
+    scheduleRefreshHeadingTops();
     send('saveSettings', { patch });
     return patch;
   }
@@ -507,6 +584,8 @@ export function mountShell({ root, post } = {}) {
     state.settings = normalizeSettings({ ...state.settings, tocWidth: width });
     applySettings(state.settings);
     syncTocResizerWidth();
+    // 拖拽预览与松手（commit 复用 preview）都会改变正文列宽：合并到下一帧刷新标题位置
+    scheduleRefreshHeadingTops();
   }
 
   /**
@@ -533,7 +612,20 @@ export function mountShell({ root, post } = {}) {
     defaultWidth: TOC_WIDTH_DEFAULT,
   });
 
-  /** TOC 点击：阻止默认跳转，按「标题 top − 工具条占位」平滑滚动到目标。 */
+  /** 按 id 找正文里的标题元素（只认 #content 内的元素，避免页面其它同名 id 干扰）。 */
+  function findHeadingElement(id) {
+    if (!id) {
+      return null;
+    }
+    const element = document.getElementById(id);
+    return element && content.contains(element) ? element : null;
+  }
+
+  /**
+   * TOC 点击：阻止默认跳转，滚动到目标标题。
+   * 位置以元素**实时** offsetTop 为准（快照可能因重排过期：即使某次刷新漏了时机也不会跳错），
+   * 找不到元素时才退回标题快照 heading.top。
+   */
   function onTocClick(event) {
     const target = event.target;
     if (!target || typeof target.closest !== 'function') {
@@ -547,10 +639,12 @@ export function mountShell({ root, post } = {}) {
     const href = link.getAttribute('href') || '';
     const id = href.slice(1);
     const heading = state.headings.find((item) => item.id === id);
-    if (!heading) {
+    const element = findHeadingElement(id);
+    if (!heading && !element) {
       return;
     }
-    const top = heading.top - TOC_TOOLBAR_OFFSET;
+    const baseTop = element ? readHeadingTop(element) : heading.top;
+    const top = baseTop - TOC_TOOLBAR_OFFSET;
     if (typeof content.scrollTo === 'function') {
       content.scrollTo({ top, behavior: 'smooth' });
     } else {
@@ -716,6 +810,8 @@ export function mountShell({ root, post } = {}) {
       tocCount,
       bytes: utf8Length(markdown),
     });
+    // 新文档 load 后（首帧布局 / 字体就绪可能改变标题位置）：下一帧再校准一次标题 top
+    scheduleRefreshHeadingTops();
   }
 
   function showToast(text, level = 'info') {
@@ -775,11 +871,42 @@ export function mountShell({ root, post } = {}) {
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('click', onDocumentClick);
 
-  /** 卸下全局监听、滚动联动与分隔条拖拽（测试/多实例装配用；WebView2 页面生命周期内不需要调用）。 */
+  // 图片异步加载成功 / 失败换占位都会让后续标题整体位移：error 事件不冒泡，必须在 #content 捕获阶段监听。
+  function onContentResourceSettled(event) {
+    const target = event && event.target;
+    if (!target || target.tagName !== 'IMG') {
+      return;
+    }
+    scheduleRefreshHeadingTops();
+  }
+  content.addEventListener('load', onContentResourceSettled, true);
+  content.addEventListener('error', onContentResourceSettled, true);
+
+  // 窗口尺寸变化 / 图片撑开正文都会改 #content 尺寸：ResizeObserver 可用时订阅（jsdom 无该 API，守卫跳过）。
+  let contentResizeObserver = null;
+  if (typeof globalThis.ResizeObserver === 'function') {
+    try {
+      contentResizeObserver = new globalThis.ResizeObserver(() => scheduleRefreshHeadingTops());
+      contentResizeObserver.observe(content);
+    } catch {
+      contentResizeObserver = null;
+    }
+  }
+
+  /** 卸下全局监听、滚动联动、标题位置刷新与分隔条拖拽（测试/多实例装配用；WebView2 页面生命周期内不需要调用）。 */
   function destroy() {
+    destroyed = true;
+    cancelScheduledFrame(refreshFrame);
+    refreshFrame = null;
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('click', onDocumentClick);
     toc.removeEventListener('click', onTocClick);
+    content.removeEventListener('load', onContentResourceSettled, true);
+    content.removeEventListener('error', onContentResourceSettled, true);
+    if (contentResizeObserver) {
+      contentResizeObserver.disconnect();
+      contentResizeObserver = null;
+    }
     aaPanel.removeEventListener('input', onAaControlChange);
     aaPanel.removeEventListener('change', onAaControlChange);
     tocResizerControl.destroy();
