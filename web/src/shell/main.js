@@ -1,15 +1,13 @@
 // shell 总装：固定 DOM 骨架、消息分发、正文渲染与 renderDone 回报。
 // 正文走 JJ.renderMarkdown（Task 5 起为 markdown-it 引擎），引擎缺失时降级 escapeHtml + <pre> 保证不白屏。
 // Task 10 起装配阅读体验：TOC 侧栏（标题 id 兜底 + 滚动联动 + 拖拽调宽）、主题三态、排版面板（Aa）与快捷键。
+// Task 12 起装配最近文件、位置记忆、阅读进度条/回到顶部、悬浮工具条与 F5/Alt+←→/Ctrl+Shift+C。
+// 模块拆分（T10 评审 carry-forward）：工具条与 Aa 面板 → toolbar.js；最近文件面板 → recent.js；
+// 位置追踪/进度条/回到顶部/toast → chrome.js；标题 id + TOC/滚动联动 → headings.js；正文渲染管线 → render.js。
 // 设计约束：所有设置变更「先应用再上报」——applySettings/applyTheme 同步写 CSS 变量，随后 post('saveSettings', {patch})，
 // 只发变化字段（宿主合并后落盘）；任何一步失败都不能影响正文渲染。
 
-import { cancelScheduledFrame, scheduleFrame } from '../frame.js';
-import {
-  appendLinkDefinitions,
-  extractLinkDefinitions,
-  utf8Length,
-} from '../chunk.js';
+import { utf8Length } from '../chunk.js';
 import {
   applySettings,
   DEFAULT_SETTINGS,
@@ -21,153 +19,31 @@ import {
   TOC_WIDTH_MIN,
 } from '../settings.js';
 import { applyTheme, nextTheme } from '../theme.js';
+import { buildToc } from '../toc.js';
 import {
-  buildToc,
-  createScrollSpy,
-  readHeadingLevel,
-  readHeadingTop,
-  TOC_TOOLBAR_OFFSET,
-} from '../toc.js';
+  clearToastContainer,
+  createChromeElements,
+  createPositionTracker,
+  setToastContainer,
+  showToast,
+  updateChrome,
+} from './chrome.js';
+import { createTocController } from './headings.js';
+import { nextRecentPath, normalizeRecentItems, renderRecent } from './recent.js';
+import { createRenderer } from './render.js';
 import { createTocResizer } from './resizer.js';
+import { buildAaPanel, createToolbar, themeLabel } from './toolbar.js';
+
+/** 工具条悬浮显示：鼠标进入窗口顶部 40px 区域（spec §5.1）。 */
+const TOOLBAR_HOVER_ZONE_PX = 40;
+
+/** 工具条自动隐藏延迟（spec §5.1：移出 800ms 后隐藏）。 */
+const TOOLBAR_HIDE_DELAY_MS = 800;
 
 /** 全局唯一的时间源：优先高精度计时，缺失时退回 Date.now。 */
 function now() {
   const perf = globalThis.performance;
   return perf && typeof perf.now === 'function' ? perf.now() : Date.now();
-}
-
-/** HTML 文本转义（仅引擎缺失时的兜底渲染用；正常正文由 renderMarkdown 输出，T7 统一加 DOMPurify 清洗）。 */
-function escapeHtml(text) {
-  return String(text ?? '').replace(/[&<>"']/g, (ch) => {
-    switch (ch) {
-      case '&':
-        return '&amp;';
-      case '<':
-        return '&lt;';
-      case '>':
-        return '&gt;';
-      case '"':
-        return '&quot;';
-      default:
-        return '&#39;';
-    }
-  });
-}
-
-/**
- * 标题是否不可见（在闭合的 <details> / hidden 容器里）。
- * 这类标题的 offsetTop / offsetHeight 都是 0：既不能参与滚动高亮（会与首标题抢），
- * 也不能按位置排序（破坏 top 单调性）。真实浏览器与 jsdom 口径一致（只看结构，不看布局）。
- */
-function isHeadingHidden(element) {
-  if (!element || typeof element.closest !== 'function') {
-    return false;
-  }
-  return element.closest('details:not([open])') !== null || element.closest('[hidden]') !== null;
-}
-
-/** 正文标题选择器：全文扫描与分块增量配对共用同一口径。 */
-const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
-
-// 工具条按钮：全部用 DOM API 创建（不拼 HTML），统一的 class/title 便于 CSS 与可访问性。
-function createToolbarButton(label, id, title) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'tool';
-  button.id = id;
-  if (title) {
-    button.title = title;
-  }
-  button.textContent = label;
-  return button;
-}
-
-// Aa 面板的行/档位定义（与 spec §5.5 口径一致；行宽 0 = 全宽）。
-const WIDTH_OPTIONS = [
-  { value: '640', label: '640' },
-  { value: '780', label: '780' },
-  { value: '960', label: '960' },
-  { value: '0', label: '全宽' },
-];
-
-const CJK_FONT_OPTIONS = [
-  { value: 'system', label: '系统默认' },
-  { value: 'Microsoft YaHei', label: '微软雅黑' },
-  { value: 'Source Han Sans SC', label: '思源黑体' },
-];
-
-const MONO_FONT_OPTIONS = [
-  { value: 'consolas', label: 'Consolas' },
-  { value: 'Cascadia Mono', label: 'Cascadia Mono' },
-];
-
-/** 带数值回显的滑杆行（字号/行距）。 */
-function createRangeRow(labelText, setting, min, max, step, value) {
-  const row = document.createElement('label');
-  row.className = 'aa-row';
-  const text = document.createElement('span');
-  text.textContent = labelText;
-  const input = document.createElement('input');
-  input.type = 'range';
-  input.min = String(min);
-  input.max = String(max);
-  input.step = String(step);
-  input.value = String(value);
-  input.dataset.setting = setting;
-  const output = document.createElement('output');
-  output.className = 'aa-value';
-  output.textContent = String(value);
-  row.append(text, input, output);
-  return row;
-}
-
-/** 下拉选择行（行宽/字体）。 */
-function createSelectRow(labelText, setting, options, value) {
-  const row = document.createElement('label');
-  row.className = 'aa-row';
-  const text = document.createElement('span');
-  text.textContent = labelText;
-  const select = document.createElement('select');
-  select.dataset.setting = setting;
-  for (const option of options) {
-    const item = document.createElement('option');
-    item.value = option.value;
-    item.textContent = option.label;
-    select.append(item);
-  }
-  select.value = value;
-  row.append(text, select);
-  return row;
-}
-
-/** 轻量排版 popover（字号/行距/行宽/中文字体/代码字体），默认隐藏。 */
-function buildAaPanel() {
-  const panel = document.createElement('div');
-  panel.id = 'aa-panel';
-  panel.className = 'aa-panel';
-  panel.hidden = true;
-  panel.setAttribute('role', 'dialog');
-  panel.setAttribute('aria-label', '排版');
-  panel.append(
-    createRangeRow('字号', 'fontSize', 14, 24, 1, 16),
-    createRangeRow('行距', 'lineHeight', 1.4, 2.0, 0.1, 1.7),
-    createSelectRow('行宽', 'contentWidth', WIDTH_OPTIONS, '780'),
-    createSelectRow('中文字体', 'cjkFont', CJK_FONT_OPTIONS, 'system'),
-    createSelectRow('代码字体', 'monoFont', MONO_FONT_OPTIONS, 'consolas'),
-  );
-  return panel;
-}
-
-/** 主题按钮文案（三态各一个中文标签）。 */
-function themeLabel(theme) {
-  switch (theme) {
-    case 'light':
-      return '浅色';
-    case 'dark':
-      return '深色';
-    default:
-      return '跟随系统';
-  }
 }
 
 /** 目标元素是否是可编辑控件（输入框/下拉/可编辑区）：这些控件内的快捷键交还给控件本身。 */
@@ -198,10 +74,12 @@ export function mountShell({ root, post } = {}) {
   const send = typeof post === 'function' ? post : () => {};
 
   // 固定骨架：#app > header#toolbar、aside#toc、div.toc-resizer（拖拽调宽分隔条）、main#content（滚动容器）、
-  // div#aa-panel、div#toast。分隔条绝对定位在侧栏右缘（不占网格列），折叠时隐藏。
+  // div#progress（阅读进度条）、button#back-to-top、div#aa-panel、div#toast。
+  // 分隔条绝对定位在侧栏右缘（不占网格列），折叠时隐藏；进度条/回到顶部/工具条都是 fixed 悬浮层。
   root.replaceChildren();
-  const toolbar = document.createElement('header');
-  toolbar.id = 'toolbar';
+  const toolbarParts = createToolbar();
+  const toolbar = toolbarParts.element;
+  const { tocToggle, themeToggle, aaToggle } = toolbarParts;
   const toc = document.createElement('aside');
   toc.id = 'toc';
   toc.setAttribute('aria-label', '大纲');
@@ -221,16 +99,14 @@ export function mountShell({ root, post } = {}) {
   const toast = document.createElement('div');
   toast.id = 'toast';
   toast.hidden = true;
-  root.append(toolbar, toc, tocResizer, content, aaPanel, toast);
+  const { progress, progressEl, backToTopEl } = createChromeElements();
+  root.append(toolbar, toc, tocResizer, content, progress, backToTopEl, aaPanel, toast);
+  setToastContainer(toast);
+  // 悬浮工具条默认隐藏：鼠标进顶部 40px 或按 Alt 才显示（隐藏时键盘快捷键照常可用）。
+  root.dataset.toolbar = 'hidden';
 
-  const tocToggle = createToolbarButton('目录', 'toc-toggle', '大纲（Ctrl+B）');
-  const themeToggle = createToolbarButton('跟随系统', 'theme-toggle', '主题：浅色 → 深色 → 跟随系统');
-  const aaToggle = createToolbarButton('Aa', 'aa-toggle', '排版设置（Ctrl+,）');
-  aaToggle.setAttribute('aria-expanded', 'false');
-  aaToggle.setAttribute('aria-controls', 'aa-panel');
-  const toolbarSpacer = document.createElement('div');
-  toolbarSpacer.className = 'toolbar-spacer';
-  toolbar.append(tocToggle, toolbarSpacer, themeToggle, aaToggle);
+  // TOC/标题 id 控制器：持有标题快照、滚动联动 spy 与 TOC 高亮（实现见 headings.js）。
+  const tocController = createTocController({ content, toc });
 
   const state = {
     path: '',
@@ -240,357 +116,30 @@ export function mountShell({ root, post } = {}) {
     position: null,
     assoc: null,
     dirListing: null,
-    // TOC 数据 = 渲染后 DOM 中的实际标题（顺序/文本从 DOM 取），元素带 { id, text, level, top }
-    headings: [],
-    headingById: new Map(),
-    spy: null,
-    activeLink: null,
-    // 最近一次 extractHeadings 的标题数（renderDone.tocCount 复用，避免为统计再多 parse 一次）
-    extractedCount: 0,
-    // Task 11：大文件模式标记（关闭高亮、停用滚动联动）、分块渲染器句柄、滚动联动开关
+    // Task 12：是否收到过 load（空白启动页显示最近文件面板）、最近文件列表（Alt+←/→ 切换用）
+    loaded: false,
+    recent: [],
+    // Task 11：大文件模式标记（关闭高亮、停用滚动联动）、分块渲染器句柄
     huge: false,
-    spyEnabled: true,
     chunked: null,
+    // Task 12：位置追踪器（每次 load 重建；节流上报 savePosition）
+    positionTracker: null,
   };
 
-  /**
-   * front matter「属性」折叠块（Task 9）：先用 JJ.extractFrontmatter 取本文档属性数据
-   * （T8 carry-forward：不复用 renderMarkdown 写回的 env，避免跨文档陈旧），非空时在 #content 顶部插入
-   * <details class="frontmatter"><summary>属性</summary><table>…</table></details>（默认折叠）。
-   * 表格用 createElement/textContent 逐格写入：属性值是不可信文本，绝不拼 HTML 字符串。
-   */
-  function mountFrontmatter(markdown) {
-    const engine = globalThis.JJ;
-    if (!engine || typeof engine.extractFrontmatter !== 'function') {
-      return;
-    }
-    const result = engine.extractFrontmatter(markdown);
-    const data = result && typeof result === 'object' ? result.data : null;
-    if (!data || typeof data !== 'object') {
-      return;
-    }
-    const entries = Object.entries(data);
-    if (entries.length === 0) {
-      return;
-    }
-
-    const details = document.createElement('details');
-    details.className = 'frontmatter';
-    const summary = document.createElement('summary');
-    summary.textContent = '属性';
-    const table = document.createElement('table');
-    const tbody = document.createElement('tbody');
-    for (const [key, value] of entries) {
-      const row = document.createElement('tr');
-      const th = document.createElement('th');
-      th.textContent = String(key);
-      const td = document.createElement('td');
-      // 数组值用「、」连接；布尔/数字统一按字符串展示（与 extractFrontmatter 的解析口径一致）
-      td.textContent = Array.isArray(value)
-        ? value.map((item) => String(item)).join('、')
-        : String(value);
-      row.append(th, td);
-      tbody.append(row);
-    }
-    table.append(tbody);
-    details.append(summary, table);
-    content.prepend(details);
-  }
-
-  /**
-   * 创建标题 id 分配器（Task 10 兜底口径 + Task 11 增量）：
-   * 维护「全文标题游标 + 已定稿 id 集合」，每次 assign(elements) 只处理传入的元素——
-   * 分块渲染每块成本 O(新块)，不再每块重扫整个 #content（评审 #3：避免 O(n²) 冻结）。
-   * 配对口径不变：按 DOM 顺序 + 文本匹配（原始 HTML 标题不在 extractHeadings 里，不能按索引硬配）；
-   * 实在配不上（纯标点标题等空 slug）时生成 section-N 兜底 id。重复 id 视为缺失重新配对：
-   * 分块渲染时每块独立 parse，同名标题在不同块里会拿到相同 id，必须在这里改成全文唯一的 id。
-   * @param {{id: string, text: string, level: number}[]} extracted 全文标题列表（全文只 parse 一次）
-   * @param {{reservedIds?: Iterable<string>}} [options]
-   *   reservedIds：一次性渲染时先登记容器里已有的 id（避免兜底 slug / 游标配对撞车）；
-   *   分块增量路径不登记——新块的原始 id 交给游标重配对，跨块重复在 kept 里检测。
-   * @returns {{assign: (elements: Iterable<Element>) => {id: string, text: string, level: number, top: number, hidden: boolean}[]}}
-   */
-  function createHeadingAssigner(extracted, { reservedIds } = {}) {
-    const fullHeadings = Array.isArray(extracted) ? extracted : [];
-    const engine = globalThis.JJ;
-    const slugify = engine && typeof engine.slugify === 'function' ? engine.slugify : null;
-    const reserved = new Set();
-    for (const id of reservedIds ?? []) {
-      if (id) {
-        reserved.add(id);
-      }
-    }
-    // 已定稿的 id（分块渲染跨块累积）；再遇到同一个 id 说明是重复，按「缺失」重新配对，
-    // 保证 TOC 链接（#id-2）能定位到元素。
-    const kept = new Set();
-    let cursor = 0;
-    let assignedCount = 0;
-
-    function fallbackId() {
-      let suffix = assignedCount + 1;
-      let candidate = `section-${suffix}`;
-      while (reserved.has(candidate) || kept.has(candidate)) {
-        suffix += 1;
-        candidate = `section-${suffix}`;
-      }
-      return candidate;
-    }
-
-    function assign(elements) {
-      const headings = [];
-      for (const element of elements) {
-        const text = (element.textContent || '').trim();
-        let id = element.id;
-        if (id && kept.has(id)) {
-          // 重复 id：清掉后走下面「缺失 id」的配对分支，重新分配全文唯一 id
-          id = '';
-          element.removeAttribute('id');
-        }
-        if (id) {
-          // 已有 id：把 extractHeadings 游标推进到同名项之后，保持顺序配对（原始 HTML 标题会自然跳过）
-          for (let i = cursor; i < fullHeadings.length; i += 1) {
-            const candidate = fullHeadings[i];
-            if (candidate && typeof candidate === 'object' && candidate.id === id) {
-              cursor = i + 1;
-              break;
-            }
-          }
-        } else {
-          // 缺失 id：按顺序找文本一致、id 非空且未被占用的提取项（title/body 等被清洗剥掉的情形）
-          let matched = -1;
-          for (let i = cursor; i < fullHeadings.length; i += 1) {
-            const candidate = fullHeadings[i];
-            if (!candidate || typeof candidate !== 'object') {
-              continue;
-            }
-            if (
-              typeof candidate.id === 'string' &&
-              candidate.id !== '' &&
-              !kept.has(candidate.id) &&
-              !reserved.has(candidate.id) &&
-              String(candidate.text ?? '').trim() === text
-            ) {
-              matched = i;
-              break;
-            }
-          }
-          if (matched >= 0) {
-            id = fullHeadings[matched].id;
-            cursor = matched + 1;
-          } else if (slugify) {
-            id = slugify(text, new Set([...reserved, ...kept])) || fallbackId();
-          } else {
-            id = fallbackId();
-          }
-          element.id = id;
-        }
-        kept.add(id);
-        assignedCount += 1;
-        headings.push({
-          id,
-          text,
-          level: readHeadingLevel(element),
-          top: readHeadingTop(element),
-          hidden: isHeadingHidden(element),
-        });
-      }
-      return headings;
-    }
-
-    return { assign };
-  }
-
-  /**
-   * 全文扫描版（一次性渲染 / 分块兜底路径）：登记容器里已有 id → 按顺序配对全部标题。
-   * @returns {{id: string, text: string, level: number, top: number, hidden: boolean}[]}
-   */
-  function assignHeadingIds(extracted) {
-    const elements = content.querySelectorAll(HEADING_SELECTOR);
-    state.extractedCount = Array.isArray(extracted) ? extracted.length : 0;
-    const reservedIds = [];
-    for (const element of elements) {
-      if (element.id) {
-        reservedIds.push(element.id);
-      }
-    }
-    return createHeadingAssigner(extracted, { reservedIds }).assign(elements);
-  }
-
-  /**
-   * 对全文提取标题（分块渲染也只在开始时调用一次；块内渲染只做 id 兜底，不再重复解析全文）。
-   * @returns {{id: string, text: string, level: number}[]}
-   */
-  function collectExtracted(markdown) {
-    const engine = globalThis.JJ;
-    if (engine && typeof engine.extractHeadings === 'function') {
-      const parsed = engine.extractHeadings(markdown);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    }
-    return [];
-  }
+  // 正文渲染管线（兜底/分块/front matter/增强，实现见 render.js）；它读写 state.huge / state.chunked。
+  const renderer = createRenderer({
+    content,
+    getState: () => state,
+    tocController,
+    send,
+    showToast,
+  });
 
   // 标题 top 快照只在渲染时采集一次，以下场景会重排而失效：字号/行距/行宽变化（Aa 面板/快捷键）、
   // TOC 侧栏拖宽、图片异步加载或占位替换、窗口尺寸变化。重排后重新采集交给 spy，点击定位另外实时读元素（双保险）。
-  let refreshFrame = null;
-  let destroyed = false;
-
-  /** 采集标题元素相对 #content 的实时位置（保持 id/text/level，只更新 top 与 hidden）。 */
-  function collectHeadingTops() {
-    const byId = new Map();
-    for (const element of content.querySelectorAll(HEADING_SELECTOR)) {
-      if (element.id) {
-        byId.set(element.id, element);
-      }
-    }
-    for (const heading of state.headings) {
-      const element = byId.get(heading.id) || null;
-      if (!element) {
-        continue;
-      }
-      heading.top = readHeadingTop(element);
-      heading.hidden = isHeadingHidden(element);
-    }
-    return state.headings;
-  }
-
-  /** 重建滚动联动：旧实例必须先 destroy，避免 scroll 监听泄漏（spy 无 setHeadings 时的兜底路径也走这里）。 */
-  function rebuildSpy(headings) {
-    if (state.spy) {
-      state.spy.destroy();
-      state.spy = null;
-    }
-    if (!Array.isArray(headings) || headings.length === 0) {
-      return;
-    }
-    state.spy = createScrollSpy({
-      scroller: content,
-      headings,
-      onActive: (heading) => highlightToc(heading),
-      thresholdPx: TOC_TOOLBAR_OFFSET,
-    });
-    state.spy.update();
-  }
-
-  /** 重排后刷新标题位置：更新快照并让滚动联动按新位置重算高亮（不重建 DOM，不闪）。 */
-  function refreshHeadingTops() {
-    if (destroyed || !state.spy || state.headings.length === 0) {
-      return;
-    }
-    const headings = collectHeadingTops();
-    if (typeof state.spy.setHeadings === 'function') {
-      state.spy.setHeadings(headings);
-      state.spy.update();
-      return;
-    }
-    rebuildSpy(headings);
-  }
-
-  /**
-   * 从新增顶层节点里按 DOM 顺序收集标题元素（分块增量配对的输入：不再扫整个 #content）。
-   * 块渲染的根元素本身可能就是标题（块以 `## 标题` 开头时），因此根元素也要 matches 一次。
-   */
-  function collectHeadingsFromNodes(nodes) {
-    const elements = [];
-    for (const node of Array.isArray(nodes) ? nodes : []) {
-      if (!node || node.nodeType !== 1) {
-        continue;
-      }
-      if (typeof node.matches === 'function' && node.matches(HEADING_SELECTOR)) {
-        elements.push(node);
-      }
-      if (typeof node.querySelectorAll === 'function') {
-        elements.push(...node.querySelectorAll(HEADING_SELECTOR));
-      }
-    }
-    return elements;
-  }
-
-  /** 把这次新增标题的实时 top/hidden 写回 TOC 数据（按 id 对应；未进全文标题表的原始 HTML 标题不影响 TOC）。 */
-  function applyHeadingTops(headings) {
-    for (const heading of headings) {
-      const entry = state.headingById.get(heading.id);
-      if (entry) {
-        entry.top = heading.top;
-        entry.hidden = heading.hidden;
-      }
-    }
-  }
-
-  /** 分块增量渲染后的滚动联动同步：对象共享，只把新增 top 交给 spy（不重扫全文）。 */
-  function syncSpyHeadings() {
-    if (!state.spy || state.headings.length === 0) {
-      return;
-    }
-    if (typeof state.spy.setHeadings === 'function') {
-      state.spy.setHeadings(state.headings);
-      state.spy.update();
-      return;
-    }
-    rebuildSpy(collectHeadingTops());
-  }
-
-  /** 把刷新合并到下一帧：拖拽/图片/排版变化会连续触发，逐次采集会造成抖动。 */
+  /** 把刷新合并到下一帧（标题位置重采集见 headings.js 的 scheduleRefresh）。 */
   function scheduleRefreshHeadingTops() {
-    if (destroyed || refreshFrame !== null) {
-      return;
-    }
-    refreshFrame = scheduleFrame(() => {
-      refreshFrame = null;
-      refreshHeadingTops();
-    });
-  }
-
-  /** 高亮 TOC 中当前标题的链接（aria-current 同步，供键盘/读屏识别）。 */
-  function highlightToc(heading) {
-    const links = toc.querySelectorAll('nav.toc a');
-    let current = null;
-    for (const link of links) {
-      if (link.getAttribute('href') === `#${heading.id}`) {
-        current = link;
-        break;
-      }
-    }
-    if (!current) {
-      return;
-    }
-    if (state.activeLink && state.activeLink !== current) {
-      state.activeLink.classList.remove('active');
-      state.activeLink.removeAttribute('aria-current');
-    }
-    current.classList.add('active');
-    current.setAttribute('aria-current', 'true');
-    state.activeLink = current;
-  }
-
-  /**
-   * 重建 TOC 与滚动联动（无标题时显示空态提示，不创建 spy）。
-   * Task 11：大文件模式（state.spyEnabled === false）只生成 TOC，不启用滚动联动。
-   */
-  function renderToc(headings) {
-    state.headings = headings;
-    state.headingById = new Map(
-      (Array.isArray(headings) ? headings : [])
-        .filter((heading) => heading && typeof heading === 'object' && typeof heading.id === 'string')
-        .map((heading) => [heading.id, heading]),
-    );
-    state.activeLink = null;
-    if (state.spy) {
-      state.spy.destroy();
-      state.spy = null;
-    }
-    toc.replaceChildren(buildToc(headings));
-    if (headings.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'toc-empty';
-      empty.textContent = '此文档没有标题';
-      toc.append(empty);
-      return;
-    }
-    if (state.spyEnabled) {
-      rebuildSpy(headings);
-    }
+    tocController.scheduleRefresh();
   }
 
   /** 主题：写 data-theme（system 跟随系统）并同步按钮文案。 */
@@ -706,68 +255,24 @@ export function mountShell({ root, post } = {}) {
     defaultWidth: TOC_WIDTH_DEFAULT,
   });
 
-  /** 按 id 找正文里的标题元素（只认 #content 内的元素，避免页面其它同名 id 干扰）。 */
-  function findHeadingElement(id) {
-    if (!id) {
-      return null;
-    }
-    const element = document.getElementById(id);
-    return element && content.contains(element) ? element : null;
-  }
-
   /**
-   * 滚动到指定标题（侧栏 TOC 与 `[TOC]` 内联目录共用；评审 #1：两处入口不能各写一套）。
-   * 位置以元素**实时** offsetTop 为准（快照可能因重排过期：即使某次刷新漏了时机也不会跳错），
-   * 找不到元素时才退回标题快照 heading.top。
-   * Task 11：分块模式下目标所在块可能还没渲染——先 renderAll() 再重试定位；huge 模式一律先 renderAll。
-   * renderAll 后仍找不到（id 被清洗换名等）才回退快照，快照也无效（未渲染标题的 Infinity）则不滚错位置。
-   * @returns {boolean} 是否找到可滚动的位置
+   * 分块渲染模式下 TOC 点击/内联目录点击的定位参数：
+   * 目标块未渲染（或大文件模式）时先 renderAll，再由 headings 控制器刷新快照并重试定位。
    */
-  function scrollToHeading(id) {
-    if (!id) {
-      return false;
-    }
-    let element = findHeadingElement(id);
-    if (state.chunked && (state.huge || !element)) {
-      try {
-        state.chunked.renderAll();
-      } catch {
-        // 渲染剩余块失败时保留已渲染内容，下面按快照尽力定位
-      }
-      // 新块的标题 id/enhance 已由 onChunkRendered 增量处理；这里刷新一次标题 top 让快照可用
-      refreshHeadingTops();
-      element = findHeadingElement(id);
-    }
-
-    const heading = state.headings.find((item) => item.id === id);
-    if (!heading && !element) {
-      return false;
-    }
-    const baseTop = element ? readHeadingTop(element) : heading.top;
-    if (!Number.isFinite(baseTop)) {
-      return false; // 目标仍未渲染且没有可用位置：宁可不动，也不滚到错误位置
-    }
-    const top = baseTop - TOC_TOOLBAR_OFFSET;
-    if (typeof content.scrollTo === 'function') {
-      content.scrollTo({ top, behavior: 'smooth' });
-    } else {
-      content.scrollTop = top;
-    }
-    return true;
+  function chunkRenderOptions() {
+    return {
+      shouldRenderAll: (element) => Boolean(state.chunked) && (state.huge || !element),
+      renderAll: () => {
+        if (state.chunked) {
+          state.chunked.renderAll();
+        }
+      },
+    };
   }
 
-  /** 侧栏 TOC 点击：阻止默认跳转，复用 scrollToHeading（分块模式目标未渲染时先 renderAll）。 */
+  /** 侧栏 TOC 点击：阻止默认跳转，复用 headings 控制器的 scrollToHeading。 */
   function onTocClick(event) {
-    const target = event.target;
-    if (!target || typeof target.closest !== 'function') {
-      return;
-    }
-    const link = target.closest('a[href^="#"]');
-    if (!link || !toc.contains(link)) {
-      return;
-    }
-    event.preventDefault();
-    scrollToHeading((link.getAttribute('href') || '').slice(1));
+    tocController.handleTocClick(event, chunkRenderOptions());
   }
 
   /**
@@ -775,16 +280,7 @@ export function mountShell({ root, post } = {}) {
    * 脚注回跳等其它站内锚点保持浏览器默认行为；分块模式下目标未渲染时先 renderAll 再实时定位。
    */
   function onContentClick(event) {
-    const target = event.target;
-    if (!target || typeof target.closest !== 'function') {
-      return;
-    }
-    const link = target.closest('a[href^="#"]');
-    if (!link || !content.contains(link) || !link.closest('nav.toc-inline')) {
-      return;
-    }
-    event.preventDefault();
-    scrollToHeading((link.getAttribute('href') || '').slice(1));
+    tocController.handleInlineTocClick(event, chunkRenderOptions());
   }
 
   function openAaPanel() {
@@ -838,10 +334,165 @@ export function mountShell({ root, post } = {}) {
     updateSettings({ [key]: value });
   }
 
+  // ── 工具条悬浮（Task 12） ──
+  let toolbarHideTimer = null;
+
+  /** 显示悬浮工具条（取消正在等待的自动隐藏）。 */
+  function showToolbar() {
+    root.dataset.toolbar = 'shown';
+    if (toolbarHideTimer !== null) {
+      clearTimeout(toolbarHideTimer);
+      toolbarHideTimer = null;
+    }
+  }
+
+  /** 立即隐藏工具条并取消等待中的隐藏定时器。 */
+  function hideToolbar() {
+    if (toolbarHideTimer !== null) {
+      clearTimeout(toolbarHideTimer);
+      toolbarHideTimer = null;
+    }
+    root.dataset.toolbar = 'hidden';
+  }
+
+  /** 800ms 后自动隐藏（鼠标离开工具条时调用；期间再进入/移到顶部会取消）。 */
+  function scheduleToolbarHide() {
+    if (toolbarHideTimer !== null) {
+      clearTimeout(toolbarHideTimer);
+    }
+    toolbarHideTimer = setTimeout(() => {
+      toolbarHideTimer = null;
+      root.dataset.toolbar = 'hidden';
+    }, TOOLBAR_HIDE_DELAY_MS);
+  }
+
+  /** 鼠标进入窗口顶部 40px 区域：显示工具条（隐藏时也可唤出）。 */
+  function onMouseMove(event) {
+    const y = Number(event && event.clientY);
+    if (Number.isFinite(y) && y <= TOOLBAR_HOVER_ZONE_PX) {
+      showToolbar();
+    }
+  }
+
+  function onToolbarEnter() {
+    showToolbar();
+  }
+
+  function onToolbarLeave() {
+    scheduleToolbarHide();
+  }
+
+  // ── 位置记忆与阅读 chrome（Task 12） ──
+
+  /** 更新进度条宽度与回到顶部显隐（scroll 事件与 load 恢复位置后都调用）。 */
+  function refreshChrome() {
+    updateChrome({ scroller: content, progressEl, backToTopEl });
+  }
+
+  function onContentScroll() {
+    refreshChrome();
+  }
+
+  /** 平滑回到正文顶部（回到顶部按钮、位置恢复 toast 的 action 共用）。 */
+  function scrollToTop() {
+    if (typeof content.scrollTo === 'function') {
+      content.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      content.scrollTop = 0;
+    }
+  }
+
+  /** 可滚动高度（scrollHeight - clientHeight，负值归 0）。 */
+  function scrollableHeight() {
+    const height = Number(content.scrollHeight);
+    const client = Number(content.clientHeight);
+    return Math.max(0, (Number.isFinite(height) ? height : 0) - (Number.isFinite(client) ? client : 0));
+  }
+
+  /**
+   * 恢复阅读位置：load 带 position 时按比例写 scrollTop（夹紧 [0,1]），并提示可点击回到顶部；
+   * 没有 position（新文档/文件被外部修改换了 key）时回到顶部，不沿用上一份文档的滚动位置（T10 Minor）。
+   */
+  function restoreScrollPosition() {
+    const position = state.position;
+    if (position === null) {
+      content.scrollTop = 0;
+      refreshChrome();
+      return;
+    }
+    const ratio = Math.min(1, Math.max(0, position));
+    content.scrollTop = ratio * scrollableHeight();
+    refreshChrome();
+    if (ratio > 0) {
+      showToast('已回到上次位置 · 回到顶部', 'info', { actionText: '回到顶部', onAction: scrollToTop });
+    }
+  }
+
+  /** 解绑上一次 load 的位置追踪器（换文档/销毁时调用，避免监听器与定时器泄漏）。 */
+  function stopPositionTracker() {
+    if (state.positionTracker) {
+      state.positionTracker.destroy();
+      state.positionTracker = null;
+    }
+  }
+
+  /** 每次 load 用新 key 重建位置追踪器（滚动节流 500ms → savePosition）。 */
+  function startPositionTracker() {
+    stopPositionTracker();
+    if (!state.key) {
+      return;
+    }
+    state.positionTracker = createPositionTracker({
+      scroller: content,
+      key: state.key,
+      emit: (key, ratio) => send('savePosition', { key, ratio }),
+    });
+    state.positionTracker.start();
+  }
+
+  /** F5：先把节流中的位置强制落盘，再请求宿主重读当前文件（宿主按新 key 重新查位置）。 */
+  function reloadDocument() {
+    if (!state.loaded) {
+      return;
+    }
+    if (state.positionTracker) {
+      state.positionTracker.flush();
+    }
+    send('reload');
+  }
+
+  // ── 最近文件（Task 12） ──
+  /** 打开最近文件项：绝对路径交给宿主（宿主也接受相对当前文档目录的路径）。 */
+  function openRecentFile(path) {
+    if (typeof path === 'string' && path !== '') {
+      send('openFile', { relPath: path });
+    }
+  }
+
+  /** Esc / 关闭按钮：空白启动页收起最近文件面板（load 之后面板本来就不在）。 */
+  function closeRecentPanel() {
+    content.replaceChildren();
+  }
+
+  /** 空白启动页：在 #content 渲染最近文件面板（标题 + 列表 + 拖入/Ctrl+O 提示）。 */
+  function renderRecentPanel() {
+    content.replaceChildren(
+      renderRecent(state.recent, { onOpen: openRecentFile, onClose: closeRecentPanel }),
+    );
+  }
+
+  /** Alt+←/→：按最近文件顺序切换上一份（更早）/下一份（更新）。 */
+  function openAdjacentRecent(direction) {
+    const target = nextRecentPath(state.recent, state.path, direction);
+    if (target) {
+      send('openFile', { relPath: target });
+    }
+  }
+
   /**
    * 全局快捷键（输入框内不触发）：
-   * Ctrl+B 侧栏显隐、Ctrl+= / Ctrl+- 字号 ±1、Ctrl+0 重置 16、Ctrl+, 排版面板、Esc 关闭浮层。
-   * 工具条显隐（Alt）归 Task 12，本任务不抢该键。
+   * Esc 关浮层（Aa/最近面板/工具条）；Alt 显示工具条；Alt+←/→ 切换最近文件；F5 重载；
+   * Ctrl+B 侧栏显隐、Ctrl+= / Ctrl+- 字号 ±1、Ctrl+0 重置 16、Ctrl+, 排版面板、Ctrl+Shift+C 定位文件。
    */
   function onKeyDown(event) {
     if (!event || event.defaultPrevented) {
@@ -851,17 +502,52 @@ export function mountShell({ root, post } = {}) {
     if (key === 'Escape') {
       if (!aaPanel.hidden) {
         closeAaPanel();
+      } else if (!state.loaded && content.querySelector('.recent-panel')) {
+        closeRecentPanel();
       }
+      hideToolbar();
       return;
     }
     if (isEditableTarget(event.target)) {
       return;
     }
+
+    // Alt 相关：Alt 显示工具条，Alt+←/→ 在最近文件列表里切换（不抢浏览器默认行为）
+    if (event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (key === 'ArrowLeft') {
+        event.preventDefault();
+        openAdjacentRecent('older');
+        return;
+      }
+      if (key === 'ArrowRight') {
+        event.preventDefault();
+        openAdjacentRecent('newer');
+        return;
+      }
+    }
+    if (key === 'Alt') {
+      showToolbar();
+      scheduleToolbarHide();
+      return;
+    }
+    if (key === 'F5') {
+      event.preventDefault();
+      reloadDocument();
+      return;
+    }
+
     const ctrl = Boolean(event.ctrlKey || event.metaKey);
     if (!ctrl || event.altKey) {
       return;
     }
 
+    if ((key === 'c' || key === 'C') && event.shiftKey) {
+      event.preventDefault();
+      if (state.path) {
+        send('showInFolder', { path: state.path });
+      }
+      return;
+    }
     if (key === 'b' || key === 'B') {
       event.preventDefault();
       updateSettings({ tocVisible: !state.settings.tocVisible });
@@ -888,193 +574,15 @@ export function mountShell({ root, post } = {}) {
     }
   }
 
-  /** 渲染后增强（幂等；增强失败不能让已经显示出来的正文消失）。 */
-  function enhanceContent() {
-    const engine = globalThis.JJ;
-    if (!engine || typeof engine.enhance !== 'function') {
-      return;
-    }
-    try {
-      engine.enhance(content, { baseUrl: state.baseUrl });
-    } catch {
-      // 增强失败（复制按钮/图片占位）不能影响已经渲染好的正文
-    }
-  }
-
-  /** 只增强本次新增的顶层节点（幂等；评审 #3：不再每块重扫整个 #content）。 */
-  function enhanceNodes(nodes) {
-    const engine = globalThis.JJ;
-    if (!engine || typeof engine.enhance !== 'function') {
-      return;
-    }
-    for (const node of Array.isArray(nodes) ? nodes : []) {
-      if (!node || node.nodeType !== 1) {
-        continue;
-      }
-      try {
-        engine.enhance(node, { baseUrl: state.baseUrl });
-      } catch {
-        // 单块增强失败（复制按钮/图片占位）不能影响已经渲染好的正文
-      }
-    }
-  }
-
-  /** 拆掉上一次的分块渲染器（断开哨兵观察器）；下次 load 前先调用，避免观察器泄漏到新文档。 */
-  function clearChunked() {
-    if (!state.chunked) {
-      return;
-    }
-    try {
-      state.chunked.destroy();
-    } catch {
-      // 断开失败不影响新文档渲染
-    }
-    state.chunked = null;
-  }
-
-  /**
-   * 大文件模式开关（Task 11）：body.huge-mode 供 CSS 关闭高亮视觉；spyEnabled=false 停用滚动联动。
-   * 进入时发送 toast（宿主 post + 本地提示各一次），切回普通文档时必须移除 class，否则普通文档也停在高亮关闭样式。
-   */
-  function applyHugeMode(huge) {
-    state.huge = huge;
-    state.spyEnabled = !huge;
-    if (!huge) {
-      document.body.classList.remove('huge-mode');
-      return;
-    }
-    document.body.classList.add('huge-mode');
-    send('toast', { text: '大文件模式：已关闭代码高亮', level: 'warn' });
-    showToast('大文件模式：已关闭代码高亮', 'warn');
-  }
-
-  /**
-   * 一次性渲染（普通文档，或分块渲染失败时的兜底）：
-   * innerHTML → front matter 属性块 → 标题 id 兜底 + 建 TOC → enhance。
-   */
-  function renderSingle(markdown, huge, engine) {
-    content.innerHTML = engine.renderMarkdown(markdown, {
-      baseUrl: state.baseUrl,
-      disableHighlight: huge,
-    });
-    mountFrontmatter(markdown);
-    const extracted = collectExtracted(markdown);
-    const headings = assignHeadingIds(extracted);
-    renderToc(headings);
-    enhanceContent();
-    return headings;
-  }
-
-  /**
-   * 分块渲染（Task 11 大文档）：全文只 extractHeadings 一次；首屏只渲染预算内块，其余由哨兵懒加载。
-   * 每追加一块：首块挂 front matter 属性块 → 只对**新增节点**做标题 id 增量配对与 enhance → 同步新 top。
-   * 评审 #2：全文预抽取引用式链接定义，每块渲染前追加（定义不产生输出，解决文末定义跨块失效）。
-   * 评审 #3：每块操作 O(新块)——不再对整个容器重跑 assignHeadingIds/enhance。
-   * TOC 基于全文标题；未渲染标题的 top 记为 Infinity（滚动联动跳过），渲染后回填真实位置。
-   */
-  function renderChunked(markdown, huge, engine) {
-    const split = engine.splitBlocks(markdown);
-    const blocks = split && Array.isArray(split.blocks) ? split.blocks : [];
-    if (blocks.length === 0) {
-      return renderSingle(markdown, huge, engine);
-    }
-    const extracted = collectExtracted(markdown);
-    state.extractedCount = extracted.length;
-    const tocHeadings = extracted.map((heading) => ({
-      ...heading,
-      top: Number.POSITIVE_INFINITY,
-      hidden: false,
-    }));
-
-    content.replaceChildren();
-    renderToc(tocHeadings);
-    // 评审 #2：分块独立 parse 时文末定义对前面块不可见——全文预抽取后逐块追加（块内已有同名定义不重复）
-    const linkDefinitions = extractLinkDefinitions(markdown);
-    // 评审 #3：标题 id 配对改为增量（全局 id 集合 + 全文标题游标），每块只处理新节点
-    const assigner = createHeadingAssigner(extracted);
-
-    let frontmatterMounted = false;
-    const initialBytes = Number.isFinite(engine.INITIAL_BYTES) ? engine.INITIAL_BYTES : undefined;
-    try {
-      const renderer = engine.createChunkedRenderer({
-        container: content,
-        blocks,
-        initialBytes,
-        observerRoot: content,
-        render: (blockText) => {
-          const source = appendLinkDefinitions(blockText, linkDefinitions);
-          return engine.renderMarkdown(source, {
-            baseUrl: state.baseUrl,
-            // 大文件模式关闭高亮：围栏只输出转义纯文本，省掉 highlight.js 的首屏开销
-            disableHighlight: huge,
-            // T9 carry-forward：分块后 [TOC] 仍要列出全文标题（不是只列当前块）
-            tocHeadings: extracted,
-          });
-        },
-        onChunkRendered: (info) => {
-          if (!frontmatterMounted) {
-            frontmatterMounted = true;
-            mountFrontmatter(markdown);
-          }
-          const nodes = info && Array.isArray(info.nodes) ? info.nodes : [];
-          // 只配对/增强新块：标题 id 与全文 extractHeadings 顺序一致且唯一
-          const newHeadings = assigner.assign(collectHeadingsFromNodes(nodes));
-          if (newHeadings.length > 0) {
-            applyHeadingTops(newHeadings);
-          }
-          enhanceNodes(nodes);
-          syncSpyHeadings();
-        },
-      });
-      state.chunked = renderer;
-      renderer.start();
-    } catch {
-      // 分块渲染失败绝不白屏：拆掉半成品退回一次性渲染
-      clearChunked();
-      content.replaceChildren();
-      return renderSingle(markdown, huge, engine);
-    }
-    return state.headings;
-  }
-
-  /**
-   * 正文渲染入口：优先走 JJ.renderMarkdown（与宿主共用同一 markdown-it 实现，baseUrl 用于解析相对图片）。
-   * 每次渲染都传新的 env 字面量（T8 carry-forward：env 会被写入 frontmatter，复用会串文档）。
-   * Task 11 起按大小切换策略：> CHUNK_THRESHOLD 或 isHuge → 分块（首屏 INITIAL_BYTES，huge 关高亮/停联动）；
-   * 否则保持原一次性渲染。引擎缺失（打包缺失/加载失败）时降级为 escapeHtml + <pre>，保证正文区永远不白屏。
-   * @returns {{id: string, text: string, level: number, top: number}[]} 渲染后 DOM 的标题列表
-   */
-  function render(markdown) {
-    const engine = globalThis.JJ;
-    if (!engine || typeof engine.renderMarkdown !== 'function') {
-      clearChunked();
-      applyHugeMode(false);
-      content.innerHTML = `<pre class="jj-fallback">${escapeHtml(markdown)}</pre>`;
-      state.extractedCount = 0;
-      renderToc([]);
-      return [];
-    }
-
-    clearChunked();
-    const huge = typeof engine.isHuge === 'function' && engine.isHuge(markdown) === true;
-    applyHugeMode(huge);
-
-    const threshold = Number.isFinite(engine.CHUNK_THRESHOLD) ? engine.CHUNK_THRESHOLD : 512 * 1024;
-    const canChunk =
-      typeof engine.splitBlocks === 'function' && typeof engine.createChunkedRenderer === 'function';
-    // 阈值与 renderDone.bytes 同源：按 UTF-8 字节，不能用 UTF-16 length（中文文档会被低估 1/3）
-    if (canChunk && markdown.length > 0 && (huge || utf8Length(markdown) > threshold)) {
-      return renderChunked(markdown, huge, engine);
-    }
-    return renderSingle(markdown, huge, engine);
-  }
-
   function renderLoad(payload) {
     const markdown = typeof payload.markdown === 'string' ? payload.markdown : '';
     state.path = typeof payload.path === 'string' ? payload.path : '';
     state.key = typeof payload.key === 'string' ? payload.key : '';
     state.baseUrl = typeof payload.baseUrl === 'string' ? payload.baseUrl : '';
-    state.position = typeof payload.position === 'number' ? payload.position : null;
+    state.position = typeof payload.position === 'number' && Number.isFinite(payload.position) ? payload.position : null;
+    state.loaded = true;
+    // 换文档先解绑旧位置追踪器（旧 key 的滚动上报不能带到新文档）
+    stopPositionTracker();
 
     // 设置先落地（主题先写 data-theme 再重绘正文，避免切换白闪）：默认值 + 宿主下发值，全部夹紧。
     const settings = payload.settings && typeof payload.settings === 'object' ? payload.settings : {};
@@ -1086,9 +594,9 @@ export function mountShell({ root, post } = {}) {
     syncTocResizerWidth();
 
     const started = now();
-    render(markdown);
+    renderer.render(markdown);
     // 契约（spec §4.4）：renderDone{path, elapsedMs, tocCount, bytes}；tocCount 复用渲染期 extractHeadings 的结果
-    const tocCount = state.extractedCount;
+    const tocCount = tocController.getExtractedCount();
     const elapsedMs = Math.max(0, now() - started);
 
     send('renderDone', {
@@ -1097,21 +605,14 @@ export function mountShell({ root, post } = {}) {
       tocCount,
       bytes: utf8Length(markdown),
     });
+    // Task 12：渲染完成后恢复位置（无 position 时归零），再开始按新 key 节流上报
+    restoreScrollPosition();
+    startPositionTracker();
     // 新文档 load 后（首帧布局 / 字体就绪可能改变标题位置）：下一帧再校准一次标题 top
     scheduleRefreshHeadingTops();
   }
 
-  function showToast(text, level = 'info') {
-    const item = document.createElement('div');
-    item.className = 'toast';
-    item.dataset.level = level;
-    item.setAttribute('role', 'status');
-    item.textContent = String(text ?? '');
-    toast.hidden = false;
-    toast.append(item);
-  }
-
-  /** 消息分发：load/toast/assocState/dirListing；未知 type 静默忽略（坏消息不能中断 shell）。 */
+  /** 消息分发：load/toast/recent/assocState/dirListing；未知 type 静默忽略（坏消息不能中断 shell）。 */
   function onMessage(message) {
     if (!message || typeof message !== 'object') {
       return;
@@ -1125,6 +626,13 @@ export function mountShell({ root, post } = {}) {
         break;
       case 'toast':
         showToast(payload.text, payload.level);
+        break;
+      case 'recent':
+        // 宿主每次打开文档后都会推最新列表；空白启动页用它渲染面板（已有文档时只更新 state）
+        state.recent = normalizeRecentItems(payload.items);
+        if (!state.loaded) {
+          renderRecentPanel();
+        }
         break;
       case 'assocState':
         state.assoc = { registered: Boolean(payload.registered), isDefault: Boolean(payload.isDefault) };
@@ -1144,6 +652,8 @@ export function mountShell({ root, post } = {}) {
   syncAaControls();
   syncTocResizerWidth();
   toc.replaceChildren(buildToc([]));
+  renderRecentPanel();
+  refreshChrome();
 
   themeToggle.addEventListener('click', () => {
     updateSettings({ theme: nextTheme(state.settings.theme) });
@@ -1159,6 +669,11 @@ export function mountShell({ root, post } = {}) {
   content.addEventListener('click', onContentClick);
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('click', onDocumentClick);
+  // Task 12：滚动驱动进度条/回到顶部；鼠标进顶部 40px 显示工具条，离开工具条 800ms 隐藏
+  content.addEventListener('scroll', onContentScroll, { passive: true });
+  document.addEventListener('mousemove', onMouseMove, { passive: true });
+  toolbar.addEventListener('mouseenter', onToolbarEnter);
+  toolbar.addEventListener('mouseleave', onToolbarLeave);
 
   // 图片异步加载成功 / 失败换占位都会让后续标题整体位移：error 事件不冒泡，必须在 #content 捕获阶段监听。
   function onContentResourceSettled(event) {
@@ -1184,13 +699,18 @@ export function mountShell({ root, post } = {}) {
 
   /** 卸下全局监听、滚动联动、标题位置刷新与分隔条拖拽（测试/多实例装配用；WebView2 页面生命周期内不需要调用）。 */
   function destroy() {
-    destroyed = true;
-    cancelScheduledFrame(refreshFrame);
-    refreshFrame = null;
+    if (toolbarHideTimer !== null) {
+      clearTimeout(toolbarHideTimer);
+      toolbarHideTimer = null;
+    }
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('click', onDocumentClick);
     toc.removeEventListener('click', onTocClick);
     content.removeEventListener('click', onContentClick);
+    content.removeEventListener('scroll', onContentScroll);
+    document.removeEventListener('mousemove', onMouseMove);
+    toolbar.removeEventListener('mouseenter', onToolbarEnter);
+    toolbar.removeEventListener('mouseleave', onToolbarLeave);
     content.removeEventListener('load', onContentResourceSettled, true);
     content.removeEventListener('error', onContentResourceSettled, true);
     if (contentResizeObserver) {
@@ -1201,12 +721,12 @@ export function mountShell({ root, post } = {}) {
     aaPanel.removeEventListener('change', onAaControlChange);
     tocResizerControl.destroy();
     // Task 11：分块渲染器（哨兵观察器）与 huge-mode class 一并清理，避免跨实例/跨文档残留
-    clearChunked();
+    renderer.clearChunked();
     document.body.classList.remove('huge-mode');
-    if (state.spy) {
-      state.spy.destroy();
-      state.spy = null;
-    }
+    // Task 12：位置追踪器与标题/TOC 控制器
+    stopPositionTracker();
+    tocController.destroy();
+    clearToastContainer(toast);
   }
 
   // 握手：shell 装配完成（监听器已就绪）→ 通知宿主可以推 load 了（只发一次）。

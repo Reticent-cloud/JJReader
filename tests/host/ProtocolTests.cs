@@ -5,7 +5,7 @@ namespace JingjingReader.Tests;
 
 /// <summary>
 /// Protocol：宿主→前端消息构造 + 前端→宿主消息解析（唯一协议定义处的契约测试）。
-/// 用例锁定 spec §4.4 的 14 条消息 + 本计划新增的 dirListing / shellReady（共 16 个 type）。
+/// 用例锁定 spec §4.4 的 14 条消息 + 本计划新增的 dirListing / shellReady / recent / reload（共 18 个 type）。
 /// </summary>
 public class ProtocolTests
 {
@@ -55,6 +55,44 @@ public class ProtocolTests
         Assert.Throws<ArgumentException>(() => Protocol.Load(@"C:\a.md", "k", " ", string.Empty, new AppSettings(), null));
         Assert.Throws<ArgumentNullException>(() => Protocol.Load(@"C:\a.md", "k", "https://md.local/", null!, new AppSettings(), null));
         Assert.Throws<ArgumentNullException>(() => Protocol.Load(@"C:\a.md", "k", "https://md.local/", string.Empty, null!, null));
+    }
+
+    [Fact]
+    public void Recent_lists_items_with_path_name_dir_and_openedAt()
+    {
+        var json = Protocol.Recent(new[]
+        {
+            (Path: @"C:\notes\a.md", Name: "a.md", Dir: @"C:\notes", OpenedAt: "2026-10-17T09:12:00Z"),
+            (Path: @"D:\b.md", Name: "b.md", Dir: @"D:\", OpenedAt: "2026-10-16T08:00:00Z"),
+        });
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("recent", doc.RootElement.GetProperty("type").GetString());
+        var items = doc.RootElement.GetProperty("payload").GetProperty("items");
+        Assert.Equal(2, items.GetArrayLength());
+
+        var first = items[0];
+        Assert.Equal(@"C:\notes\a.md", first.GetProperty("path").GetString());
+        Assert.Equal("a.md", first.GetProperty("name").GetString());
+        Assert.Equal(@"C:\notes", first.GetProperty("dir").GetString());
+        Assert.Equal("2026-10-17T09:12:00Z", first.GetProperty("openedAt").GetString());
+    }
+
+    [Fact]
+    public void Recent_caps_items_at_twenty()
+    {
+        var items = Enumerable.Range(0, 25)
+            .Select(index => (Path: $@"C:\{index}.md", Name: $"{index}.md", Dir: @"C:\", OpenedAt: string.Empty))
+            .ToArray();
+
+        using var doc = JsonDocument.Parse(Protocol.Recent(items));
+        Assert.Equal(20, doc.RootElement.GetProperty("payload").GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public void Recent_rejects_null_items()
+    {
+        Assert.Throws<ArgumentNullException>(() => Protocol.Recent(null!));
     }
 
     [Fact]
@@ -121,6 +159,17 @@ public class ProtocolTests
     }
 
     [Fact]
+    public void ParseInbound_reload_has_no_extra_fields()
+    {
+        var reload = Protocol.ParseInbound("""{"type":"reload"}""");
+
+        Assert.Equal("reload", reload.Type);
+        Assert.Null(reload.Key);
+        Assert.Null(reload.RelPath);
+        Assert.Null(reload.PatchJson);
+    }
+
+    [Fact]
     public void ParseInbound_extracts_fields_for_later_tasks()
     {
         var open = Protocol.ParseInbound("""{"type":"openFile","payload":{"relPath":"..\\b.md"}}""");
@@ -151,6 +200,8 @@ public class ProtocolTests
     [InlineData("toast")]
     [InlineData("assocState")]
     [InlineData("dirListing")]
+    [InlineData("recent")]
+    [InlineData("reload")]
     [InlineData("openFile")]
     [InlineData("pickFile")]
     [InlineData("pickFolder")]

@@ -3,7 +3,8 @@
 // extractFrontmatter（front matter 解析，T8）、highlight（代码高亮）、enhance（渲染后增强：复制按钮/外链）、
 // sanitizeHtml（T7 清洗出口）；Task 10 起加 TOC 侧栏（buildToc/createScrollSpy）、
 // 主题（applyTheme）、排版（applySettings/settingsPatch）与 applyCss（T4 carry-forward：CSS 注入共用）；
-// Task 11 起加大文档分块（splitBlocks/createChunkedRenderer/阈值常量/isHuge）。
+// Task 11 起加大文档分块（splitBlocks/createChunkedRenderer/阈值常量/isHuge）；
+// Task 12 起加最近文件面板（renderRecent）、位置追踪（createPositionTracker）、阅读 chrome（updateChrome）与 toast。
 // 浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
 import {
   appendLinkDefinitions,
@@ -22,7 +23,9 @@ import { enhance } from './enhance.js';
 import { highlight } from './highlight.js';
 import { sanitizeHtml } from './sanitize.js';
 import { applySettings, settingsPatch } from './settings.js';
+import { createPositionTracker, showToast, updateChrome } from './shell/chrome.js';
 import { mountShell } from './shell/main.js';
+import { renderRecent } from './shell/recent.js';
 import { applyTheme } from './theme.js';
 import { buildToc, createScrollSpy } from './toc.js';
 
@@ -79,6 +82,11 @@ export function install(target = {}) {
     utf8Length,
     extractLinkDefinitions,
     appendLinkDefinitions,
+    // Task 12：最近文件面板、位置追踪、阅读 chrome（进度条/回到顶部）与可点击 toast
+    renderRecent,
+    createPositionTracker,
+    updateChrome,
+    showToast,
     // T4 carry-forward：CSS 注入与 shell 共用同一实现（浏览器 boot 时已调用一次）
     applyCss,
   };

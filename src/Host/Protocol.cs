@@ -3,12 +3,15 @@ using System.Text.Json;
 namespace JingjingReader;
 
 /// <summary>
-/// 前后端 JSON 消息的唯一协议定义处（spec §4.4 的 14 条 + 本计划新增的 dirListing / shellReady）。
+/// 前后端 JSON 消息的唯一协议定义处（spec §4.4 的 14 条 + 本计划新增的 dirListing / shellReady / recent / reload）。
 /// 消息体统一为 <c>{type, payload}</c>：宿主→前端用 <see cref="Load"/> 等构造方法生成 JSON 字符串，
 /// 再用 <c>PostWebMessageAsJson</c> 推送；前端→宿主用 <see cref="ParseInbound"/> 解析。
 /// </summary>
 public static class Protocol
 {
+    /// <summary>最近文件列表上限（Global Constraints：20 条）。</summary>
+    private const int MaxRecent = 20;
+
     // 消息里的字段名统一 camelCase（与持久化 JSON、前端 JS 习惯一致）。
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -26,6 +29,7 @@ public static class Protocol
         "toast",
         "assocState",
         "dirListing",
+        "recent",
 
         // 前端 → 宿主
         "openFile",
@@ -40,6 +44,7 @@ public static class Protocol
         "openDefaultApps",
         "renderDone",
         "shellReady",
+        "reload",
     };
 
     /// <summary>构造 <c>load</c>：宿主在收到前端 <c>shellReady</c> 后推送文档内容。</summary>
@@ -72,6 +77,21 @@ public static class Protocol
     /// <summary>构造 <c>assocState</c>：.md 文件关联状态（Task 16 使用）。</summary>
     public static string AssocState(bool registered, bool isDefault)
         => Serialize("assocState", new { registered, isDefault });
+
+    /// <summary>
+    /// 构造 <c>recent</c>：最近文件列表（最新在前，最多 20 条；空白启动页与标题栏菜单共用）。
+    /// 显示名/目录在宿主侧算好，前端只负责展示（避免前端处理 Windows 路径差异）。
+    /// </summary>
+    public static string Recent(IEnumerable<(string Path, string Name, string Dir, string OpenedAt)> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        var entries = items
+            .Take(MaxRecent)
+            .Select(item => new { path = item.Path, name = item.Name, dir = item.Dir, openedAt = item.OpenedAt })
+            .ToList();
+        return Serialize("recent", new { items = entries });
+    }
 
     /// <summary>
     /// 解析前端发来的消息。未知 type、非 JSON 对象、字段类型不符都抛 <see cref="FormatException"/>，

@@ -21,7 +21,7 @@
   display: none;
 }
 
-/* 顶部悬浮工具条：固定在视口顶部并浮在正文之上（显示/隐藏逻辑归 Task 12，本任务只给样式） */
+/* 顶部悬浮工具条：固定在视口顶部并浮在正文之上（显示/隐藏逻辑见 Task 12 的 shell，默认隐藏） */
 #toolbar {
   position: fixed;
   top: 0;
@@ -417,4 +417,157 @@ nav.toc-inline li[data-level='6'] {
 #content .chunk-sentinel {
   height: 1px;
   overflow: hidden;
+}
+
+/* ── Task 12：悬浮工具条显隐、阅读进度条、回到顶部、最近文件面板、toast action ── */
+
+/* 工具条默认隐藏：鼠标进入窗口顶部 40px 或按 Alt 显示（shell 写 #app[data-toolbar]） */
+#app[data-toolbar='hidden'] #toolbar {
+  display: none;
+}
+
+/* 阅读进度条：视口顶部 3px，内层 #progress-bar 的 width 由 updateChrome 按滚动比例写入 */
+#progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 35; /* 高于工具条（30），隐藏时也提示进度 */
+  height: 3px;
+  background: transparent;
+  pointer-events: none;
+}
+
+#progress-bar {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* 回到顶部：滚离顶部 > 400px 时由 shell 去掉 hidden */
+#back-to-top {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  box-shadow: var(--panel-shadow);
+  cursor: pointer;
+}
+
+#back-to-top:hover,
+#back-to-top:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+/* [hidden] 必须显式压过上面的 display（UA 样式表优先级不够时属性会失效） */
+#back-to-top[hidden] {
+  display: none;
+}
+
+/* 空白启动页的最近文件面板 */
+#content .recent-panel {
+  max-width: 640px;
+  margin: 8vh auto 0;
+  padding: 0 4px;
+}
+
+#content .recent-title {
+  margin: 0 0 12px;
+  font-size: 1.4em;
+  font-weight: 650;
+}
+
+#content .recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#content .recent-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-auto-rows: auto;
+  gap: 2px 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#content .recent-item:hover,
+#content .recent-item:focus-visible {
+  border-color: var(--accent);
+  background: var(--bg-muted);
+  outline: none;
+}
+
+#content .recent-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#content .recent-dir {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#content .recent-time {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--fg-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#content .recent-empty {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+#content .recent-hint {
+  margin: 16px 0 0;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+/* toast 可点击 action（「已回到上次位置 · 回到顶部」） */
+#toast .toast {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+#toast .toast-action {
+  appearance: none;
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#toast .toast-action:hover {
+  background: rgba(255, 255, 255, 0.16);
 }

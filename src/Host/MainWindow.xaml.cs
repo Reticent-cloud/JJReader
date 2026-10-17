@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -160,6 +161,52 @@ public partial class MainWindow : Window
         {
             Post(Protocol.Toast("该文件不是文本文件，已拒绝渲染", "warn"));
         }
+
+        // 成功读取（含二进制拒绝渲染）都记入最近文件：空白启动页与 Alt+←/→ 依赖它。
+        RememberRecent(document);
+    }
+
+    /// <summary>把当前文档写入 recent.json（失败只记日志），随后把最新列表推给前端。</summary>
+    private void RememberRecent(DocumentRead document)
+    {
+        try
+        {
+            _store.PushRecent(document.Path, document.Size, DateTimeOffset.UtcNow);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            DebugLog.Write($"写入最近文件失败 path={document.Path}：{exception.Message}");
+        }
+
+        PostRecent();
+    }
+
+    /// <summary>
+    /// 把最近文件（最新在前，最多 20 条）推给前端：空白启动时渲染「最近文件」面板，
+    /// 打开文档后供 Alt+←/→ 切换。显示名/目录在宿主侧算好，前端不做路径解析。
+    /// </summary>
+    private void PostRecent()
+    {
+        if (!_shellReady)
+        {
+            return;
+        }
+
+        try
+        {
+            var items = _store.LoadRecent()
+                .Select(entry => (
+                    Path: entry.Path,
+                    Name: Path.GetFileName(entry.Path),
+                    Dir: Path.GetDirectoryName(entry.Path) ?? string.Empty,
+                    OpenedAt: entry.OpenedAt))
+                .ToList();
+            Post(Protocol.Recent(items));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            DebugLog.Write($"读取最近文件失败：{exception.Message}");
+        }
     }
 
     /// <summary>
@@ -263,6 +310,8 @@ public partial class MainWindow : Window
                 _shellReady = true;
                 DebugLog.Write("shellReady");
                 TryPushPendingDocument();
+                // 无论是否推了 load 都发最近文件：空白启动页要靠它渲染面板。
+                PostRecent();
                 break;
 
             case "renderDone":
@@ -276,10 +325,124 @@ public partial class MainWindow : Window
                 SavePosition(message);
                 break;
 
+            case "saveSettings":
+                SaveSettings(message);
+                break;
+
+            case "openFile":
+                OpenFile(message.RelPath);
+                break;
+
+            case "reload":
+                ReloadCurrentDocument();
+                break;
+
+            case "showInFolder":
+                ShowInFolder(message.Path);
+                break;
+
             default:
-                // 其余契约消息（openFile/pickFile/saveSettings/...）本任务只解析记录，Task 10+ 再实现。
+                // 其余契约消息（pickFile/pickFolder/listDir/exportPdf/readyToPrint/openDefaultApps）
+                // 属 Task 13–16，本任务只记日志。
                 DebugLog.Write($"忽略消息 type={message.Type}");
                 break;
+        }
+    }
+
+    /// <summary>saveSettings{patch}：把补丁合并进当前设置后原子落盘（只接受类型匹配的已知字段）。</summary>
+    private void SaveSettings(InboundMessage message)
+    {
+        if (string.IsNullOrWhiteSpace(message.PatchJson))
+        {
+            DebugLog.Write("忽略 saveSettings：缺少 patch");
+            return;
+        }
+
+        var current = _store.LoadSettings();
+        var merged = SettingsPatch.Apply(current, message.PatchJson);
+        _store.SaveSettings(merged);
+        DebugLog.Write($"saveSettings patch={message.PatchJson}");
+    }
+
+    /// <summary>
+    /// openFile：绝对路径直接使用；相对路径相对当前文档目录解析（越界拒绝）。
+    /// 最近文件面板与 Alt+←/→ 传绝对路径，wikilink/文件树的相对路径（Task 13）复用同一入口。
+    /// </summary>
+    private void OpenFile(string? relPath)
+    {
+        if (string.IsNullOrWhiteSpace(relPath))
+        {
+            DebugLog.Write("忽略 openFile：缺少 relPath");
+            Post(Protocol.Toast("无法打开文件：缺少路径", "error"));
+            return;
+        }
+
+        string? target = null;
+        try
+        {
+            if (Path.IsPathFullyQualified(relPath))
+            {
+                target = FileHost.NormalizePath(relPath);
+            }
+            else if (_currentDocument is { } document)
+            {
+                var directory = Path.GetDirectoryName(document.Path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    target = FileHost.ResolveInside(directory, relPath);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            DebugLog.Write($"openFile 路径非法 relPath={relPath}：{exception.Message}");
+        }
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            DebugLog.Write($"openFile 无法解析 relPath={relPath}");
+            Post(Protocol.Toast("无法打开文件：路径不在当前文档目录内", "error"));
+            return;
+        }
+
+        OpenDocument(target);
+    }
+
+    /// <summary>reload（F5）：重新读取当前文档并推送；位置按新文件的 key 重新查找（文件被外部修改则回到顶部）。</summary>
+    private void ReloadCurrentDocument()
+    {
+        if (_currentDocument is not { } document)
+        {
+            DebugLog.Write("忽略 reload：当前没有打开的文档");
+            return;
+        }
+
+        PushDocument(document.Path);
+    }
+
+    /// <summary>showInFolder：资源管理器定位到文件（失败只记日志，不弹窗）。</summary>
+    private static void ShowInFolder(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            DebugLog.Write("忽略 showInFolder：缺少 path");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{path}\"",
+                UseShellExecute = true,
+            });
+            DebugLog.Write($"showInFolder path={path}");
+        }
+        catch (Exception exception)
+        {
+            // UI 边界：explorer 启动失败（路径含非法字符/被策略阻止）只记日志。
+            DebugLog.Write($"showInFolder 失败 path={path}：{exception.Message}");
         }
     }
 
