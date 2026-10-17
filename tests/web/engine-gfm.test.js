@@ -149,10 +149,15 @@ describe('代码复制按钮', () => {
   it('data-code 属性级转义后能还原原始代码（& < > " \' 与换行）', () => {
     const code = '<a href="x">A & B</a>\nlet s = \'q\';';
     const markdown = `\`\`\`html\n${code}\n\`\`\``;
-    // 渲染出的 HTML 字符串：属性值必须整段转义，不能把代码里的 <a 拆成标签
+    // T7 起 renderMarkdown 出口经 DOMPurify 重新序列化：属性值的转义写法不再与手写 escapeAttr 一一对应
+    // （例如属性里的 < > 不再写成 &lt;/&gt;），这里只断言「属性还在、且没有从属性值里漏出元素」，
+    // 原始代码的保真由下面的 dataset.code 断言（DOM 解析后的语义）保证。
     const raw = html(markdown);
-    expect(raw).toContain('data-code="&lt;a href=&quot;x&quot;&gt;A &amp; B&lt;/a&gt;');
-    expect(raw).toContain('&#39;q&#39;');
+    expect(raw).toContain('data-code="');
+    expect(raw).not.toContain('data-code="&lt;a'); // 不能双重转义（否则 dataset.code 拿到的是实体串）
+    const rawRoot = document.createElement('div');
+    rawRoot.innerHTML = raw;
+    expect(rawRoot.querySelector('a')).toBeNull();
 
     // DOM 解析后：dataset.code 原样还原（含换行），且没有从属性值里漏出任何元素
     const root = renderRoot(markdown);

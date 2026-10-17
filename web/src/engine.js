@@ -1,13 +1,14 @@
-// 鲸鲸阅读器渲染引擎：markdown-it 单例 + 标题 id + 图片相对路径改写 + GFM 扩展语法与代码高亮。
+// 鲸鲸阅读器渲染引擎：markdown-it 单例 + 标题 id + 图片相对路径改写 + GFM 扩展语法与代码高亮 + 出口清洗。
 // 单例让 renderMarkdown 与 extractHeadings 对同一文档产生完全一致的标题 id（共用 slugify 分配逻辑）。
 // Task 6 起装配脚注/任务清单/emoji 插件并自定义 fence 渲染器（代码高亮 + 复制按钮）；
-// 尚不清洗 HTML（Task 7 加 DOMPurify，故 html:true 目前原样保留内嵌 HTML）。
+// Task 7 起 renderMarkdown 出口统一过 sanitizeHtml（DOMPurify 白名单），内嵌 HTML 不再原样透传。
 
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
 import taskLists from 'markdown-it-task-lists';
 import { full as emoji } from 'markdown-it-emoji';
 import { highlight } from './highlight.js';
+import { sanitizeHtml } from './sanitize.js';
 
 /** env 中保存「本文档已占用标题 id」的键：每次渲染/提取用新 Set，保证同一文档的 id 稳定可复现。 */
 const USED_IDS_KEY = '__jjHeadingUsedIds';
@@ -163,11 +164,12 @@ md.renderer.rules.fence = (tokens, idx) => {
 /**
  * 渲染 markdown 为 HTML 字符串。
  * env 可选 { baseUrl }：相对图片 src 按 baseUrl 解析；未给 baseUrl 时保留原样。
+ * 出口统一过 sanitizeHtml（Task 7）：Markdown 内嵌 HTML 必须先经 DOMPurify 白名单才能进 DOM。
  */
 export function renderMarkdown(markdown, env = {}) {
   // 拷贝一份 env 再挂内部状态：不污染调用方对象，同时让核心规则拿到本文档的 usedIds。
   const renderEnv = { ...env, [USED_IDS_KEY]: new Set() };
-  return md.render(String(markdown ?? ''), renderEnv);
+  return sanitizeHtml(md.render(String(markdown ?? ''), renderEnv));
 }
 
 /**
