@@ -173,3 +173,8 @@ pre code {
 .hljs-strong {
   font-weight: 600;
 }
+
+/* T11 大文件模式：关闭代码高亮后不再套 hljs 主题色，代码块用正文颜色（结构/复制按钮不变） */
+body.huge-mode .hljs {
+  color: inherit;
+}

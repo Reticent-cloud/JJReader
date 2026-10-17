@@ -248,6 +248,10 @@ export function mountShell({ root, post } = {}) {
     activeLink: null,
     // 最近一次 extractHeadings 的标题数（renderDone.tocCount 复用，避免为统计再多 parse 一次）
     extractedCount: 0,
+    // Task 11：大文件模式标记（关闭高亮、停用滚动联动）、分块渲染器句柄、滚动联动开关
+    huge: false,
+    spyEnabled: true,
+    chunked: null,
   };
 
   /**
@@ -299,24 +303,21 @@ export function mountShell({ root, post } = {}) {
    * 因此渲染后必须按 extractHeadings 的顺序把缺失/为空的 id 重新赋回（属性级兜底，不是只改提取列表）。
    * 配对口径：按 DOM 顺序 + 文本匹配（原始 HTML 标题不在 extractHeadings 里，不能按索引硬配）；
    * 实在配不上（纯标点标题等空 slug）时生成 section-N 兜底 id。TOC 数据一律取自渲染后的 DOM。
-   * @returns {{id: string, text: string, level: number, top: number}[]}
+   * Task 11：extracted 由调用方传入——分块渲染只对全文调用一次 extractHeadings，避免每块重复解析全文；
+   * 重复调用幂等（已渲染块保留既有 id，新块接着游标继续配对）。重复 id 视为缺失重新配对：
+   * 分块渲染时每块独立 parse，同名标题在不同块里会拿到相同 id，必须在这里改成全文唯一的 id。
+   * @param {{id: string, text: string, level: number}[]} extracted 全文标题列表
+   * @returns {{id: string, text: string, level: number, top: number, hidden: boolean}[]}
    */
-  function assignHeadingIds(markdown) {
+  function assignHeadingIds(extracted) {
     const elements = content.querySelectorAll('h1, h2, h3, h4, h5, h6');
-
-    const engine = globalThis.JJ;
-    let extracted = [];
-    if (engine && typeof engine.extractHeadings === 'function') {
-      const parsed = engine.extractHeadings(markdown);
-      if (Array.isArray(parsed)) {
-        extracted = parsed;
-      }
-    }
+    const fullHeadings = Array.isArray(extracted) ? extracted : [];
     // renderDone.tocCount 复用这次提取结果（T9 carry-forward：不为统计再 parse 一遍）
-    state.extractedCount = extracted.length;
+    state.extractedCount = fullHeadings.length;
     if (elements.length === 0) {
       return [];
     }
+    const engine = globalThis.JJ;
     const slugify = engine && typeof engine.slugify === 'function' ? engine.slugify : null;
 
     // 已占用的 id：来自清洗后仍保留 id 的标题（重赋前先登记，避免兜底生成撞车）。
@@ -326,6 +327,9 @@ export function mountShell({ root, post } = {}) {
         used.add(element.id);
       }
     }
+    // 本次扫描中已保留的 id；再遇到同一个 id 说明是重复（分块渲染独立 parse / 原始 HTML 撞车），
+    // 按「缺失」处理并重新配对，保证 TOC 链接（#id-2）能定位到元素。
+    const keptIds = new Set();
 
     function fallbackId(headings) {
       let suffix = headings.length + 1;
@@ -342,10 +346,15 @@ export function mountShell({ root, post } = {}) {
     for (const element of elements) {
       const text = (element.textContent || '').trim();
       let id = element.id;
+      if (id && keptIds.has(id)) {
+        // 重复 id：清掉后走下面「缺失 id」的配对分支，重新分配全文唯一 id
+        id = '';
+        element.removeAttribute('id');
+      }
       if (id) {
         // 已有 id：把 extractHeadings 游标推进到同名项之后，保持顺序配对（原始 HTML 标题会自然跳过）
-        for (let i = cursor; i < extracted.length; i += 1) {
-          const candidate = extracted[i];
+        for (let i = cursor; i < fullHeadings.length; i += 1) {
+          const candidate = fullHeadings[i];
           if (candidate && typeof candidate === 'object' && candidate.id === id) {
             cursor = i + 1;
             break;
@@ -354,8 +363,8 @@ export function mountShell({ root, post } = {}) {
       } else {
         // 缺失 id：按顺序找文本一致、id 非空且未被占用的提取项（title/body 等被清洗剥掉的情形）
         let matched = -1;
-        for (let i = cursor; i < extracted.length; i += 1) {
-          const candidate = extracted[i];
+        for (let i = cursor; i < fullHeadings.length; i += 1) {
+          const candidate = fullHeadings[i];
           if (!candidate || typeof candidate !== 'object') {
             continue;
           }
@@ -370,7 +379,7 @@ export function mountShell({ root, post } = {}) {
           }
         }
         if (matched >= 0) {
-          id = extracted[matched].id;
+          id = fullHeadings[matched].id;
           cursor = matched + 1;
         } else if (slugify) {
           id = slugify(text, used) || fallbackId(headings);
@@ -379,6 +388,7 @@ export function mountShell({ root, post } = {}) {
         }
         element.id = id;
       }
+      keptIds.add(id);
       used.add(id);
       headings.push({
         id,
@@ -389,6 +399,21 @@ export function mountShell({ root, post } = {}) {
       });
     }
     return headings;
+  }
+
+  /**
+   * 对全文提取标题（分块渲染也只在开始时调用一次；块内渲染只做 id 兜底，不再重复解析全文）。
+   * @returns {{id: string, text: string, level: number}[]}
+   */
+  function collectExtracted(markdown) {
+    const engine = globalThis.JJ;
+    if (engine && typeof engine.extractHeadings === 'function') {
+      const parsed = engine.extractHeadings(markdown);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+    return [];
   }
 
   // 标题 top 快照只在渲染时采集一次，以下场景会重排而失效：字号/行距/行宽变化（Aa 面板/快捷键）、
@@ -480,7 +505,10 @@ export function mountShell({ root, post } = {}) {
     state.activeLink = current;
   }
 
-  /** 重建 TOC 与滚动联动（无标题时显示空态提示，不创建 spy）。 */
+  /**
+   * 重建 TOC 与滚动联动（无标题时显示空态提示，不创建 spy）。
+   * Task 11：大文件模式（state.spyEnabled === false）只生成 TOC，不启用滚动联动。
+   */
   function renderToc(headings) {
     state.headings = headings;
     state.activeLink = null;
@@ -496,7 +524,9 @@ export function mountShell({ root, post } = {}) {
       toc.append(empty);
       return;
     }
-    rebuildSpy(headings);
+    if (state.spyEnabled) {
+      rebuildSpy(headings);
+    }
   }
 
   /** 主题：写 data-theme（system 跟随系统）并同步按钮文案。 */
@@ -625,6 +655,8 @@ export function mountShell({ root, post } = {}) {
    * TOC 点击：阻止默认跳转，滚动到目标标题。
    * 位置以元素**实时** offsetTop 为准（快照可能因重排过期：即使某次刷新漏了时机也不会跳错），
    * 找不到元素时才退回标题快照 heading.top。
+   * Task 11：分块模式下目标所在块可能还没渲染——先 renderAll() 再重试定位；huge 模式一律先 renderAll。
+   * renderAll 后仍找不到（id 被清洗换名等）才回退快照，快照也无效（未渲染标题的 Infinity）则不滚错位置。
    */
   function onTocClick(event) {
     const target = event.target;
@@ -638,12 +670,30 @@ export function mountShell({ root, post } = {}) {
     event.preventDefault();
     const href = link.getAttribute('href') || '';
     const id = href.slice(1);
+    if (!id) {
+      return;
+    }
+
+    let element = findHeadingElement(id);
+    if (state.chunked && (state.huge || !element)) {
+      try {
+        state.chunked.renderAll();
+      } catch {
+        // 渲染剩余块失败时保留已渲染内容，下面按快照尽力定位
+      }
+      // 新块的标题 id/enhance 已由 onChunkRendered 处理；这里刷新标题 top 让快照可用
+      refreshHeadingTops();
+      element = findHeadingElement(id);
+    }
+
     const heading = state.headings.find((item) => item.id === id);
-    const element = findHeadingElement(id);
     if (!heading && !element) {
       return;
     }
     const baseTop = element ? readHeadingTop(element) : heading.top;
+    if (!Number.isFinite(baseTop)) {
+      return; // 目标仍未渲染且没有可用位置：宁可不动，也不滚到错误位置
+    }
     const top = baseTop - TOC_TOOLBAR_OFFSET;
     if (typeof content.scrollTo === 'function') {
       content.scrollTo({ top, behavior: 'smooth' });
@@ -753,33 +803,155 @@ export function mountShell({ root, post } = {}) {
     }
   }
 
+  /** 渲染后增强（幂等；增强失败不能让已经显示出来的正文消失）。 */
+  function enhanceContent() {
+    const engine = globalThis.JJ;
+    if (!engine || typeof engine.enhance !== 'function') {
+      return;
+    }
+    try {
+      engine.enhance(content, { baseUrl: state.baseUrl });
+    } catch {
+      // 增强失败（复制按钮/图片占位）不能影响已经渲染好的正文
+    }
+  }
+
+  /** 拆掉上一次的分块渲染器（断开哨兵观察器）；下次 load 前先调用，避免观察器泄漏到新文档。 */
+  function clearChunked() {
+    if (!state.chunked) {
+      return;
+    }
+    try {
+      state.chunked.destroy();
+    } catch {
+      // 断开失败不影响新文档渲染
+    }
+    state.chunked = null;
+  }
+
   /**
-   * 正文渲染：优先走 JJ.renderMarkdown（与宿主共用同一 markdown-it 实现，baseUrl 用于解析相对图片）。
+   * 大文件模式开关（Task 11）：body.huge-mode 供 CSS 关闭高亮视觉；spyEnabled=false 停用滚动联动。
+   * 进入时发送 toast（宿主 post + 本地提示各一次），切回普通文档时必须移除 class，否则普通文档也停在高亮关闭样式。
+   */
+  function applyHugeMode(huge) {
+    state.huge = huge;
+    state.spyEnabled = !huge;
+    if (!huge) {
+      document.body.classList.remove('huge-mode');
+      return;
+    }
+    document.body.classList.add('huge-mode');
+    send('toast', { text: '大文件模式：已关闭代码高亮', level: 'warn' });
+    showToast('大文件模式：已关闭代码高亮', 'warn');
+  }
+
+  /**
+   * 一次性渲染（普通文档，或分块渲染失败时的兜底）：
+   * innerHTML → front matter 属性块 → 标题 id 兜底 + 建 TOC → enhance。
+   */
+  function renderSingle(markdown, huge, engine) {
+    content.innerHTML = engine.renderMarkdown(markdown, {
+      baseUrl: state.baseUrl,
+      disableHighlight: huge,
+    });
+    mountFrontmatter(markdown);
+    const extracted = collectExtracted(markdown);
+    const headings = assignHeadingIds(extracted);
+    renderToc(headings);
+    enhanceContent();
+    return headings;
+  }
+
+  /**
+   * 分块渲染（Task 11 大文档）：全文只 extractHeadings 一次；首屏只渲染预算内块，其余由哨兵懒加载。
+   * 每追加一块：首块挂 front matter 属性块 → 标题 id 兜底（extract 结果复用，不重复解析全文）→ enhance → 刷新标题 top。
+   * TOC 基于全文标题；未渲染标题的 top 记为 Infinity（滚动联动跳过），渲染后回填真实位置。
+   */
+  function renderChunked(markdown, huge, engine) {
+    const split = engine.splitBlocks(markdown);
+    const blocks = split && Array.isArray(split.blocks) ? split.blocks : [];
+    if (blocks.length === 0) {
+      return renderSingle(markdown, huge, engine);
+    }
+    const extracted = collectExtracted(markdown);
+    state.extractedCount = extracted.length;
+    const tocHeadings = extracted.map((heading) => ({
+      ...heading,
+      top: Number.POSITIVE_INFINITY,
+      hidden: false,
+    }));
+
+    content.replaceChildren();
+    state.headings = tocHeadings;
+    renderToc(tocHeadings);
+
+    let frontmatterMounted = false;
+    const initialBytes = Number.isFinite(engine.INITIAL_BYTES) ? engine.INITIAL_BYTES : undefined;
+    try {
+      const renderer = engine.createChunkedRenderer({
+        container: content,
+        blocks,
+        initialBytes,
+        observerRoot: content,
+        render: (blockText) =>
+          engine.renderMarkdown(blockText, {
+            baseUrl: state.baseUrl,
+            // 大文件模式关闭高亮：围栏只输出转义纯文本，省掉 highlight.js 的首屏开销
+            disableHighlight: huge,
+            // T9 carry-forward：分块后 [TOC] 仍要列出全文标题（不是只列当前块）
+            tocHeadings: extracted,
+          }),
+        onChunkRendered: () => {
+          if (!frontmatterMounted) {
+            frontmatterMounted = true;
+            mountFrontmatter(markdown);
+          }
+          assignHeadingIds(extracted);
+          enhanceContent();
+          // 新块撑高正文：把已渲染标题的实时 top 写回快照（huge 模式无 spy，空操作）
+          refreshHeadingTops();
+        },
+      });
+      state.chunked = renderer;
+      renderer.start();
+    } catch {
+      // 分块渲染失败绝不白屏：拆掉半成品退回一次性渲染
+      clearChunked();
+      content.replaceChildren();
+      return renderSingle(markdown, huge, engine);
+    }
+    return state.headings;
+  }
+
+  /**
+   * 正文渲染入口：优先走 JJ.renderMarkdown（与宿主共用同一 markdown-it 实现，baseUrl 用于解析相对图片）。
    * 每次渲染都传新的 env 字面量（T8 carry-forward：env 会被写入 frontmatter，复用会串文档）。
-   * 顺序：innerHTML → front matter 属性块 → 标题 id 兜底 + 建 TOC → JJ.enhance（T10 决策 3：兜底在 enhance 之前）。
-   * 引擎缺失（打包缺失/加载失败）时降级为 escapeHtml + <pre>，保证正文区永远不白屏。
+   * Task 11 起按大小切换策略：> CHUNK_THRESHOLD 或 isHuge → 分块（首屏 INITIAL_BYTES，huge 关高亮/停联动）；
+   * 否则保持原一次性渲染。引擎缺失（打包缺失/加载失败）时降级为 escapeHtml + <pre>，保证正文区永远不白屏。
    * @returns {{id: string, text: string, level: number, top: number}[]} 渲染后 DOM 的标题列表
    */
   function render(markdown) {
     const engine = globalThis.JJ;
-    if (engine && typeof engine.renderMarkdown === 'function') {
-      content.innerHTML = engine.renderMarkdown(markdown, { baseUrl: state.baseUrl });
-      mountFrontmatter(markdown);
-      const headings = assignHeadingIds(markdown);
-      renderToc(headings);
-      if (typeof engine.enhance === 'function') {
-        try {
-          engine.enhance(content, { baseUrl: state.baseUrl });
-        } catch {
-          // 增强失败（复制按钮/图片占位）不能影响已经渲染好的正文
-        }
-      }
-      return headings;
+    if (!engine || typeof engine.renderMarkdown !== 'function') {
+      clearChunked();
+      applyHugeMode(false);
+      content.innerHTML = `<pre class="jj-fallback">${escapeHtml(markdown)}</pre>`;
+      state.extractedCount = 0;
+      renderToc([]);
+      return [];
     }
-    content.innerHTML = `<pre class="jj-fallback">${escapeHtml(markdown)}</pre>`;
-    state.extractedCount = 0;
-    renderToc([]);
-    return [];
+
+    clearChunked();
+    const huge = typeof engine.isHuge === 'function' && engine.isHuge(markdown) === true;
+    applyHugeMode(huge);
+
+    const threshold = Number.isFinite(engine.CHUNK_THRESHOLD) ? engine.CHUNK_THRESHOLD : 512 * 1024;
+    const canChunk =
+      typeof engine.splitBlocks === 'function' && typeof engine.createChunkedRenderer === 'function';
+    if (canChunk && markdown.length > 0 && (huge || markdown.length > threshold)) {
+      return renderChunked(markdown, huge, engine);
+    }
+    return renderSingle(markdown, huge, engine);
   }
 
   function renderLoad(payload) {
@@ -910,6 +1082,9 @@ export function mountShell({ root, post } = {}) {
     aaPanel.removeEventListener('input', onAaControlChange);
     aaPanel.removeEventListener('change', onAaControlChange);
     tocResizerControl.destroy();
+    // Task 11：分块渲染器（哨兵观察器）与 huge-mode class 一并清理，避免跨实例/跨文档残留
+    clearChunked();
+    document.body.classList.remove('huge-mode');
     if (state.spy) {
       state.spy.destroy();
       state.spy = null;

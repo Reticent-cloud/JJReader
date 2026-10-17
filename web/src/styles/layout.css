@@ -412,3 +412,9 @@ nav.toc-inline li[data-level='6'] {
   background: #cf222e;
   color: #ffffff;
 }
+
+/* T11 分块渲染懒加载哨兵：只占 1px，交给 IntersectionObserver 触发下一块；不参与排版 */
+#content .chunk-sentinel {
+  height: 1px;
+  overflow: hidden;
+}

@@ -2,8 +2,18 @@
 // 当前成员：version、mountShell、renderMarkdown、extractHeadings、slugify（标题锚点 id 生成）、
 // extractFrontmatter（front matter 解析，T8）、highlight（代码高亮）、enhance（渲染后增强：复制按钮/外链）、
 // sanitizeHtml（T7 清洗出口）；Task 10 起加 TOC 侧栏（buildToc/createScrollSpy）、
-// 主题（applyTheme）、排版（applySettings/settingsPatch）与 applyCss（T4 carry-forward：CSS 注入共用）。
+// 主题（applyTheme）、排版（applySettings/settingsPatch）与 applyCss（T4 carry-forward：CSS 注入共用）；
+// Task 11 起加大文档分块（splitBlocks/createChunkedRenderer/阈值常量/isHuge）。
 // 浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
+import {
+  CHUNK_THRESHOLD,
+  createChunkedRenderer,
+  HUGE_THRESHOLD,
+  INITIAL_BYTES,
+  isHuge,
+  MAX_BLOCK_BYTES,
+  splitBlocks,
+} from './chunk.js';
 import { extractFrontmatter, extractHeadings, renderMarkdown, slugify } from './engine.js';
 import { enhance } from './enhance.js';
 import { highlight } from './highlight.js';
@@ -54,6 +64,14 @@ export function install(target = {}) {
     applyTheme,
     applySettings,
     settingsPatch,
+    // Task 11：大文档分块渲染与大文件模式
+    CHUNK_THRESHOLD,
+    INITIAL_BYTES,
+    MAX_BLOCK_BYTES,
+    HUGE_THRESHOLD,
+    splitBlocks,
+    isHuge,
+    createChunkedRenderer,
     // T4 carry-forward：CSS 注入与 shell 共用同一实现（浏览器 boot 时已调用一次）
     applyCss,
   };

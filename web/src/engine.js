@@ -3,7 +3,8 @@
 // Task 6 起装配脚注/任务清单/emoji 插件并自定义 fence 渲染器（代码高亮 + 复制按钮）；
 // Task 7 起 renderMarkdown 出口统一过 sanitizeHtml（DOMPurify 白名单），内嵌 HTML 不再原样透传；
 // Task 8 起装配笔记体扩展语法（front matter / wikilink / 附件 / ==高亮== / %%注释%%，见 src/ext/）；
-// Task 9 起装配 [TOC] 内联目录（预扫描标题 → env.tocHtml → 块级占位规则，见 src/ext/toc-placeholder.js）。
+// Task 9 起装配 [TOC] 内联目录（预扫描标题 → env.tocHtml → 块级占位规则，见 src/ext/toc-placeholder.js）；
+// Task 11 起支持 env.disableHighlight（大文件模式关闭代码高亮）与 env.tocHeadings（分块渲染时 [TOC] 仍用全文标题）。
 
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
@@ -39,6 +40,11 @@ const ATTR_ESCAPE_RE = /[&<>"']/g;
 
 /** HTML 属性级转义：& < > " ' 全转（引号内的语言串/代码原样还原）。 */
 function escapeAttr(text) {
+  return String(text ?? '').replace(ATTR_ESCAPE_RE, (ch) => ATTR_ESCAPE_MAP[ch]);
+}
+
+/** HTML 文本转义（关闭高亮的代码块按纯文本输出；文本里多转引号无副作用）。 */
+function escapeHtml(text) {
   return String(text ?? '').replace(ATTR_ESCAPE_RE, (ch) => ATTR_ESCAPE_MAP[ch]);
 }
 
@@ -167,26 +173,31 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
 // 代码围栏渲染（Task 6）：高亮 + 复制按钮。
 // 固定结构：<div class="code-wrap"><pre><code class="hljs language-x">…</code></pre><button class="copy" data-code="…">复制</button></div>
 // data-code 存原始代码（属性级转义，enhance.js 用 btn.dataset.code 取回）；高亮失败/未知语言时 highlight() 已降级为转义纯文本。
-md.renderer.rules.fence = (tokens, idx) => {
+// Task 11：env.disableHighlight === true（大文件模式）时只输出转义纯文本——不调用 highlight.js（省首屏耗时）、
+// 不产生 hljs-* token span，但复制按钮结构与 class 保持不变（enhance 仍能绑定复制事件）。
+md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const token = tokens[idx];
   // info 形如 "js" 或 "js title=..."：只取第一个词当语言（与 markdown-it 默认 renderer 口径一致）
   const info = token.info ? token.info.trim() : '';
   const lang = info.split(/\s+/)[0] || '';
   const code = token.content;
-  const highlighted = highlight(code, lang);
+  const disableHighlight = Boolean(env && env.disableHighlight === true);
+  const body = disableHighlight ? escapeHtml(code) : highlight(code, lang);
   const codeClass = lang ? `hljs language-${escapeAttr(lang)}` : 'hljs';
   return (
-    `<div class="code-wrap"><pre><code class="${codeClass}">${highlighted}</code></pre>` +
+    `<div class="code-wrap"><pre><code class="${codeClass}">${body}</code></pre>` +
     `<button class="copy" type="button" data-code="${escapeAttr(code)}">复制</button></div>\n`
   );
 };
 
 /**
  * 渲染 markdown 为 HTML 字符串。
- * env 可选 { baseUrl, frontmatter }：
+ * env 可选 { baseUrl, frontmatter, disableHighlight, tocHeadings }：
  *   - baseUrl：相对图片 src 按 baseUrl 解析；未给 baseUrl 时保留原样；
  *   - frontmatter：调用方未提供（undefined/null）时，把本文档的解析结果写回 env.frontmatter（T9 的「属性」折叠块读取）；
- *     调用方显式提供时原样保留，不被文档内容覆盖。
+ *     调用方显式提供时原样保留，不被文档内容覆盖；
+ *   - disableHighlight：true 时围栏代码块只输出转义纯文本（大文件模式，省高亮耗时）；
+ *   - tocHeadings：分块渲染时由调用方传入全文标题列表，[TOC] 内联目录据此生成（否则只扫当前块，会缺后续标题）。
  * 含独占行 [TOC] 时先做一次标题预扫描（extractHeadings），把目录 HTML 放进本次渲染 env.tocHtml 供块级规则内联；
  * 无 [TOC] 的文档不额外 parse（省掉一次全文解析开销）。
  * 出口统一过 sanitizeHtml（Task 7）：Markdown 内嵌 HTML 与新语法产出的标签都必须先经 DOMPurify 白名单才能进 DOM。
@@ -201,7 +212,9 @@ export function renderMarkdown(markdown, env = {}) {
   // 同时让核心规则拿到本文档的 usedIds 与内联目录 HTML。
   const renderEnv = { ...targetEnv, [USED_IDS_KEY]: new Set() };
   if (hasTocPlaceholder(text)) {
-    renderEnv.tocHtml = buildTocHtml(extractHeadings(text));
+    renderEnv.tocHtml = Array.isArray(renderEnv.tocHeadings)
+      ? buildTocHtml(renderEnv.tocHeadings)
+      : buildTocHtml(extractHeadings(text));
   }
   return sanitizeHtml(md.render(text, renderEnv));
 }
