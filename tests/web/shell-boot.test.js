@@ -9,6 +9,9 @@ function createRoot() {
   return root;
 }
 
+/** 已装配的 shell：afterEach 统一 destroy，避免 document 级监听器泄漏到后续用例。 */
+const mounted = [];
+
 /** 用收集器代替宿主 post，返回 shell 与已发送消息。 */
 function mount(root) {
   const posted = [];
@@ -16,6 +19,7 @@ function mount(root) {
     root,
     post: (type, payload) => posted.push({ type, payload }),
   });
+  mounted.push(shell);
   return { shell, posted };
 }
 
@@ -35,11 +39,21 @@ beforeEach(() => {
   document.body.innerHTML = '';
 });
 
+afterEach(() => {
+  for (const shell of mounted.splice(0)) {
+    if (shell && typeof shell.destroy === 'function') {
+      shell.destroy();
+    }
+  }
+  document.body.innerHTML = '';
+});
+
 it('渲染 markdown 并回报 renderDone', () => {
   const root = document.createElement('div');
   document.body.append(root);
   const posted = [];
   const shell = JJ.mountShell({ root, post: (type, payload) => posted.push({ type, payload }) });
+  mounted.push(shell);
   shell.onMessage({
     type: 'load',
     payload: {

@@ -529,19 +529,44 @@ describe('shell 分块渲染与大文件模式', () => {
     }
   });
 
-  it('观察器触发后逐块追加内容且保持 DOM 顺序', () => {
+  it('观察器反复触发后逐块追加：标题/子节点增长、顺序不变并出现末块标记', () => {
     const observer = installObserverStub();
     try {
       const { root, shell } = mount();
       load(shell, largeDoc());
       const content = root.querySelector('#content');
       expect(content.textContent).not.toContain('END-MARKER');
-      observer.trigger();
-      const headings = [...content.querySelectorAll('h2')].map((node) => node.textContent.trim());
+
+      // 先记录触发前的数量（首屏只渲染预算内块）——不是只看「不包含 END-MARKER」就通过。
+      const beforeHeadings = content.querySelectorAll('h2').length;
+      const beforeChildren = content.childElementCount;
+      const beforeText = content.textContent.length;
+      expect(beforeHeadings).toBeLessThan(SECTIONS);
+
+      // 每次触发只追加一块：持续触发直到哨兵消失（全部渲染），断言数量确实增长且末块出现。
+      let triggers = 0;
+      while (content.querySelector('.chunk-sentinel') && triggers < 200) {
+        observer.trigger();
+        triggers += 1;
+      }
+      expect(triggers).toBeGreaterThan(0);
+      expect(content.querySelector('.chunk-sentinel')).toBeNull();
+
+      const afterHeadings = content.querySelectorAll('h2').length;
+      const afterChildren = content.childElementCount;
+      expect(afterHeadings).toBeGreaterThan(beforeHeadings);
+      expect(afterChildren).toBeGreaterThan(beforeChildren);
+      expect(content.textContent.length).toBeGreaterThan(beforeText);
+      expect(content.textContent).toContain('END-MARKER');
+
       // 追加后标题仍按文档顺序（新块插在哨兵之前）
-      const expected = ['小节0', ...Array.from({ length: SECTIONS - 1 }, (_, i) => `小节${i + 1}`)];
-      expect(headings).toEqual(expected.slice(0, headings.length));
-      expect(content.textContent).not.toContain('END-MARKER');
+      const headings = [...content.querySelectorAll('h2')].map((node) => node.textContent.trim());
+      const expected = [
+        ...Array.from({ length: SECTIONS }, (_, i) => `小节${i}`),
+        '末尾标题',
+      ];
+      expect(headings).toEqual(expected);
+      expect(content.textContent).toContain('末尾标题');
     } finally {
       observer.restore();
     }
@@ -685,12 +710,12 @@ describe('评审 #1：内联 [TOC] 点击', () => {
     const anchor = [...content.querySelectorAll('a[href^="#"]')].find(
       (item) => !item.closest('nav.toc-inline'),
     );
-    if (anchor) {
-      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
-      anchor.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(false);
-      expect(calls).toHaveLength(0);
-    }
+    // 脚注链接必须真实存在：缺失时直接失败，不能让 if (anchor) 把断言空转成绿色。
+    expect(anchor).toBeTruthy();
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    anchor.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(calls).toHaveLength(0);
   });
 });
 

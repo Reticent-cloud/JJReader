@@ -13,10 +13,15 @@ public class AboutInfoTests
     {
         var text = AboutInfo.Format("鲸鲸阅读器", "0.1.0", "10.0.1", "155.0.4283.45", "10.0.19045");
 
-        Assert.Contains("鲸鲸阅读器 0.1.0", text);
-        Assert.Contains(".NET: 10.0.1", text);
-        Assert.Contains("WebView2 155.0.4283.45", text);
-        Assert.Contains("OS: 10.0.19045", text);
+        // 精确断言整段格式：顺序、分隔符、WebView2 无冒号写法都要锁定，避免「包含」掩盖漂移。
+        Assert.Equal(
+            string.Join(
+                Environment.NewLine,
+                "鲸鲸阅读器 0.1.0",
+                ".NET: 10.0.1",
+                "WebView2 155.0.4283.45",
+                "OS: 10.0.19045"),
+            text);
     }
 
     [Fact]
@@ -29,12 +34,13 @@ public class AboutInfoTests
     }
 
     [Theory]
-    [InlineData(false, false, "未注册")]
-    [InlineData(true, false, "未设为默认 .md 程序")]
-    [InlineData(true, true, "默认 .md 程序")]
-    public void AssocText_covers_all_three_states(bool registered, bool isDefault, string expected)
+    [InlineData(false, false, ".md 关联：未注册")]
+    [InlineData(true, false, ".md 关联：已注册，未设为默认 .md 程序")]
+    [InlineData(true, true, ".md 关联：已注册，已是默认 .md 程序")]
+    public void AssocText_covers_all_three_states_exactly(bool registered, bool isDefault, string expected)
     {
-        Assert.Contains(expected, AboutInfo.AssocText(registered, isDefault));
+        // 精确相等：三种状态文案互为子串（「未设为默认…」包含「默认…」），Contains 会放过状态错配。
+        Assert.Equal(expected, AboutInfo.AssocText(registered, isDefault));
     }
 
     [Fact]
@@ -49,9 +55,9 @@ public class AboutInfoTests
             registered: true,
             isDefault: false);
 
-        Assert.Contains("鲸鲸阅读器 0.1.0", text);
+        // 首行环境信息与末行关联状态都精确匹配（整段格式见 Format_contains… 用例）。
+        Assert.StartsWith("鲸鲸阅读器 0.1.0" + Environment.NewLine, text);
         Assert.Contains(@"数据目录: C:\Users\me\AppData\Roaming\JingjingReader", text);
-        Assert.Contains("已注册", text);
-        Assert.Contains("未设为默认 .md 程序", text);
+        Assert.EndsWith(".md 关联：已注册，未设为默认 .md 程序", text);
     }
 }

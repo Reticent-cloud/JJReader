@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using Xunit;
 using Xunit.Abstractions;
@@ -175,31 +176,94 @@ public class DirectoryListerTests
     }
 
     [Fact]
-    public void List_rejects_navigation_through_a_reparse_point()
+    public void List_rejects_or_skips_a_junction_inside_root_pointing_outside()
     {
+        // 真实执行重解析点防御（不是「无特权就 Assert.True(true)」的空转用例）：
+        // 先建目录 junction（普通用户即可，cmd /c mklink /J），失败再尝试符号链接；
+        // 两者都不可用时显式失败——环境不支持就意味着本机没有覆盖 spec §4.5.2 的重解析点约束。
         var root = TestHelpers.TestDir();
-        var real = CreateDirectory(root, "real");
-        CreateFile(real, "a.md");
+        var outside = TestHelpers.TestDir();
+        CreateFile(outside, "secret.md");
+        CreateDirectory(outside, "sub");
         var link = Path.Combine(root, "link");
+
+        if (!TryCreateDirectoryLink(link, outside))
+        {
+            Assert.Fail("环境不支持创建 junction/symlink，无法验证 reparse 限制");
+        }
+
+        // 根内的 junction 条目本身带 ReparsePoint：List(root) 必须跳过它（子项被跳过）。
+        var entries = DirectoryLister.List(root, string.Empty);
+        Assert.DoesNotContain(entries, entry => entry.Name == "link");
+        Assert.DoesNotContain(entries, entry => entry.RelPath.StartsWith("link/", StringComparison.Ordinal));
+
+        // 通过根内相对路径主动访问 junction：逐段检查必须拒绝（不能借道读到根外内容）。
+        Assert.Throws<UnauthorizedAccessException>(() => DirectoryLister.List(root, "link"));
+        Assert.Throws<UnauthorizedAccessException>(() => DirectoryLister.List(root, @"link\sub"));
+    }
+
+    /// <summary>
+    /// 创建目录链接并让它可枚举：优先 <c>cmd /c mklink /J</c>（junction，普通用户无需开发者模式），
+    /// 失败再退回 <see cref="Directory.CreateSymbolicLink"/>；都不可用返回 false。
+    /// </summary>
+    private bool TryCreateDirectoryLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo("cmd.exe")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add("mklink");
+            startInfo.ArgumentList.Add("/J");
+            startInfo.ArgumentList.Add(linkPath);
+            startInfo.ArgumentList.Add(targetPath);
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                _output.WriteLine("[link] 无法启动 cmd.exe 创建 junction");
+            }
+            else
+            {
+                var stdout = process.StandardOutput.ReadToEnd();
+                var stderr = process.StandardError.ReadToEnd();
+                if (!process.WaitForExit(10000))
+                {
+                    try { process.Kill(); } catch { /* 已退出 */ }
+                    _output.WriteLine("[link] cmd /c mklink /J 超时");
+                }
+                else if (process.ExitCode == 0 && Directory.Exists(linkPath))
+                {
+                    return true;
+                }
+                else
+                {
+                    _output.WriteLine(
+                        $"[link] cmd /c mklink /J 失败 exit={process.ExitCode} out={stdout.Trim()} err={stderr.Trim()}");
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            _output.WriteLine($"[link] cmd /c mklink /J 异常：{exception.GetType().Name}: {exception.Message}");
+        }
 
         try
         {
-            Directory.CreateSymbolicLink(link, real);
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return Directory.Exists(linkPath);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                               or PlatformNotSupportedException or NotSupportedException)
         {
-            // xunit 2.9 没有动态 Skip（Assert.Skip 属于 xunit v3），这里显式标注跳过而不是静默 return：
-            // 环境不允许建符号链接（需开发者模式/管理员）时，重解析点防御只能靠代码审查兜底；
-            // 支持链接的环境（CI/开发者模式）会继续跑下面的断言。
-            _output.WriteLine($"[SKIP] 无法创建符号链接（需开发者模式/管理员），跳过重解析点用例：{exception.GetType().Name}: {exception.Message}");
-            Assert.True(true);
-            return;
+            _output.WriteLine($"[link] 符号链接也不可用：{exception.GetType().Name}: {exception.Message}");
+            return false;
         }
-
-        var entries = DirectoryLister.List(root, string.Empty);
-        Assert.DoesNotContain(entries, entry => entry.Name == "link");
-        Assert.Contains(entries, entry => entry.Name == "real");
-        Assert.Throws<UnauthorizedAccessException>(() => DirectoryLister.List(root, "link"));
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Windows;
@@ -38,6 +39,16 @@ public static class VerifyRender
     private static async Task RunCoreAsync(string path, int timeoutMs)
     {
         var normalizedPath = FileHost.NormalizePath(path);
+
+        // 输入不存在时快速失败（exit 2）：不必等 15 s renderDone 超时，验收脚本也能立刻看到原因。
+        if (!File.Exists(normalizedPath))
+        {
+            DebugLog.Write($"verify-render 输入文件不存在 path={normalizedPath}");
+            ConsoleHelper.WriteLine($"VERIFY-FAILED 输入文件不存在：{normalizedPath}");
+            Application.Current?.Shutdown(2);
+            return;
+        }
+
         var completion = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var window = new MainWindow();

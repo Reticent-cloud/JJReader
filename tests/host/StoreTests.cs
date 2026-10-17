@@ -192,4 +192,38 @@ public class StoreTests
         Assert.Equal("Cascadia Mono", new Store(dir).LoadSettings().MonoFont);
         Assert.Equal("system", new Store(dir).LoadSettings().CjkFont); // 相邻字体字段不受影响
     }
+
+    [Fact]
+    public void SaveSettings_failure_keeps_old_file_and_cleans_tmp()
+    {
+        // 原子写失败路径（测试评审 must-fix）：目标文件被独占打开时 File.Move 必须失败，
+        // 且失败后 ①目标字节不变 ②重新读取仍是旧值 ③不留下 settings.json.tmp 半成品。
+        var dir = TestDir();
+        var store = new Store(dir);
+        store.SaveSettings(new AppSettings(Theme: "dark", FontSize: 20));
+
+        var target = Path.Combine(dir, "settings.json");
+        var before = File.ReadAllBytes(target);
+
+        using (var exclusive = new FileStream(
+                   target,
+                   FileMode.Open,
+                   FileAccess.ReadWrite,
+                   FileShare.None))
+        {
+            // File.Move 在目标被独占打开时可能报 IOException（共享冲突）或 UnauthorizedAccessException
+            // （Windows 路径语义），两者都算失败路径；关键是必须抛异常、不能静默覆盖。
+            var exception = Record.Exception(() => store.SaveSettings(new AppSettings(Theme: "light", FontSize: 14)));
+            Assert.NotNull(exception);
+            Assert.True(
+                exception is IOException or UnauthorizedAccessException,
+                $"期望 IO/UnauthorizedAccess 异常，实际：{exception.GetType().Name}: {exception.Message}");
+        }
+
+        Assert.Equal(before, File.ReadAllBytes(target));
+        var reloaded = new Store(dir).LoadSettings();
+        Assert.Equal("dark", reloaded.Theme);
+        Assert.Equal(20, reloaded.FontSize);
+        Assert.False(File.Exists(target + ".tmp"), "写入失败后必须清理 .tmp，不能留下半成品");
+    }
 }

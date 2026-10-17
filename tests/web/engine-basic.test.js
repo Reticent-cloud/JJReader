@@ -40,6 +40,42 @@ describe('图片相对路径改写', () => {
   });
 });
 
+// 语法矩阵补行（测试评审 Important）：Setext 标题、<br>、<img align> 与「不支持（原样文本）」三类。
+// 不支持语法按 spec §5.7 最后一行锁定为字面文本，不引入插件、不静默改写。
+describe('语法矩阵补充（Setext / 内嵌 HTML / 不支持语法原样文本）', () => {
+  it('Setext 标题渲染为 h1/h2', () => {
+    expect(html('Setext 一级\n===')).toMatch(/<h1[^>]*>Setext 一级<\/h1>/);
+    expect(html('Setext 二级\n---')).toMatch(/<h2[^>]*>Setext 二级<\/h2>/);
+  });
+
+  it('<br> 与 <img align="center"> 保留', () => {
+    const out = html('第一行<br>第二行\n\n<img src="x.png" align="center">');
+    expect(out).toContain('<br>');
+    expect(out).toMatch(/<img[^>]*align="center"/);
+    expect(out).toContain('src="x.png"');
+  });
+
+  it('数学公式按原样文本显示（不渲染、不吞字符）', () => {
+    const out = html('行内 $E=mc^2$ 与块级 $$a+b$$');
+    expect(out).toContain('$E=mc^2$');
+    expect(out).toContain('$$a+b$$');
+  });
+
+  it('Mermaid 代码块按普通围栏代码显示原文', () => {
+    const out = html('```mermaid\ngraph TD\n  A-->B\n```');
+    expect(out).toContain('language-mermaid');
+    expect(out).toContain('graph TD');
+    expect(out).toContain('A--&gt;B');
+  });
+
+  it('定义列表不生成 <dl>，按普通段落原样文本显示', () => {
+    const out = html('术语\n: 定义');
+    expect(out).toContain('术语');
+    expect(out).toContain(': 定义');
+    expect(out).not.toContain('<dl>');
+  });
+});
+
 describe('标题 id 与 extractHeadings', () => {
   it('标题生成稳定 id 且重复标题依次去重', () => {
     const h = JJ.extractHeadings('# 中文 标题\n# 中文 标题');

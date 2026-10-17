@@ -19,7 +19,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $ExePath) {
-    $ExePath = Join-Path (Split-Path -Parent $PSCommandPath) '..\out\JingjingReader.exe'
+    # 分发版（uninstall.ps1 与 exe 同在 out\）优先找同目录的 exe；源码树里回退到 ..\out\。
+    $scriptDir = Split-Path -Parent $PSCommandPath
+    $adjacent = Join-Path $scriptDir 'JingjingReader.exe'
+    $ExePath = if (Test-Path -LiteralPath $adjacent -PathType Leaf) {
+        $adjacent
+    } else {
+        Join-Path $scriptDir '..\out\JingjingReader.exe'
+    }
 }
 
 try {

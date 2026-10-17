@@ -1,14 +1,16 @@
 # 鲸鲸阅读器手动验收清单
 
-本清单覆盖无法由 `scripts/verify.ps1` 自动断言的交互项。自动项（构建、单测、首屏耗时、内存峰值、PDF、双开单实例、产物体积）以 `out/verify-report.md` 为准；本清单只记录需要人眼/手动的结果。
+本清单覆盖无法由 `scripts/verify.ps1` 自动断言的交互项。自动项（构建、单测、首屏 `elapsedMs`、端到端首屏、内存峰值、PDF、双开单实例、分发包完整性、数据隔离、产物体积）以 `out/verify-report.md` 为准；本清单只记录需要人眼/手动的结果。执行记录写到 [verify-record.md](verify-record.md)；逐条证据对照见 [acceptance-traceability.md](acceptance-traceability.md)。
 
 ## 前置
 
 - [ ] 已完成 `pwsh -NoProfile -File scripts/build.ps1`，`out\JingjingReader.exe` 存在。
+- [ ] （可选）已完成 `pwsh -NoProfile -File scripts/build.ps1 -SelfContained`，`out-selfcontained\` 内含 exe、`install.ps1`、`uninstall.ps1`、`README.md`；在未安装 .NET 10 运行时的机器上能启动。
 - [ ] 已准备测试素材：`samples/hello.md`、`samples/full-syntax.md`、`samples/huge-50k-lines.md`，以及一个含图片/表格/代码块/脚注的深色主题文档。
 - [ ] 测试机为 Windows 10/11 x64，已安装 WebView2 Runtime 与 .NET 10 Desktop Runtime（或用 `-SelfContained` 产物）。
 - [ ] 若要测试 `.md` 关联，先记录注册表现状：
       `reg query "HKCU\Software\Classes\.md" /s > before.txt` 与 `reg query "HKCU\Software\Classes\JingjingReader.md" /s > before-progid.txt`。
+- [ ] 记录环境：OS 版本、`.NET` / WebView2 版本（程序「关于」面板或 `JingjingReader.exe --selftest`）、当前 commit、日期。
 
 ## 1. 拖放
 
@@ -90,7 +92,7 @@
 - [ ] 记录安装前注册表（见前置），运行 `pwsh -NoProfile -File scripts/install.ps1`。
 - [ ] `reg query "HKCU\Software\Classes\JingjingReader.md"` 存在；`.md` 的 OpenWithProgids 含 `JingjingReader.md`。
 - [ ] 在「默认应用」中把 `.md` 设为鲸鲸阅读器，双击 `.md` 能打开。
-- [ ] 运行 `pwsh -NoProfile -File scripts/uninstall.ps1`，按提示确认恢复。
+- [ ] 运行 `pwsh -NoProfile -File scripts/uninstall.ps1`（无需确认，直接执行并按退出码返回结果）。
 - [ ] 再次 `reg query` 对比：`.md` 与 `JingjingReader.md` 的关键键值恢复安装前状态（或本程序新增项被删除）。
 - [ ] 备份文件缺失/损坏时执行卸载 → 明确提示且不破坏注册表（可先备份再手动改坏 `%APPDATA%\JingjingReader\assoc-backup.json` 测试）。
 - [ ] 重复安装/卸载不报错、不产生重复键值。
@@ -107,7 +109,7 @@
 - [ ] 快速滚动到底部再回顶部 → 内容完整、顺序正确、无重复/丢失段落。
 - [ ] 滚动到中部关闭再打开 → 恢复到上次位置附近（允许块级误差），并提示已恢复。
 - [ ] 在大纲中点击靠后的标题 → 自动补齐未渲染块并定位。
-- [ ] 状态栏/进度条随滚动更新；「回到顶部」按钮在滚离顶部后出现并可用。
+- [ ] 阅读进度条随滚动更新；「回到顶部」按钮在滚离顶部后出现并可用。
 
 ## 13. 双开单实例
 
@@ -121,10 +123,30 @@
 - [ ] 大文件模式下代码块无 token 高亮、复制按钮仍在；TOC 仍生成但不做滚动联动高亮。
 - [ ] 从大文件切回普通文档 → 高亮与滚动联动恢复，无残留 `huge-mode` 样式。
 
+## 15. 首屏（端到端）与版本/图标
+
+- [ ] 双击已关联的 `.md`（或命令行启动）→ 记录从启动到正文可见的墙钟时间；热缓存下目标 ≤ 2.5 s（< 1.0 s 最佳）。这是端到端口径，与 `--verify-render` 的 `elapsedMs`（渲染器耗时）不同。
+- [ ] 首次（冷）启动与重复（热）启动各测 3 次，记录中位数；明显 > 2.5 s 时记录 `%APPDATA%\JingjingReader\debug.log` 并提 issue。
+- [ ] 资源管理器/任务管理器显示文件说明为「鲸鲸阅读器」、版本 0.1.0；窗口图标与 exe 图标为鲸鱼占位图（16/32/48/256 不糊）。
+- [ ] 关于面板显示版本、.NET、WebView2、OS、数据目录、`.md` 关联状态；版本号来自程序集。
+
+## 16. 滚动帧预算（16 ms，descope 后手测）
+
+> 16 ms 帧预算**没有自动化测量**，spec 已 descope 为手测；不得在验收记录里写成「已自动验证」。
+
+- [ ] 打开 `samples/huge-50k-lines.md`，用滚轮连续滚动 10 秒、再用 `PageDown` 连续翻页 10 秒：观察是否掉帧/白屏/卡顿；记录主观结论（流畅/轻微掉帧/明显卡顿）。
+- [ ] （可选）DevTools Performance 录制滚动 5 秒，查看 frame 间隔是否长时间 > 16 ms；记录 p95/最长帧。
+- [ ] 点击大纲靠后条目（触发 renderAll）时观察是否有可感知卡顿；记录耗时观感。
+
+## 17. 长 TOC（>300 项）行为
+
+- [ ] 打开一个含 350+ 标题的文档：侧栏全量渲染、滚动与点击跳转正常（>300 虚拟滚动已 descope，全量渲染是有意行为）。
+- [ ] 350 项时展开/折叠、拖动调宽仍可用；无明显卡顿（自动化测试锁定 < 500 ms，仅 jsdom 口径）。
+
 ## 记录
 
 | 测试人 | 日期 | 系统 / WebView2 / .NET | 结果 | 备注 / 截图路径 |
 | --- | --- | --- | --- | --- |
 |  |  |  |  |  |
 
-> 截图可选存档到 `docs/verify/`（spec §9.4）。发现失败项时记录复现步骤、期望与实际，并在合并前修复或明确接受。
+> 截图可选存档到 `docs/verify/`（spec §9.4）。发现失败项时记录复现步骤、期望与实际，并在合并前修复或明确接受。本轮（修复波 C）所有手测项均**未执行**，见 [verify-record.md](verify-record.md)。

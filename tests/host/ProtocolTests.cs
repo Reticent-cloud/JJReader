@@ -5,7 +5,9 @@ namespace JingjingReader.Tests;
 
 /// <summary>
 /// Protocol：宿主→前端消息构造 + 前端→宿主消息解析（唯一协议定义处的契约测试）。
-/// 用例锁定 spec §4.4 的 14 条消息 + 本计划新增的 dirListing / shellReady / recent / reload（共 18 个 type）。
+/// 用例锁定 spec §4.4 的消息契约：<see cref="Protocol"/> 的 KnownTypes 收录 21 个可解析 type
+/// （spec 原有 14 条 + 新增 dirListing / shellReady / recent / reload / openRecent / openTreeFile / openAbout 等），
+/// 另有宿主→前端的 notice / settings 共 23 个契约 type（这两个不参与 inbound 解析）。
 /// </summary>
 public class ProtocolTests
 {

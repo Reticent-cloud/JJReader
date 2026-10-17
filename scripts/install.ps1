@@ -21,7 +21,15 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $ExePath) {
-    $ExePath = Join-Path (Split-Path -Parent $PSCommandPath) '..\out\JingjingReader.exe'
+    # 分发版（install.ps1 与 exe 同在 out\）优先找同目录的 exe；源码树里（scripts\install.ps1）
+    # 回退到 ..\out\JingjingReader.exe。两种位置都用 $PSCommandPath 解析（5.1/7 都可用）。
+    $scriptDir = Split-Path -Parent $PSCommandPath
+    $adjacent = Join-Path $scriptDir 'JingjingReader.exe'
+    $ExePath = if (Test-Path -LiteralPath $adjacent -PathType Leaf) {
+        $adjacent
+    } else {
+        Join-Path $scriptDir '..\out\JingjingReader.exe'
+    }
 }
 
 # 输出统一 UTF-8：脚本被管道/CI 调用时中文不按系统代码页（GBK）乱码。

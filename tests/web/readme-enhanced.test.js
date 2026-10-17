@@ -29,6 +29,7 @@ function mountShell(root) {
     root,
     post: (type, payload) => posted.push({ type, payload }),
   });
+  mounted.push(shell);
   return { shell, posted };
 }
 
@@ -44,7 +45,19 @@ function loadPayload(overrides = {}) {
   };
 }
 
+const mounted = [];
+
 beforeEach(() => {
+  document.body.innerHTML = '';
+});
+
+afterEach(() => {
+  // 测试卫生：mountShell 挂的 document 级监听器必须显式 destroy，不能只清 body.innerHTML。
+  for (const shell of mounted.splice(0)) {
+    if (shell && typeof shell.destroy === 'function') {
+      shell.destroy();
+    }
+  }
   document.body.innerHTML = '';
 });
 

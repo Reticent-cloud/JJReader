@@ -109,8 +109,11 @@ const ALLOWED_STYLE_PROPS = new Set([
 /** style 值里的危险关键字（CSS 表达式/脚本协议）：命中即剥离该条声明。 */
 const UNSAFE_STYLE_VALUE_RE = /(?:expression|javascript|vbscript)\s*[:(]/i;
 
-/** 与 HTML 属性值空白归一化口径一致（和 DOMPurify 内部的 ATTR_WHITESPACE 同款字符集）。 */
-const URL_WHITESPACE_RE = /[\u0000-\u0020\u00A0\u1680\u180E\u2000-\u2029\u205F\u3000]/g;
+/**
+ * 与 HTML 属性值空白归一化口径一致（和 DOMPurify 内部的 ATTR_WHITESPACE 同款字符集）。
+ * 导出仅为直接单测（测试评审 must-fix：混淆变体要能单独锁定归一化字符集）。
+ */
+export const URL_WHITESPACE_RE = /[\u0000-\u0020\u00A0\u1680\u180E\u2000-\u2029\u205F\u3000]/g;
 
 const DATA_IMAGE_RE = /^data:image\//i;
 const DATA_ANY_RE = /^data:/i;
@@ -131,8 +134,9 @@ const URL_ATTRS = new Set(['href', 'src']);
 /**
  * URL 是否安全：允许 http(s)/mailto/tel、data:image（受 allowDataImages 控制）以及无协议相对地址/片段；
  * 移除 javascript:/vbscript:/file:/data:text/html 等其它协议。只看安全，不改写原值。
+ * 导出仅为直接单测（大小写/实体/空白/协议相对等混淆变体）。
  */
-function isSafeUrl(value, allowDataImages) {
+export function isSafeUrl(value, allowDataImages) {
   const normalized = String(value ?? '').replace(URL_WHITESPACE_RE, '');
   if (normalized === '') {
     return true;

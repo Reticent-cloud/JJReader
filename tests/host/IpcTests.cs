@@ -113,10 +113,35 @@ public class IpcTests
     }
 
     [Fact]
-    public async Task Ipc_rejects_newline_in_payload()
+    public async Task Ipc_rejects_newline_in_payload_and_keeps_serving()
     {
-        // 一行一条消息：路径里带换行会让协议错位，必须拒绝发送
-        Assert.False(await IpcServer.SendAsync(NewPipeName(), "C:\\a\nb.md", 200));
+        // 一行一条消息：路径里带换行会让协议错位，必须拒绝发送。
+        // 启动真实 IpcServer（随机管道名）：发送返回 false、监听器没收到任何消息，随后合法消息仍能送达。
+        var pipe = NewPipeName();
+        var received = new ConcurrentQueue<string>();
+        var got = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IpcServer.Start(pipe, path =>
+        {
+            received.Enqueue(path);
+            got.TrySetResult(path);
+        });
+        try
+        {
+            Assert.False(await IpcServer.SendAsync(pipe, "C:\\a\nb.md", 3000));
+
+            // 留出 100 ms 让（如果错误地写入了）服务端有机会收到并回调
+            await Task.Delay(100);
+            Assert.Empty(received);
+
+            // 监听器未被破坏：下一条合法消息照常送达
+            Assert.True(await IpcServer.SendAsync(pipe, @"C:\notes\ok.md", 3000));
+            Assert.Equal(@"C:\notes\ok.md", await got.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+            Assert.Single(received);
+        }
+        finally
+        {
+            IpcServer.Stop();
+        }
     }
 
     [Fact]

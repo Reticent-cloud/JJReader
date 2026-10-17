@@ -2,8 +2,13 @@
 // 安全模型（spec §4.5.6）：Markdown 内嵌 HTML 一律经 sanitizeHtml 后才进 DOM。
 // 既有功能回归（任务清单 input / 脚注锚点 / 表格对齐 / 复制按钮 data-code / 外链）在「跨任务放行」与
 // 「renderMarkdown 出口」两节里守护：清洗不能把后续任务依赖的结构剥掉。
+// 测试评审 must-fix：补充大小写/实体/空白/协议相对/svg+xml 混淆变体，并直接单测 isSafeUrl 与空白归一化。
+
+import { isSafeUrl, URL_WHITESPACE_RE } from '../../web/src/sanitize.js';
 
 const BASE_URL = 'https://md.local/';
+
+const mounted = [];
 
 /** 默认带虚拟主机 baseUrl 渲染（与宿主 load.baseUrl 一致）。 */
 const render = (md) => JJ.renderMarkdown(md, { baseUrl: BASE_URL });
@@ -16,6 +21,11 @@ function parse(html) {
 }
 
 afterEach(() => {
+  for (const shell of mounted.splice(0)) {
+    if (shell && typeof shell.destroy === 'function') {
+      shell.destroy();
+    }
+  }
   document.body.innerHTML = '';
 });
 
@@ -103,6 +113,85 @@ describe('协议白名单', () => {
     const out = JJ.sanitizeHtml('<a href="/x">根</a><img src="../x.png">');
     expect(out).toContain('href="/x"');
     expect(out).toContain('src="../x.png"');
+  });
+
+  it('混淆变体 表驱动：危险协议/表达式大小写与空白变形都被移除', () => {
+    const cases = [
+      ['<a href="JaVaScRiPt:alert(1)">x</a>', /javascript:/i],
+      ['<a href="java&#x09;script:alert(1)">x</a>', /javascript:/i],
+      ['<a href="java&#x0A;script:alert(1)">x</a>', /javascript:/i],
+      ['<a href="java\tscript:alert(1)">x</a>', /javascript:/i],
+      ['<a href="java\u0000script:alert(1)">x</a>', /javascript:/i],
+      ['<span style="EXPRESSION(alert(1));color:red">x</span>', /expression/i],
+      ['<span style="BACKGROUND:URL(javascript:alert(1))">x</span>', /javascript:/i],
+      ['<a href="vb&#x53;cript:msgbox(1)">x</a>', /vbscript:/i],
+    ];
+    for (const [input, forbidden] of cases) {
+      expect(JJ.sanitizeHtml(input), input).not.toMatch(forbidden);
+    }
+  });
+
+  it('协议相对地址 //host/x 按相对 URL 放行（外链拦截由宿主 NavigationStarting 负责）', () => {
+    const out = JJ.sanitizeHtml('<a href="//host/x">x</a>');
+    expect(out).toContain('href="//host/x"');
+    expect(isSafeUrl('//host/x', true)).toBe(true);
+  });
+
+  it('href 前导空白：协议校验按去空白后的值判断，地址本身不被误杀', () => {
+    const out = JJ.sanitizeHtml('<a href=" https://x.example/a">x</a>');
+    const link = parse(out).querySelector('a');
+    expect(link).toBeTruthy();
+    expect((link.getAttribute('href') ?? '').trim()).toBe('https://x.example/a');
+    expect(isSafeUrl(' https://x.example/a', true)).toBe(true);
+  });
+
+  it('data:image/svg+xml 按安全裁定显式允许；allowDataImages=false 时失败关闭', () => {
+    // 裁定：<img src="data:image/svg+xml,..."> 在 img 上下文不执行脚本，保留（与 data:image/png 同口径）。
+    expect(JJ.sanitizeHtml('<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=">')).toContain(
+      'data:image/svg+xml',
+    );
+    expect(
+      JJ.sanitizeHtml('<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=">', { allowDataImages: false }),
+    ).not.toContain('data:image');
+  });
+});
+
+describe('isSafeUrl / URL_WHITESPACE_RE 直接单测', () => {
+  it.each([
+    ['https://x.example/a', true],
+    ['HTTP://X.EXAMPLE', true],
+    ['mailto:a@b.c', true],
+    ['tel:123', true],
+    ['/x', true],
+    ['../x', true],
+    ['//host/x', true],
+    ['#fn1', true],
+    ['', true],
+    ['data:image/png;base64,AAAA', true],
+    ['data:image/svg+xml,<svg></svg>', true],
+    ['javascript:alert(1)', false],
+    ['JaVaScRiPt:alert(1)', false],
+    ['java\tscript:alert(1)', false],
+    ['java\u0000script:alert(1)', false],
+    ['vbscript:msgbox(1)', false],
+    ['file:///c:/secret.png', false],
+    ['data:text/html,<b>x</b>', false],
+    ['ftp://x.example', false],
+  ])('isSafeUrl(%j) → %s', (value, expected) => {
+    expect(isSafeUrl(value, true)).toBe(expected);
+  });
+
+  it('allowDataImages 只影响 data:image，其余判定不变', () => {
+    expect(isSafeUrl('data:image/png;base64,AAAA', false)).toBe(false);
+    expect(isSafeUrl('https://x', false)).toBe(true);
+    expect(isSafeUrl('javascript:x', false)).toBe(false);
+  });
+
+  it('URL_WHITESPACE_RE 覆盖 HTML 属性空白归一化的字符集', () => {
+    const raw = 'a\tb\nc\u0000d\u00a0e\u1680f\u180Eg\u2000h\u2029i\u205Fj\u3000k';
+    expect(raw.replace(URL_WHITESPACE_RE, '')).toBe('abcdefghijk');
+    // U+FEFF 不在归一化集合内：不会把「java<U+FEFF>script:」拼成 javascript:（按相对地址处理）
+    expect(isSafeUrl('java\uFEFFscript:x', true)).toBe(true);
   });
 });
 
@@ -248,6 +337,7 @@ describe('shell 集成', () => {
       root,
       post: (type, payload) => posted.push({ type, payload }),
     });
+    mounted.push(shell);
 
     shell.onMessage({
       type: 'load',

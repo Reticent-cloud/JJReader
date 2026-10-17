@@ -1,9 +1,11 @@
 ﻿#Requires -Version 5.1
 <#
-鲸鲸阅读器构建脚本：web 打包 → 拷贝前端产物 → dotnet publish（单文件）。
+鲸鲸阅读器构建脚本：web 打包 → 拷贝前端产物 → dotnet publish（单文件）→ 拷入分发文件。
 默认依赖本机 .NET 10 运行时，产物 out\JingjingReader.exe；
-加 -SelfContained 可打包运行时（体积约 100–150 MB），产物 out-selfcontained\JingjingReader.exe，
+加 -SelfContained 可打包运行时（体积约 130–140 MB），产物 out-selfcontained\JingjingReader.exe，
 供没有安装 .NET 10 运行时的电脑使用（首次构建需要能访问 NuGet 运行时包，已缓存的机器可离线）。
+两种形态都会在发布前清空目标目录（保留目录本身），发布后把 scripts/install.ps1、
+scripts/uninstall.ps1 与 README.md 拷进产物目录，整个目录即可直接分发。
 
 用法：
   pwsh -NoProfile -File scripts/build.ps1
@@ -56,6 +58,13 @@ try {
 Copy-Item -Path $EngineSource -Destination $EngineTarget -Force
 Write-Host '[build] 已拷贝 md-engine.js → src/Host/Resources/'
 
+# 发布前清空目标目录（保留目录本身）：避免上一次构建/验收的旧 exe、旧报告、旧日志混进分发包。
+if (Test-Path -LiteralPath $OutDir) {
+    Get-ChildItem -LiteralPath $OutDir -Force | Remove-Item -Recurse -Force
+} else {
+    $null = New-Item -ItemType Directory -Path $OutDir -Force
+}
+
 Push-Location $Root
 try {
     Invoke-Step 'dotnet publish' {
@@ -68,6 +77,25 @@ try {
 $Exe = Join-Path $OutDir 'JingjingReader.exe'
 if (-not (Test-Path $Exe)) {
     throw "构建产物缺失：$Exe"
+}
+
+# 分发文件随产物一起拷贝：整个目录复制走即可安装/卸载（install/uninstall 默认优先找同目录 exe）。
+foreach ($item in @(
+        (Join-Path $Root 'scripts/install.ps1'),
+        (Join-Path $Root 'scripts/uninstall.ps1'),
+        (Join-Path $Root 'README.md')
+    )) {
+    if (-not (Test-Path -LiteralPath $item -PathType Leaf)) {
+        throw "分发文件缺失：$item"
+    }
+    Copy-Item -LiteralPath $item -Destination $OutDir -Force
+}
+Write-Host '[build] 已拷入分发包：install.ps1、uninstall.ps1、README.md'
+
+foreach ($item in @('JingjingReader.exe', 'install.ps1', 'uninstall.ps1', 'README.md')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $OutDir $item) -PathType Leaf)) {
+        throw "分发包不完整：$OutDir\$item 缺失"
+    }
 }
 if ($SelfContained) {
     Write-Host "BUILD OK（self-contained）$Exe"

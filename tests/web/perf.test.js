@@ -47,6 +47,18 @@ describe('性能冒烟：5 万行文档', () => {
     // 300 ms 是宽松上限（慢机/CI 余量；本机实测约 46 ms），避免抖动导致 flaky，不是性能预算。
     expect(elapsedMs).toBeLessThan(300);
   });
+
+  it('前 256 KB 文档 renderMarkdown 耗时 < 1000 ms（宽松护栏，非预算门禁）', () => {
+    // 首屏预算口径是 256 KB HTML/正文：这里直接渲染 5 万行样例的前 256 KB（jsdom 含清洗/高亮）。
+    // 1000 ms 只是「渲染器没有退化成 O(n²)/卡死」的回归护栏；真实首屏预算由 verify.ps1 的
+    // renderDone.elapsedMs（≤ 1.5 s）与端到端墙钟耗时验收，本用例不参与预算判定。
+    const markdown = hugeDoc().slice(0, 256 * 1024);
+    const started = performance.now();
+    const out = JJ.renderMarkdown(markdown, { baseUrl: 'https://md.local/' });
+    const elapsedMs = performance.now() - started;
+    expect(out.length).toBeGreaterThan(0);
+    expect(elapsedMs).toBeLessThan(1000);
+  });
 });
 
 describe('性能冒烟：前端产物体积', () => {

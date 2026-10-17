@@ -53,6 +53,15 @@ public static class VerifyPdf
         var normalizedInput = FileHost.NormalizePath(inputPath);
         var fullOutput = Path.GetFullPath(outputPath);
 
+        // 输入不存在时快速失败（exit 2）：不必先等 15 s renderDone 超时，也不会误删输出路径。
+        if (!File.Exists(normalizedInput))
+        {
+            DebugLog.Write($"verify-pdf 输入文件不存在 input={normalizedInput}");
+            ConsoleHelper.WriteLine($"PDF-FAILED 输入文件不存在：{normalizedInput}");
+            Application.Current?.Shutdown(2);
+            return;
+        }
+
         // M7：输入与输出是同一个文件时先报参数错误（exit 2），绝不能先删输出把输入文档删掉。
         if (IsSamePath(normalizedInput, fullOutput))
         {

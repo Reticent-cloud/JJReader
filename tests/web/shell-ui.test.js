@@ -142,6 +142,8 @@ afterEach(() => {
       shell.destroy();
     }
   }
+  // 有的用例单独切到 fake timers：统一在这里恢复，避免定时器泄漏到后续文件/用例。
+  vi.useRealTimers();
   delete window.matchMedia;
 });
 
@@ -734,16 +736,23 @@ it('无标题文档显示「此文档没有标题」且 TOC 为空', () => {
   expect(empty.textContent).toBe('此文档没有标题');
 });
 
-it('长 TOC（350 项）正常生成不崩', () => {
+it('长 TOC（350 项）全量渲染是有意行为（>300 不虚拟滚动，已 descope）且耗时 < 500 ms', () => {
+  // TOC>300 虚拟滚动已 descope（成本/收益不成立，见 spec §5.3 / progress.md）：350 项全量渲染
+  // 是当前有意行为，用户实测滚动仍流畅。这里锁定「全量渲染 + 速度护栏」，防止有人误加虚拟滚动
+  // 后改变既有 350 项 DOM 契约，也防止渲染退化成 O(n²)。
   const { root, shell, posted } = mount();
   const markdown = Array.from({ length: 350 }, (_, index) => `# 标题${index}`).join('\n\n');
+  const started = performance.now();
   load(shell, { markdown });
+  const elapsedMs = performance.now() - started;
 
   const links = root.querySelectorAll('#toc a');
   expect(links).toHaveLength(350);
   expect(links[349].getAttribute('href')).toBe('#标题349');
   const done = posted.find((message) => message.type === 'renderDone');
   expect(done.payload.tocCount).toBe(350);
+  // 宽松上限（jsdom/慢机余量），不是性能预算门禁。
+  expect(elapsedMs).toBeLessThan(500);
 });
 
 // ── TOC 侧栏拖拽调宽（Task 10 补漏：spec §5.1 要求默认 240 px、可拖 180–360 px） ──

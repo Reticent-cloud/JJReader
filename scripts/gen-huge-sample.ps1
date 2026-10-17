@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 鲸鲸阅读器大文档性能样本生成器（Task 11）。
 生成 samples/huge-50k-lines.md：恰好 5 万行、约 2–4 MB，混合标题、代码块、表格与任务清单，

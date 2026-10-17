@@ -142,14 +142,35 @@ public sealed class Store
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    /// <summary>原子写：先写 &lt;name&gt;.json.tmp，再用 File.Move 覆盖目标文件。</summary>
+    /// <summary>
+    /// 原子写：先写 &lt;name&gt;.json.tmp，再用 File.Move 覆盖目标文件。
+    /// 失败时清理 .tmp（目标被占用 / 磁盘满 / 权限不足）：磁盘上不留下「看起来像新设置」的半成品，
+    /// 原目标文件保持不变，异常照常向上抛给调用方记录。
+    /// </summary>
     private void Save<T>(string fileName, T value)
     {
         var target = Path.Combine(DataDir, fileName);
         var tmp = target + ".tmp";
         Directory.CreateDirectory(DataDir);
-        File.WriteAllText(tmp, JsonSerializer.Serialize(value, JsonOptions), Utf8NoBom);
-        File.Move(tmp, target, overwrite: true);
+        try
+        {
+            File.WriteAllText(tmp, JsonSerializer.Serialize(value, JsonOptions), Utf8NoBom);
+            File.Move(tmp, target, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tmp))
+                {
+                    File.Delete(tmp);
+                }
+            }
+            catch (Exception)
+            {
+                // 清理失败不能掩盖 Save 的原始异常；残留 .tmp 不影响读取（下次写入会覆盖）。
+            }
+        }
     }
 
     /// <summary>读 JSON；文件不存在返回默认值，读取/解析失败则备份坏文件后返回默认值。</summary>

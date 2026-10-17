@@ -23,7 +23,21 @@ function stubClipboard(writeText) {
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
 }
 
+/** 已装配的 shell：afterEach 统一 destroy，避免 document 级监听器泄漏到后续用例。 */
+const mounted = [];
+
+function mountShell(options) {
+  const shell = JJ.mountShell(options);
+  mounted.push(shell);
+  return shell;
+}
+
 afterEach(() => {
+  for (const shell of mounted.splice(0)) {
+    if (shell && typeof shell.destroy === 'function') {
+      shell.destroy();
+    }
+  }
   // 还原桩：clipboard 与 execCommand 在 jsdom 里默认都不存在
   delete navigator.clipboard;
   delete document.execCommand;
@@ -286,7 +300,7 @@ describe('enhance 外链与 shell 集成', () => {
   it('shell 渲染后自动调用 enhance（复制按钮已打标记）', () => {
     const root = document.createElement('div');
     document.body.append(root);
-    const shell = JJ.mountShell({ root, post: () => {} });
+    const shell = mountShell({ root, post: () => {} });
 
     shell.onMessage({
       type: 'load',
@@ -309,7 +323,7 @@ describe('enhance 外链与 shell 集成', () => {
     const root = document.createElement('div');
     document.body.append(root);
     const posted = [];
-    const shell = JJ.mountShell({ root, post: (type, payload) => posted.push({ type, payload }) });
+    const shell = mountShell({ root, post: (type, payload) => posted.push({ type, payload }) });
     const original = JJ.enhance;
 
     try {
