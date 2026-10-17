@@ -7,6 +7,7 @@ namespace JingjingReader.Tests;
 /// <summary>
 /// Task 13 wikilink 寻文件：当前目录优先（大小写不敏感、无扩展名补 .md/.markdown/.mdown/.txt）、
 /// 广度受限递归子目录、跳过隐藏目录、目录穿越/缺失拒绝，以及附件按文件名精确匹配。
+/// 修复波 D：目录与最终文件的重解析点（junction/symlink/AppExecLink）都必须拒绝。
 /// 全部用例在 <see cref="TestHelpers.TestDir"/> 的真实临时目录里读写。
 /// </summary>
 public class NoteResolverTests
@@ -142,14 +143,111 @@ public class NoteResolverTests
         var link = Path.Combine(docDir, "link");
         if (!TryCreateJunction(link, outside))
         {
-            // 环境不允许创建 junction（受限账户/文件系统）：该用例尽力而为，跳过不算失败。
-            return;
+            // 与 DirectoryListerTests 同策略：环境不支持就显式失败，不能静默跳过安全用例。
+            Assert.Fail("环境不支持创建 junction/symlink，无法验证 reparse 限制");
         }
 
         // C1：显式 [[link/secret]] 不能借 junction 把「目录内」的字符串前缀指到目录外。
         Assert.Null(NoteResolver.FindNote(docDir, @"link\secret"));
         Assert.Null(NoteResolver.FindNote(docDir, "secret"));
         Assert.Null(OpenTargetResolver.Resolve(docDir, @"link\secret"));
+    }
+
+    [Fact]
+    public void FindNote_rejects_final_file_that_is_a_reparse_point()
+    {
+        var (directory, fileName) = ResolveFileReparsePointFixture();
+
+        // 最终文件本身是 symlink/AppExecLink 时同样按 reparse 拒绝（不能只查中间目录段）。
+        Assert.Null(NoteResolver.FindNote(directory, fileName));
+        Assert.Null(NoteResolver.FindAttachment(directory, fileName));
+    }
+
+    /// <summary>
+    /// 找一个「文件级重解析点」夹具：优先在临时目录创建 .md 文件符号链接（mklink 或 .NET API）；
+    /// 当前账户没有 SeCreateSymbolicLinkPrivilege 且未开开发者模式时，回退到系统自带的应用执行别名
+    /// （<c>%LOCALAPPDATA%\Microsoft\WindowsApps</c> 下的 AppExecLink，带 ReparsePoint 属性）。
+    /// 两种方式都不可用时显式失败（不能空转通过）。
+    /// </summary>
+    private static (string Directory, string FileName) ResolveFileReparsePointFixture()
+    {
+        var dir = TestHelpers.TestDir();
+        var target = Path.Combine(dir, "target.md");
+        File.WriteAllText(target, "# x");
+        var link = Path.Combine(dir, "linked.md");
+        if (TryCreateFileLink(link, target))
+        {
+            return (dir, "linked.md");
+        }
+
+        var windowsApps = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Microsoft",
+            "WindowsApps");
+        try
+        {
+            if (Directory.Exists(windowsApps))
+            {
+                foreach (var file in Directory.EnumerateFiles(windowsApps))
+                {
+                    if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                    {
+                        return (windowsApps, Path.GetFileName(file));
+                    }
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // 读不到 WindowsApps：继续走显式失败。
+        }
+
+        Assert.Fail("环境无法创建文件符号链接，也找不到现有文件重解析点，无法验证最终文件 reparse 限制");
+        return default;
+    }
+
+    /// <summary>创建文件符号链接（不要求管理员/开发者模式的环境才成功）；失败返回 false。</summary>
+    private static bool TryCreateFileLink(string link, string target)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo("cmd.exe")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add("mklink");
+            startInfo.ArgumentList.Add(link);
+            startInfo.ArgumentList.Add(target);
+            using var process = Process.Start(startInfo);
+            if (process is not null)
+            {
+                process.StandardOutput.ReadToEnd();
+                process.StandardError.ReadToEnd();
+                if (process.WaitForExit(5000) && process.ExitCode == 0 && File.Exists(link))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // 回退到 .NET API。
+        }
+
+        try
+        {
+            File.CreateSymbolicLink(link, target);
+            return File.Exists(link);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                               or PlatformNotSupportedException or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     /// <summary>用 <c>mklink /J</c> 创建目录 junction（不需要管理员权限）；失败返回 false。</summary>

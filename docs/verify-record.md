@@ -1,5 +1,7 @@
 # 鲸鲸阅读器验收记录（修复波 C）
 
+> 历史记录：修复波 D 最终验收的数字（宿主 382 tests / web 21 files / 474 tests、162.8 MB、121/190/1150 ms 等）以 `out/verify-report.md` 为准；本文件保留修复波 C 当时的口径，不随波 D 改写。
+
 - 日期：2026-10-18
 - 分支：`feat/jingjing-reader`
 - 基线：`47669b2`（修复波 B 完成）；本文件随修复波 C 提交，精确哈希见 `git log -1 --oneline`

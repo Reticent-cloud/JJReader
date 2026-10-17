@@ -1,9 +1,9 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
-鲸鲸阅读器验收脚本（Task 17，spec §9.3；修复波 C 加固）。
+鲸鲸阅读器验收脚本（Task 17，spec §9.3；修复波 C/D 加固）。
 
 做什么：
-   0. 验收脚本自测（-SelfTest 的纯函数样本，正常验收也先跑这一项）
+   0. 验收脚本自测（-SelfTest 的 21 例纯函数样本；正常验收也先跑这一项，断言总数 21 且 0 失败）
    1. 构建（scripts/build.ps1）
    2. 宿主单测（dotnet test；skipped > 0 判 FAIL）
    3. 前端单测（web/ 下 npm test；skipped > 0 判 FAIL）
@@ -13,7 +13,8 @@
    7. --verify-render samples/full-syntax.md：首屏 ≤ 1000 ms、tocCount ∈ [36, 40]
    8. 端到端首屏：Process.Start → stdout 出现 READY 的墙钟耗时（< 1000 ms PASS；≤ 2500 ms WARN；> 2500 ms FAIL）
    9. --verify-render samples/huge-50k-lines.md：exit 0、READY 严格校验、首屏 ≤ 1500 ms、tocCount ≥ 480，
-      外层超时 60 s（超时重试 1 次并记录历史）；宿主私有内存峰值 ≤ 200 MB（采样最大间隔 > 250 ms 判 FAIL）
+      外层超时 60 s（干净超时重试 1 次并记录历史；重试前清理 WebView2 后代与临时 profile）；
+      宿主私有内存峰值 ≤ 200 MB（采样最大间隔 > 250 ms 判 FAIL）
   10. --verify-pdf：hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100
   11. 双开单实例：第 2 个进程 ExitCode == 0、JingjingReader 进程数 = 1
   12. 前端产物 ≤ 500 KB，且 web/dist 与 src/Host/Resources 两份字节一致
@@ -26,7 +27,11 @@
   - 不在本脚本里安装/卸载 .md 关联（不写注册表）：那属于 install.ps1/uninstall.ps1 与手测清单。
   - 隔离：本脚本创建纯 ASCII 临时目录，并把 JJ_DATA_DIR 指向 <临时目录>\appdata（settings/recent/
     positions/debug.log 与 WebView2 profile 都在其中），所有 exe 调用显式传入该环境变量；
-    验收结束后校验用户 %APPDATA%\JingjingReader 未被改写。
+    验收结束后校验用户 %APPDATA%\JingjingReader 未被改写。JJ_DATA_DIR 仅用于测试隔离：
+    finally 恢复调用方原有值（存在还原、不存在删除）；产品默认 UDF 仍是本地
+    %LOCALAPPDATA%\JingjingReader\WebView2。
+  - 超时路径：kill 根进程后 stdout/stderr 的异步读取一律带 5 s 超时（Receive-TaskText），
+    管道不关闭时丢弃输出继续，不能无界 .Result 等待。
   - 内存判定口径（Controller 裁定，T17 修正）：宿主进程（JingjingReader.exe）的 PrivateMemorySize64
     （Private Bytes）峰值 ≤ 200 MB，50 ms 采样取峰值。WebView2 进程组（直接子进程与全部后代）
     的 WorkingSet64 之和只作为信息项记录，不参与 PASS/FAIL；对应 spec §2.3 第 2 条。
@@ -75,6 +80,8 @@ $BuildScript = Join-Path $Root 'scripts/build.ps1'
 $TestProject = Join-Path $Root 'tests/host/JingjingReader.Tests.csproj'
 
 $MB = 1024 * 1024
+# 修复波 D：-SelfTest 断言固定样本总数（21）且 0 失败；用例被误删/漏注册时不能只看「零失败」。
+$ExpectedSelfTestCases = 21
 # 判定上限统一从这里引用：内存上限（MB）同时用于判定与文案，避免两处数字漂移。
 $MemoryLimitMb = 200
 $MemoryLimitBytes = $MemoryLimitMb * $MB
@@ -326,6 +333,27 @@ function Get-MatchValue {
     return ''
 }
 
+function Receive-TaskText {
+    <#
+      读取 ReadToEndAsync 的 Task 结果，带超时（默认 5 s）：进程被强杀后管道可能永远不关闭，
+      无界 .Result 会让脚本在超时路径上永久挂起。超时/异常一律返回 ''，由调用方继续
+      按「超时=True + 已收集到的输出」记录，不阻塞后续清理与报告。
+    #>
+    param(
+        $Task,
+        [int]$TimeoutMs = 5000
+    )
+    if ($null -eq $Task) { return '' }
+    try {
+        if (-not $Task.Wait($TimeoutMs)) {
+            return ''
+        }
+        return [string]$Task.Result
+    } catch {
+        return ''
+    }
+}
+
 function Invoke-Captured {
     <#
       启动一个控制台/图形进程，stdout/stderr 用 .NET Process 的异步读取捕获（UTF-8），带超时。
@@ -386,9 +414,9 @@ function Invoke-Captured {
 
     $stdout = ''
     $stderr = ''
-    try { $stdout = [string]$stdoutTask.Result } catch { $stdout = '' }
-    try { $stderr = [string]$stderrTask.Result } catch { $stderr = '' }
-
+    # 修复波 D：超时路径不能无界等待异步读取（kill 后管道可能不关闭）。
+    $stdout = Receive-TaskText -Task $stdoutTask -TimeoutMs 5000
+    $stderr = Receive-TaskText -Task $stderrTask -TimeoutMs 5000
     $exitCode = -1
     try {
         if ($process.HasExited) { $exitCode = [int]$process.ExitCode }
@@ -502,7 +530,8 @@ function Invoke-CapturedFirstReady {
     try { $null = $process.WaitForExit(10000) } catch { }
 
     $stderr = ''
-    try { $stderr = [string]$stderrTask.Result } catch { $stderr = '' }
+    # 修复波 D：超时 kill 后 stderr 管道可能一直不关闭，读取必须带超时。
+    $stderr = Receive-TaskText -Task $stderrTask -TimeoutMs 5000
     $exitCode = -1
     try {
         if ($process.HasExited) { $exitCode = [int]$process.ExitCode }
@@ -533,6 +562,7 @@ function Invoke-HugeRenderProbe {
     )
     $result = [pscustomobject]@{
         Launched          = $false
+        ProcessId         = 0
         ExitCode          = -1
         TimedOut          = $false
         StdOut            = ''
@@ -584,6 +614,7 @@ function Invoke-HugeRenderProbe {
         $process.StartInfo = $startInfo
         $null = $process.Start()
         $result.Launched = $true
+        $result.ProcessId = [int]$process.Id
         Register-TrackedProcess -Process $process -ExpectedPath $Exe
         [System.IO.File]::WriteAllText($startFile, [string]$process.Id, [System.Text.UTF8Encoding]::new($false))
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
@@ -634,8 +665,9 @@ function Invoke-HugeRenderProbe {
         New-Item -ItemType File -Path $stopFile -Force -ErrorAction SilentlyContinue | Out-Null
         $result.WebView = Receive-WebViewSampler -Sampler $sampler -TimeoutMs 20000
         $sampler = $null
-        try { $result.StdOut = [string]$stdoutTask.Result } catch { $result.StdOut = '' }
-        try { $result.StdErr = [string]$stderrTask.Result } catch { $result.StdErr = '' }
+        # 修复波 D：超时 kill 后两路管道都可能一直不关闭，读取必须带超时。
+        $result.StdOut = Receive-TaskText -Task $stdoutTask -TimeoutMs 5000
+        $result.StdErr = Receive-TaskText -Task $stderrTask -TimeoutMs 5000
         try {
             if ($process.HasExited) { $result.ExitCode = [int]$process.ExitCode }
         } catch {
@@ -1218,6 +1250,72 @@ function Stop-ProcessTree {
     }
 }
 
+function Stop-WebViewDescendants {
+    <#
+      按父 PID 停止 WebView2 进程组（直接子进程与全部后代）。
+      修复波 D：5 万行超时重试前必须清掉残留的 msedgewebview2，否则它们可能持有临时 profile、
+      让第二次启动复用半初始化环境（也可能被后续单实例检查误认为宿主进程）。
+      只处理 Name=msedgewebview2.exe 的进程；CIM 不可用时不阻塞重试。
+    #>
+    param([int]$RootProcessId)
+    if ($RootProcessId -le 0) { return 0 }
+    $stopped = 0
+    try {
+        $webviews = @(Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" -ErrorAction SilentlyContinue)
+        if ($webviews.Count -eq 0) { return 0 }
+        $childrenByParent = @{}
+        foreach ($item in $webviews) {
+            $parentId = [int]$item.ParentProcessId
+            if (-not $childrenByParent.ContainsKey($parentId)) {
+                $childrenByParent[$parentId] = New-Object System.Collections.Generic.List[int]
+            }
+            $childrenByParent[$parentId].Add([int]$item.ProcessId)
+        }
+        $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+        $queue = New-Object System.Collections.Generic.Queue[int]
+        $queue.Enqueue($RootProcessId)
+        while ($queue.Count -gt 0) {
+            $currentId = $queue.Dequeue()
+            if (-not $childrenByParent.ContainsKey($currentId)) { continue }
+            foreach ($childId in $childrenByParent[$currentId]) {
+                if ($seen.Add($childId)) {
+                    $queue.Enqueue($childId)
+                }
+            }
+        }
+        foreach ($processId in $seen) {
+            try {
+                Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+                $stopped += 1
+            } catch {
+                # 进程已在收集与停止之间退出：跳过。
+            }
+        }
+    } catch {
+        # CIM 不可用：重试继续，由 profile 清理与下一次启动自行恢复。
+    }
+    return $stopped
+}
+
+function Clear-WebViewProfile {
+    <#
+      修复波 D：重试前清理临时 WebView2 profile 子目录（<JJ_DATA_DIR>\WebView2）。
+      只接受本次验收的隔离数据目录（调用方保证），失败重试若干次后放弃，不阻塞验收。
+    #>
+    param([string]$DataDir)
+    if ([string]::IsNullOrWhiteSpace($DataDir)) { return }
+    $profile = Join-Path $DataDir 'WebView2'
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        try {
+            if (-not (Test-Path -LiteralPath $profile)) { return }
+            Remove-Item -LiteralPath $profile -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            Start-Sleep -Milliseconds 200
+        }
+    }
+}
+
 function Stop-OurProcesses {
     <#
       只清理本次启动的宿主及其后代：根 PID 来自 $OurAppPids，另加「可执行文件路径等于本次副本 exe」
@@ -1364,8 +1462,10 @@ if ($SelfTest) {
         if (-not $case.Pass) { $selfTestFailures += 1 }
     }
     Write-Host ''
-    if ($selfTestFailures -gt 0) {
-        Write-Host "SELFTEST FAILED（$selfTestFailures / $($selfTestCases.Count) 例失败）" -ForegroundColor Red
+    # 修复波 D：不仅要求 0 失败，还要求固定样本总数恰为 21（用例被删/漏注册同样 FAIL）。
+    $selfTestOk = ($selfTestFailures -eq 0) -and ($selfTestCases.Count -eq $ExpectedSelfTestCases)
+    if (-not $selfTestOk) {
+        Write-Host "SELFTEST FAILED（$selfTestFailures 例失败；期望 $ExpectedSelfTestCases 例，实际 $($selfTestCases.Count) 例）" -ForegroundColor Red
         exit 1
     }
     Write-Host "SELFTEST OK（$($selfTestCases.Count) 例全部通过）" -ForegroundColor Green
@@ -1392,6 +1492,9 @@ $null = [System.IO.Directory]::CreateDirectory((Join-Path $TempRoot 'pdf'))
 $JjDataDir = Join-Path $TempRoot 'appdata'
 $null = [System.IO.Directory]::CreateDirectory($JjDataDir)
 $AppEnv = @{ JJ_DATA_DIR = $JjDataDir }
+# 修复波 D：保存调用方原有的 JJ_DATA_DIR（存在性 + 值），finally 原样恢复，避免污染后续命令。
+$PreviousJjDataDirExists = Test-Path Env:JJ_DATA_DIR
+$PreviousJjDataDir = $env:JJ_DATA_DIR
 # 让 dotnet test / npm test 等子进程也继承隔离变量（DebugLog 等测试辅助不会写用户 %APPDATA%）。
 $env:JJ_DATA_DIR = $JjDataDir
 # 验收前后比对用户真实 recent.json：隔离失效时这一项必须暴露出来。
@@ -1425,10 +1528,13 @@ try {
     Write-Host '[0/13] 验收脚本自测（-SelfTest 纯函数样本）…'
     $scriptCases = Invoke-SelfTestChecks
     $scriptCaseFailures = @($scriptCases | Where-Object { -not $_.Pass })
-    $scriptTestOk = ($scriptCaseFailures.Count -eq 0)
-    $scriptTestActual = "$($scriptCases.Count) 例固定样本，$($scriptCaseFailures.Count) 例失败"
+    # 修复波 D：正常验收同样锁定固定样本总数 21（与 -SelfTest 口径一致）。
+    $scriptTestOk = ($scriptCaseFailures.Count -eq 0) -and ($scriptCases.Count -eq $ExpectedSelfTestCases)
+    $scriptTestActual = "$($scriptCases.Count) 例固定样本（期望 $ExpectedSelfTestCases），$($scriptCaseFailures.Count) 例失败"
     if ($scriptCaseFailures.Count -gt 0) {
         $scriptTestActual += '；失败：' + (($scriptCaseFailures | ForEach-Object { $_.Name }) -join '、')
+    } elseif ($scriptCases.Count -ne $ExpectedSelfTestCases) {
+        $scriptTestActual += "；样本总数不是 $ExpectedSelfTestCases（用例被删/漏注册）"
     }
     Add-Result -Name '验收脚本自测' -Expect 'Test-ReadyPayload / Test-HostTestSummary / Find-PdfReadyJson 等固定样本全部 PASS' `
         -Actual $scriptTestActual -Pass $scriptTestOk
@@ -1753,7 +1859,11 @@ try {
                 $hugeDebugTail = $tail
                 $hugeHistory.Add("第 $attempt 次超时（> $HugeTimeoutSeconds s），debug.log 尾部：$tail")
                 if ($attempt -lt 2) {
-                    Write-Host "[WARN] 5 万行首屏第 1 次超时（> $HugeTimeoutSeconds s），清理后重试 1 次" -ForegroundColor Yellow
+                    # 修复波 D：重试前按父 PID 杀掉残留 WebView2 后代，并清理临时 profile 子目录。
+                    $webViewStopped = Stop-WebViewDescendants -RootProcessId ([int]$probe.ProcessId)
+                    Clear-WebViewProfile -DataDir $JjDataDir
+                    $hugeHistory.Add("第 $attempt 次超时后清理：WebView2 后代 $webViewStopped 个；临时 profile <JJ_DATA_DIR>\WebView2 已清理")
+                    Write-Host "[WARN] 5 万行首屏第 1 次超时（> $HugeTimeoutSeconds s），清理 WebView2 后代 $webViewStopped 个与临时 profile 后重试 1 次" -ForegroundColor Yellow
                     continue
                 }
             }
@@ -2138,7 +2248,7 @@ try {
         $treeReport = if ($treeApplicable) { (Format-Mb $peakTreeBytes) } else { '不适用（宿主已退出或 WorkingSet64 不可读，不按 0 计）' }
         $reportLines.Add('- 整树 WorkingSet（信息）：峰值 ' + $treeReport + '（同一 WebView2 采样时刻的宿主 `WorkingSet64` + WebView2 进程组求和；仅参考）。')
     }
-    $reportLines.Add('- 临时目录与隔离：优先 `%TEMP%`；若路径含非 ASCII 字符，依次回退 `%LOCALAPPDATA%\Temp`、脚本所在盘根目录下的 `jj-verify-<guid>`。要求纯 ASCII 的原因是「隔离 + 路径含中文时的兼容」：WebView2 子进程在该目录创建用户数据目录，且 `--verify-*` 的命令行/环境变量在非 ASCII 路径上受系统代码页影响。所有 exe 调用都显式传 `JJ_DATA_DIR=<临时目录>\appdata`（数据目录 + WebView2 profile），并校验用户 `%APPDATA%\JingjingReader\recent.json` 的 mtime/SHA256 前后一致。')
+    $reportLines.Add('- 临时目录与隔离：优先 `%TEMP%`；若路径含非 ASCII 字符，依次回退 `%LOCALAPPDATA%\Temp`、脚本所在盘根目录下的 `jj-verify-<guid>`。要求纯 ASCII 的原因是「隔离 + 路径含中文时的兼容」：WebView2 子进程在该目录创建用户数据目录，且 `--verify-*` 的命令行/环境变量在非 ASCII 路径上受系统代码页影响。所有 exe 调用都显式传 `JJ_DATA_DIR=<临时目录>\appdata`（数据目录 + WebView2 profile），并校验用户 `%APPDATA%\JingjingReader\recent.json` 的 mtime/SHA256 前后一致。`JJ_DATA_DIR` 仅用于测试隔离（finally 恢复调用方原值）；产品默认 WebView2 UDF 仍是本地 `%LOCALAPPDATA%\JingjingReader\WebView2`，不进入漫游 `%APPDATA%`。')
     $reportLines.Add('- 首屏耗时有两套口径：`elapsedMs` 来自前端 `renderDone.elapsedMs`（渲染器耗时，`--verify-render` 的 READY JSON，≤ 1000/1500 ms 判定）；「端到端首屏」是 `Process.Start → stdout READY` 的墙钟耗时（含进程启动、WebView2 初始化、文件读取），< 1000 ms PASS、≤ 2500 ms WARN、> 2500 ms FAIL。spec 的 1.0 s 是设计目标，当前 CLI 冷启动含 WebView2 初始化，故 1.0–2.5 s 记 WARN 不判 FAIL。')
     $reportLines.Add('- READY 必须满足 `ready`=true、`elapsedMs` 为区间内 Number、`path` 与传入文件一致、`tocCount` 为 [下限, 上限] 内整数（full-syntax 36–40、5 万行 ≥ 480），否则该项 FAIL 并打印原始 READY 行。')
     $reportLines.Add('- 双开单实例：先等第 1 个宿主出现，再启动第 2 个；断言第 2 个进程退出且 ExitCode=0、3 s 后 JingjingReader 进程数=1；隔离数据目录 `debug.log` 的 `load path=` 交叉校验只作附加证据，不影响判定。若验收前已有用户实例在运行，该项明确失败而不是误杀用户进程。')
@@ -2197,4 +2307,14 @@ try {
     Stop-OurProcesses
     Start-Sleep -Milliseconds 300
     try { Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    # 修复波 D：恢复调用方原有的 JJ_DATA_DIR（存在则还原值，不存在则删除），不把隔离变量泄漏给后续命令。
+    try {
+        if ($PreviousJjDataDirExists) {
+            $env:JJ_DATA_DIR = $PreviousJjDataDir
+        } else {
+            Remove-Item Env:JJ_DATA_DIR -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Host '无法恢复调用方原有的 JJ_DATA_DIR 环境变量。'
+    }
 }

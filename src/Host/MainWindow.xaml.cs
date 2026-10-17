@@ -1484,8 +1484,9 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 组装页面 HTML：读嵌入资源 index.html + md-engine.js，把引擎内联进占位 script 后交给 NavigateToString。
+    /// internal 仅用于 PageHtmlTests 验证转义后的页面（产品调用链不变）。
     /// </summary>
-    private static string BuildPageHtml()
+    internal static string BuildPageHtml()
     {
         var assembly = typeof(MainWindow).Assembly;
         var indexHtml = ReadEmbeddedResource(assembly, ".index.html");
@@ -1505,16 +1506,20 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 把引擎源码里会提前结束/开启 HTML 解析的片段做等价转义（M10）：
-    /// <c>&lt;/script</c> → <c>&lt;\/script</c>，<c>&lt;script</c> → <c>&lt;\script</c>，
-    /// <c>&lt;!--</c> → <c>&lt;\!--</c>。三者在 JS 字符串/模板里语义不变（<c>\s</c>/<c>\!</c> 都是未识别转义），
-    /// 但 HTML 解析器不会再把它们当成标签/注释，避免未来产物把页面提前截断成空白窗口。幂等：已转义的片段不会二次命中。
+    /// <c>&lt;/script</c> → <c>&lt;\/script</c>，<c>&lt;!--</c> → <c>&lt;\!--</c>。
+    /// 两者在 JS 字符串/正则/模板里语义不变（<c>\/</c>、<c>\!</c> 都是未识别转义），
+    /// 但 HTML 解析器不会再把它们当成脚本结束标签/注释起始（避免 double-escaped 状态），
+    /// 防止未来产物把页面提前截断成空白窗口。
+    /// 注意：<b>不改写 <c>&lt;script</c></b>——hljs XML 模式里的 <c>/&lt;script(?=\s|&gt;)/</c>
+    /// 被改成 <c>&lt;\script</c> 后，<c>\s</c> 会变成「空白字符类」而破坏正则，<c>&lt;script&gt;</c>
+    /// 代码块高亮随之降级。脚本数据态里 <c>&lt;script</c> 本身不会闭合当前脚本。
+    /// 幂等：已转义的片段不会二次命中。
     /// </summary>
     internal static string EscapeScriptContent(string script)
     {
         ArgumentNullException.ThrowIfNull(script);
 
         var escaped = Regex.Replace(script, "<!--", "<\\!--");
-        escaped = Regex.Replace(escaped, "<script", "<\\script", RegexOptions.IgnoreCase);
         return Regex.Replace(escaped, "</script", "<\\/script", RegexOptions.IgnoreCase);
     }
 

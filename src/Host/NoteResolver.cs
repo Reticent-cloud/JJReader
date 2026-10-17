@@ -171,7 +171,10 @@ public static class NoteResolver
         if (string.IsNullOrEmpty(candidateDirectory))
         {
             var file = FindFile(subdirectory, candidate);
-            return file is null ? null : new NoteHit(file, Path.GetRelativePath(root, file));
+            // 文件级重解析点（symlink/AppExecLink 等）与目录一样拒绝：不能只查中间目录段。
+            return file is null || IsReparsePoint(file)
+                ? null
+                : new NoteHit(file, Path.GetRelativePath(root, file));
         }
 
         return ResolveExisting(root, subPrefix + "\\" + candidate);
@@ -201,7 +204,8 @@ public static class NoteResolver
 
             // 与 BFS 路径一致的重解析点检查（C1）：显式目标也逐段拒绝 junction/symlink，
             // 否则「文档目录内」的字符串前缀可以被重定向到目录外。隐藏目录仍允许显式指定。
-            if (!isFile && IsReparsePoint(match))
+            // 修复波 D：最终文件本身也要查（文件级 symlink/AppExecLink 不能绕过）。
+            if (IsReparsePoint(match))
             {
                 return null;
             }
