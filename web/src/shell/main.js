@@ -6,6 +6,11 @@
 
 import { cancelScheduledFrame, scheduleFrame } from '../frame.js';
 import {
+  appendLinkDefinitions,
+  extractLinkDefinitions,
+  utf8Length,
+} from '../chunk.js';
+import {
   applySettings,
   DEFAULT_SETTINGS,
   normalizeSettings,
@@ -49,16 +54,6 @@ function escapeHtml(text) {
   });
 }
 
-/** 文本的 UTF-8 字节数（renderDone.bytes 用；手写计数，不依赖 TextEncoder 是否存在）。 */
-function utf8Length(text) {
-  let bytes = 0;
-  for (const ch of String(text ?? '')) {
-    const codePoint = ch.codePointAt(0);
-    bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
-  }
-  return bytes;
-}
-
 /**
  * 标题是否不可见（在闭合的 <details> / hidden 容器里）。
  * 这类标题的 offsetTop / offsetHeight 都是 0：既不能参与滚动高亮（会与首标题抢），
@@ -70,6 +65,9 @@ function isHeadingHidden(element) {
   }
   return element.closest('details:not([open])') !== null || element.closest('[hidden]') !== null;
 }
+
+/** 正文标题选择器：全文扫描与分块增量配对共用同一口径。 */
+const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
 
 // 工具条按钮：全部用 DOM API 创建（不拼 HTML），统一的 class/title 便于 CSS 与可访问性。
 function createToolbarButton(label, id, title) {
@@ -244,6 +242,7 @@ export function mountShell({ root, post } = {}) {
     dirListing: null,
     // TOC 数据 = 渲染后 DOM 中的实际标题（顺序/文本从 DOM 取），元素带 { id, text, level, top }
     headings: [],
+    headingById: new Map(),
     spy: null,
     activeLink: null,
     // 最近一次 extractHeadings 的标题数（renderDone.tocCount 复用，避免为统计再多 parse 一次）
@@ -299,106 +298,122 @@ export function mountShell({ root, post } = {}) {
   }
 
   /**
-   * 标题 id 兜底（Task 10 关键）：DOMPurify 会剥掉与 DOM 同名的 id（title/body/form/constructor…），
-   * 因此渲染后必须按 extractHeadings 的顺序把缺失/为空的 id 重新赋回（属性级兜底，不是只改提取列表）。
-   * 配对口径：按 DOM 顺序 + 文本匹配（原始 HTML 标题不在 extractHeadings 里，不能按索引硬配）；
-   * 实在配不上（纯标点标题等空 slug）时生成 section-N 兜底 id。TOC 数据一律取自渲染后的 DOM。
-   * Task 11：extracted 由调用方传入——分块渲染只对全文调用一次 extractHeadings，避免每块重复解析全文；
-   * 重复调用幂等（已渲染块保留既有 id，新块接着游标继续配对）。重复 id 视为缺失重新配对：
+   * 创建标题 id 分配器（Task 10 兜底口径 + Task 11 增量）：
+   * 维护「全文标题游标 + 已定稿 id 集合」，每次 assign(elements) 只处理传入的元素——
+   * 分块渲染每块成本 O(新块)，不再每块重扫整个 #content（评审 #3：避免 O(n²) 冻结）。
+   * 配对口径不变：按 DOM 顺序 + 文本匹配（原始 HTML 标题不在 extractHeadings 里，不能按索引硬配）；
+   * 实在配不上（纯标点标题等空 slug）时生成 section-N 兜底 id。重复 id 视为缺失重新配对：
    * 分块渲染时每块独立 parse，同名标题在不同块里会拿到相同 id，必须在这里改成全文唯一的 id。
-   * @param {{id: string, text: string, level: number}[]} extracted 全文标题列表
-   * @returns {{id: string, text: string, level: number, top: number, hidden: boolean}[]}
+   * @param {{id: string, text: string, level: number}[]} extracted 全文标题列表（全文只 parse 一次）
+   * @param {{reservedIds?: Iterable<string>}} [options]
+   *   reservedIds：一次性渲染时先登记容器里已有的 id（避免兜底 slug / 游标配对撞车）；
+   *   分块增量路径不登记——新块的原始 id 交给游标重配对，跨块重复在 kept 里检测。
+   * @returns {{assign: (elements: Iterable<Element>) => {id: string, text: string, level: number, top: number, hidden: boolean}[]}}
    */
-  function assignHeadingIds(extracted) {
-    const elements = content.querySelectorAll('h1, h2, h3, h4, h5, h6');
+  function createHeadingAssigner(extracted, { reservedIds } = {}) {
     const fullHeadings = Array.isArray(extracted) ? extracted : [];
-    // renderDone.tocCount 复用这次提取结果（T9 carry-forward：不为统计再 parse 一遍）
-    state.extractedCount = fullHeadings.length;
-    if (elements.length === 0) {
-      return [];
-    }
     const engine = globalThis.JJ;
     const slugify = engine && typeof engine.slugify === 'function' ? engine.slugify : null;
-
-    // 已占用的 id：来自清洗后仍保留 id 的标题（重赋前先登记，避免兜底生成撞车）。
-    const used = new Set();
-    for (const element of elements) {
-      if (element.id) {
-        used.add(element.id);
+    const reserved = new Set();
+    for (const id of reservedIds ?? []) {
+      if (id) {
+        reserved.add(id);
       }
     }
-    // 本次扫描中已保留的 id；再遇到同一个 id 说明是重复（分块渲染独立 parse / 原始 HTML 撞车），
-    // 按「缺失」处理并重新配对，保证 TOC 链接（#id-2）能定位到元素。
-    const keptIds = new Set();
+    // 已定稿的 id（分块渲染跨块累积）；再遇到同一个 id 说明是重复，按「缺失」重新配对，
+    // 保证 TOC 链接（#id-2）能定位到元素。
+    const kept = new Set();
+    let cursor = 0;
+    let assignedCount = 0;
 
-    function fallbackId(headings) {
-      let suffix = headings.length + 1;
+    function fallbackId() {
+      let suffix = assignedCount + 1;
       let candidate = `section-${suffix}`;
-      while (used.has(candidate)) {
+      while (reserved.has(candidate) || kept.has(candidate)) {
         suffix += 1;
         candidate = `section-${suffix}`;
       }
       return candidate;
     }
 
-    const headings = [];
-    let cursor = 0;
-    for (const element of elements) {
-      const text = (element.textContent || '').trim();
-      let id = element.id;
-      if (id && keptIds.has(id)) {
-        // 重复 id：清掉后走下面「缺失 id」的配对分支，重新分配全文唯一 id
-        id = '';
-        element.removeAttribute('id');
-      }
-      if (id) {
-        // 已有 id：把 extractHeadings 游标推进到同名项之后，保持顺序配对（原始 HTML 标题会自然跳过）
-        for (let i = cursor; i < fullHeadings.length; i += 1) {
-          const candidate = fullHeadings[i];
-          if (candidate && typeof candidate === 'object' && candidate.id === id) {
-            cursor = i + 1;
-            break;
-          }
+    function assign(elements) {
+      const headings = [];
+      for (const element of elements) {
+        const text = (element.textContent || '').trim();
+        let id = element.id;
+        if (id && kept.has(id)) {
+          // 重复 id：清掉后走下面「缺失 id」的配对分支，重新分配全文唯一 id
+          id = '';
+          element.removeAttribute('id');
         }
-      } else {
-        // 缺失 id：按顺序找文本一致、id 非空且未被占用的提取项（title/body 等被清洗剥掉的情形）
-        let matched = -1;
-        for (let i = cursor; i < fullHeadings.length; i += 1) {
-          const candidate = fullHeadings[i];
-          if (!candidate || typeof candidate !== 'object') {
-            continue;
+        if (id) {
+          // 已有 id：把 extractHeadings 游标推进到同名项之后，保持顺序配对（原始 HTML 标题会自然跳过）
+          for (let i = cursor; i < fullHeadings.length; i += 1) {
+            const candidate = fullHeadings[i];
+            if (candidate && typeof candidate === 'object' && candidate.id === id) {
+              cursor = i + 1;
+              break;
+            }
           }
-          if (
-            typeof candidate.id === 'string' &&
-            candidate.id !== '' &&
-            !used.has(candidate.id) &&
-            String(candidate.text ?? '').trim() === text
-          ) {
-            matched = i;
-            break;
-          }
-        }
-        if (matched >= 0) {
-          id = fullHeadings[matched].id;
-          cursor = matched + 1;
-        } else if (slugify) {
-          id = slugify(text, used) || fallbackId(headings);
         } else {
-          id = fallbackId(headings);
+          // 缺失 id：按顺序找文本一致、id 非空且未被占用的提取项（title/body 等被清洗剥掉的情形）
+          let matched = -1;
+          for (let i = cursor; i < fullHeadings.length; i += 1) {
+            const candidate = fullHeadings[i];
+            if (!candidate || typeof candidate !== 'object') {
+              continue;
+            }
+            if (
+              typeof candidate.id === 'string' &&
+              candidate.id !== '' &&
+              !kept.has(candidate.id) &&
+              !reserved.has(candidate.id) &&
+              String(candidate.text ?? '').trim() === text
+            ) {
+              matched = i;
+              break;
+            }
+          }
+          if (matched >= 0) {
+            id = fullHeadings[matched].id;
+            cursor = matched + 1;
+          } else if (slugify) {
+            id = slugify(text, new Set([...reserved, ...kept])) || fallbackId();
+          } else {
+            id = fallbackId();
+          }
+          element.id = id;
         }
-        element.id = id;
+        kept.add(id);
+        assignedCount += 1;
+        headings.push({
+          id,
+          text,
+          level: readHeadingLevel(element),
+          top: readHeadingTop(element),
+          hidden: isHeadingHidden(element),
+        });
       }
-      keptIds.add(id);
-      used.add(id);
-      headings.push({
-        id,
-        text,
-        level: readHeadingLevel(element),
-        top: readHeadingTop(element),
-        hidden: isHeadingHidden(element),
-      });
+      return headings;
     }
-    return headings;
+
+    return { assign };
+  }
+
+  /**
+   * 全文扫描版（一次性渲染 / 分块兜底路径）：登记容器里已有 id → 按顺序配对全部标题。
+   * @returns {{id: string, text: string, level: number, top: number, hidden: boolean}[]}
+   */
+  function assignHeadingIds(extracted) {
+    const elements = content.querySelectorAll(HEADING_SELECTOR);
+    state.extractedCount = Array.isArray(extracted) ? extracted.length : 0;
+    const reservedIds = [];
+    for (const element of elements) {
+      if (element.id) {
+        reservedIds.push(element.id);
+      }
+    }
+    return createHeadingAssigner(extracted, { reservedIds }).assign(elements);
   }
 
   /**
@@ -424,7 +439,7 @@ export function mountShell({ root, post } = {}) {
   /** 采集标题元素相对 #content 的实时位置（保持 id/text/level，只更新 top 与 hidden）。 */
   function collectHeadingTops() {
     const byId = new Map();
-    for (const element of content.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+    for (const element of content.querySelectorAll(HEADING_SELECTOR)) {
       if (element.id) {
         byId.set(element.id, element);
       }
@@ -472,6 +487,50 @@ export function mountShell({ root, post } = {}) {
     rebuildSpy(headings);
   }
 
+  /**
+   * 从新增顶层节点里按 DOM 顺序收集标题元素（分块增量配对的输入：不再扫整个 #content）。
+   * 块渲染的根元素本身可能就是标题（块以 `## 标题` 开头时），因此根元素也要 matches 一次。
+   */
+  function collectHeadingsFromNodes(nodes) {
+    const elements = [];
+    for (const node of Array.isArray(nodes) ? nodes : []) {
+      if (!node || node.nodeType !== 1) {
+        continue;
+      }
+      if (typeof node.matches === 'function' && node.matches(HEADING_SELECTOR)) {
+        elements.push(node);
+      }
+      if (typeof node.querySelectorAll === 'function') {
+        elements.push(...node.querySelectorAll(HEADING_SELECTOR));
+      }
+    }
+    return elements;
+  }
+
+  /** 把这次新增标题的实时 top/hidden 写回 TOC 数据（按 id 对应；未进全文标题表的原始 HTML 标题不影响 TOC）。 */
+  function applyHeadingTops(headings) {
+    for (const heading of headings) {
+      const entry = state.headingById.get(heading.id);
+      if (entry) {
+        entry.top = heading.top;
+        entry.hidden = heading.hidden;
+      }
+    }
+  }
+
+  /** 分块增量渲染后的滚动联动同步：对象共享，只把新增 top 交给 spy（不重扫全文）。 */
+  function syncSpyHeadings() {
+    if (!state.spy || state.headings.length === 0) {
+      return;
+    }
+    if (typeof state.spy.setHeadings === 'function') {
+      state.spy.setHeadings(state.headings);
+      state.spy.update();
+      return;
+    }
+    rebuildSpy(collectHeadingTops());
+  }
+
   /** 把刷新合并到下一帧：拖拽/图片/排版变化会连续触发，逐次采集会造成抖动。 */
   function scheduleRefreshHeadingTops() {
     if (destroyed || refreshFrame !== null) {
@@ -511,6 +570,11 @@ export function mountShell({ root, post } = {}) {
    */
   function renderToc(headings) {
     state.headings = headings;
+    state.headingById = new Map(
+      (Array.isArray(headings) ? headings : [])
+        .filter((heading) => heading && typeof heading === 'object' && typeof heading.id === 'string')
+        .map((heading) => [heading.id, heading]),
+    );
     state.activeLink = null;
     if (state.spy) {
       state.spy.destroy();
@@ -652,12 +716,47 @@ export function mountShell({ root, post } = {}) {
   }
 
   /**
-   * TOC 点击：阻止默认跳转，滚动到目标标题。
+   * 滚动到指定标题（侧栏 TOC 与 `[TOC]` 内联目录共用；评审 #1：两处入口不能各写一套）。
    * 位置以元素**实时** offsetTop 为准（快照可能因重排过期：即使某次刷新漏了时机也不会跳错），
    * 找不到元素时才退回标题快照 heading.top。
    * Task 11：分块模式下目标所在块可能还没渲染——先 renderAll() 再重试定位；huge 模式一律先 renderAll。
    * renderAll 后仍找不到（id 被清洗换名等）才回退快照，快照也无效（未渲染标题的 Infinity）则不滚错位置。
+   * @returns {boolean} 是否找到可滚动的位置
    */
+  function scrollToHeading(id) {
+    if (!id) {
+      return false;
+    }
+    let element = findHeadingElement(id);
+    if (state.chunked && (state.huge || !element)) {
+      try {
+        state.chunked.renderAll();
+      } catch {
+        // 渲染剩余块失败时保留已渲染内容，下面按快照尽力定位
+      }
+      // 新块的标题 id/enhance 已由 onChunkRendered 增量处理；这里刷新一次标题 top 让快照可用
+      refreshHeadingTops();
+      element = findHeadingElement(id);
+    }
+
+    const heading = state.headings.find((item) => item.id === id);
+    if (!heading && !element) {
+      return false;
+    }
+    const baseTop = element ? readHeadingTop(element) : heading.top;
+    if (!Number.isFinite(baseTop)) {
+      return false; // 目标仍未渲染且没有可用位置：宁可不动，也不滚到错误位置
+    }
+    const top = baseTop - TOC_TOOLBAR_OFFSET;
+    if (typeof content.scrollTo === 'function') {
+      content.scrollTo({ top, behavior: 'smooth' });
+    } else {
+      content.scrollTop = top;
+    }
+    return true;
+  }
+
+  /** 侧栏 TOC 点击：阻止默认跳转，复用 scrollToHeading（分块模式目标未渲染时先 renderAll）。 */
   function onTocClick(event) {
     const target = event.target;
     if (!target || typeof target.closest !== 'function') {
@@ -668,38 +767,24 @@ export function mountShell({ root, post } = {}) {
       return;
     }
     event.preventDefault();
-    const href = link.getAttribute('href') || '';
-    const id = href.slice(1);
-    if (!id) {
+    scrollToHeading((link.getAttribute('href') || '').slice(1));
+  }
+
+  /**
+   * 正文内 `[TOC]` 内联目录点击（评审 #1）：委托到 #content，只接管 nav.toc-inline 内的锚点链接。
+   * 脚注回跳等其它站内锚点保持浏览器默认行为；分块模式下目标未渲染时先 renderAll 再实时定位。
+   */
+  function onContentClick(event) {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') {
       return;
     }
-
-    let element = findHeadingElement(id);
-    if (state.chunked && (state.huge || !element)) {
-      try {
-        state.chunked.renderAll();
-      } catch {
-        // 渲染剩余块失败时保留已渲染内容，下面按快照尽力定位
-      }
-      // 新块的标题 id/enhance 已由 onChunkRendered 处理；这里刷新标题 top 让快照可用
-      refreshHeadingTops();
-      element = findHeadingElement(id);
-    }
-
-    const heading = state.headings.find((item) => item.id === id);
-    if (!heading && !element) {
+    const link = target.closest('a[href^="#"]');
+    if (!link || !content.contains(link) || !link.closest('nav.toc-inline')) {
       return;
     }
-    const baseTop = element ? readHeadingTop(element) : heading.top;
-    if (!Number.isFinite(baseTop)) {
-      return; // 目标仍未渲染且没有可用位置：宁可不动，也不滚到错误位置
-    }
-    const top = baseTop - TOC_TOOLBAR_OFFSET;
-    if (typeof content.scrollTo === 'function') {
-      content.scrollTo({ top, behavior: 'smooth' });
-    } else {
-      content.scrollTop = top;
-    }
+    event.preventDefault();
+    scrollToHeading((link.getAttribute('href') || '').slice(1));
   }
 
   function openAaPanel() {
@@ -816,6 +901,24 @@ export function mountShell({ root, post } = {}) {
     }
   }
 
+  /** 只增强本次新增的顶层节点（幂等；评审 #3：不再每块重扫整个 #content）。 */
+  function enhanceNodes(nodes) {
+    const engine = globalThis.JJ;
+    if (!engine || typeof engine.enhance !== 'function') {
+      return;
+    }
+    for (const node of Array.isArray(nodes) ? nodes : []) {
+      if (!node || node.nodeType !== 1) {
+        continue;
+      }
+      try {
+        engine.enhance(node, { baseUrl: state.baseUrl });
+      } catch {
+        // 单块增强失败（复制按钮/图片占位）不能影响已经渲染好的正文
+      }
+    }
+  }
+
   /** 拆掉上一次的分块渲染器（断开哨兵观察器）；下次 load 前先调用，避免观察器泄漏到新文档。 */
   function clearChunked() {
     if (!state.chunked) {
@@ -864,7 +967,9 @@ export function mountShell({ root, post } = {}) {
 
   /**
    * 分块渲染（Task 11 大文档）：全文只 extractHeadings 一次；首屏只渲染预算内块，其余由哨兵懒加载。
-   * 每追加一块：首块挂 front matter 属性块 → 标题 id 兜底（extract 结果复用，不重复解析全文）→ enhance → 刷新标题 top。
+   * 每追加一块：首块挂 front matter 属性块 → 只对**新增节点**做标题 id 增量配对与 enhance → 同步新 top。
+   * 评审 #2：全文预抽取引用式链接定义，每块渲染前追加（定义不产生输出，解决文末定义跨块失效）。
+   * 评审 #3：每块操作 O(新块)——不再对整个容器重跑 assignHeadingIds/enhance。
    * TOC 基于全文标题；未渲染标题的 top 记为 Infinity（滚动联动跳过），渲染后回填真实位置。
    */
   function renderChunked(markdown, huge, engine) {
@@ -882,8 +987,11 @@ export function mountShell({ root, post } = {}) {
     }));
 
     content.replaceChildren();
-    state.headings = tocHeadings;
     renderToc(tocHeadings);
+    // 评审 #2：分块独立 parse 时文末定义对前面块不可见——全文预抽取后逐块追加（块内已有同名定义不重复）
+    const linkDefinitions = extractLinkDefinitions(markdown);
+    // 评审 #3：标题 id 配对改为增量（全局 id 集合 + 全文标题游标），每块只处理新节点
+    const assigner = createHeadingAssigner(extracted);
 
     let frontmatterMounted = false;
     const initialBytes = Number.isFinite(engine.INITIAL_BYTES) ? engine.INITIAL_BYTES : undefined;
@@ -893,23 +1001,29 @@ export function mountShell({ root, post } = {}) {
         blocks,
         initialBytes,
         observerRoot: content,
-        render: (blockText) =>
-          engine.renderMarkdown(blockText, {
+        render: (blockText) => {
+          const source = appendLinkDefinitions(blockText, linkDefinitions);
+          return engine.renderMarkdown(source, {
             baseUrl: state.baseUrl,
             // 大文件模式关闭高亮：围栏只输出转义纯文本，省掉 highlight.js 的首屏开销
             disableHighlight: huge,
             // T9 carry-forward：分块后 [TOC] 仍要列出全文标题（不是只列当前块）
             tocHeadings: extracted,
-          }),
-        onChunkRendered: () => {
+          });
+        },
+        onChunkRendered: (info) => {
           if (!frontmatterMounted) {
             frontmatterMounted = true;
             mountFrontmatter(markdown);
           }
-          assignHeadingIds(extracted);
-          enhanceContent();
-          // 新块撑高正文：把已渲染标题的实时 top 写回快照（huge 模式无 spy，空操作）
-          refreshHeadingTops();
+          const nodes = info && Array.isArray(info.nodes) ? info.nodes : [];
+          // 只配对/增强新块：标题 id 与全文 extractHeadings 顺序一致且唯一
+          const newHeadings = assigner.assign(collectHeadingsFromNodes(nodes));
+          if (newHeadings.length > 0) {
+            applyHeadingTops(newHeadings);
+          }
+          enhanceNodes(nodes);
+          syncSpyHeadings();
         },
       });
       state.chunked = renderer;
@@ -948,7 +1062,8 @@ export function mountShell({ root, post } = {}) {
     const threshold = Number.isFinite(engine.CHUNK_THRESHOLD) ? engine.CHUNK_THRESHOLD : 512 * 1024;
     const canChunk =
       typeof engine.splitBlocks === 'function' && typeof engine.createChunkedRenderer === 'function';
-    if (canChunk && markdown.length > 0 && (huge || markdown.length > threshold)) {
+    // 阈值与 renderDone.bytes 同源：按 UTF-8 字节，不能用 UTF-16 length（中文文档会被低估 1/3）
+    if (canChunk && markdown.length > 0 && (huge || utf8Length(markdown) > threshold)) {
       return renderChunked(markdown, huge, engine);
     }
     return renderSingle(markdown, huge, engine);
@@ -1040,6 +1155,8 @@ export function mountShell({ root, post } = {}) {
   aaPanel.addEventListener('input', onAaControlChange);
   aaPanel.addEventListener('change', onAaControlChange);
   toc.addEventListener('click', onTocClick);
+  // 评审 #1：内联 [TOC] 在 #content 里，点击委托到这里（与侧栏共用 scrollToHeading 的定位逻辑）
+  content.addEventListener('click', onContentClick);
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('click', onDocumentClick);
 
@@ -1073,6 +1190,7 @@ export function mountShell({ root, post } = {}) {
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('click', onDocumentClick);
     toc.removeEventListener('click', onTocClick);
+    content.removeEventListener('click', onContentClick);
     content.removeEventListener('load', onContentResourceSettled, true);
     content.removeEventListener('error', onContentResourceSettled, true);
     if (contentResizeObserver) {

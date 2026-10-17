@@ -6,13 +6,16 @@
 // Task 11 起加大文档分块（splitBlocks/createChunkedRenderer/阈值常量/isHuge）。
 // 浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
 import {
+  appendLinkDefinitions,
   CHUNK_THRESHOLD,
   createChunkedRenderer,
+  extractLinkDefinitions,
   HUGE_THRESHOLD,
   INITIAL_BYTES,
   isHuge,
   MAX_BLOCK_BYTES,
   splitBlocks,
+  utf8Length,
 } from './chunk.js';
 import { extractFrontmatter, extractHeadings, renderMarkdown, slugify } from './engine.js';
 import { enhance } from './enhance.js';
@@ -72,6 +75,10 @@ export function install(target = {}) {
     splitBlocks,
     isHuge,
     createChunkedRenderer,
+    // Task 11 修复：UTF-8 字节口径（阈值判断与 renderDone.bytes 同源）与跨块引用式链接定义补齐
+    utf8Length,
+    extractLinkDefinitions,
+    appendLinkDefinitions,
     // T4 carry-forward：CSS 注入与 shell 共用同一实现（浏览器 boot 时已调用一次）
     applyCss,
   };

@@ -4,7 +4,12 @@
 //   - 围栏代码块（``` / ~~~ 开头）与连续表格行是原子结构，块边界绝不落在其中；
 //   - 块边界优先落在标题行（^#{1,6}\s）之前，其次空行段落，最后普通行边界；
 //   - 首屏预算按「渲染出的 HTML UTF-8 字节数」计（真正的首屏 DOM/布局成本），首块无条件渲染（不空屏）；
-//   - 懒加载观察器可注入（jsdom 无 IntersectionObserver，测试用 observerFactory 桩；生产用全局实现）。
+//   - 懒加载观察器可注入（jsdom 无 IntersectionObserver，测试用 observerFactory 桩；生产用全局实现）；
+//   - 每次插入把本批块合并成一个 DocumentFragment（renderAll/首屏只做一次 DOM 插入），并把新增顶层元素
+//     经 onChunkRendered({nodes}) 交给调用方——调用方只增强/只配对这些新节点，避免「每块重扫整个容器」的
+//     O(n²) 冻结；
+//   - 跨块引用式链接定义：全文预抽取后用 appendLinkDefinitions 追加到每块末尾（定义不产生输出；脚注定义
+//     [^1]: 不在抽取范围——跨块脚注是已知限制，见任务报告）。
 // 安全口径：createChunkedRenderer 只把 render(blockText) 的返回值插入容器，render 由调用方提供
 // （shell 传 JJ.renderMarkdown，出口已过 DOMPurify）；本模块不拼任何不可信 HTML。
 
@@ -27,6 +32,12 @@ const BLANK_RE = /^\s*$/;
 const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
 /** Setext 标题的下划线行：切在它前面会把标题文字与下划线拆开。 */
 const SETEXT_RE = /^ {0,3}(?:=+|-+)\s*$/;
+/** 文档开头的 front matter 块（与 ext/frontmatter.js 口径一致）：内部 `#` 注释行不能当标题切点。 */
+const FRONT_MATTER_RE = /^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/;
+/** 引用式链接定义起始行：`[label]:`（最多 3 个前导空格；label 允许转义字符）。 */
+const REF_DEF_RE = /^ {0,3}\[((?:[^\\\]\n]|\\.)+)\]:/;
+/** 脚注标签前缀：脚注定义不参与跨块补齐（分块独立 parse 的已知限制）。 */
+const FOOTNOTE_LABEL_RE = /^\^/;
 /** 懒加载哨兵的 class（CSS 只需给它 1px 高度即可被观察）。 */
 export const SENTINEL_CLASS = 'chunk-sentinel';
 /** 哨兵提前触发距离：接近视口底部就渲染下一块，滚动更顺。 */
@@ -74,11 +85,26 @@ function splitLines(text) {
 }
 
 /**
+ * 文首 front matter 占用的行数（无 front matter / 未闭合时 0）。
+ * front matter 是原子块：内部行不参与围栏/标题/表格/setext 判定，也不允许产生块切点。
+ */
+function frontMatterLineCount(text) {
+  const match = FRONT_MATTER_RE.exec(text);
+  if (!match) {
+    return 0;
+  }
+  const newlines = (match[0].match(/\n/g) ?? []).length;
+  return match[0].endsWith('\n') ? newlines : newlines + 1;
+}
+
+/**
  * 逐行分析结构：围栏深度、表格行、空行、标题行、setext 下划线。
  * fenceBefore/fenceAfter 是「该行之前/之后是否在围栏内」，用于判断块边界是否落在围栏外。
+ * skipLines：前 N 行（front matter）按惰性行处理——不产生围栏状态与任何结构标记。
  */
-function analyzeLines(lines) {
+function analyzeLines(lines, skipLines = 0) {
   const n = lines.length;
+  const inertLines = Math.max(0, Math.min(Number(skipLines) || 0, n));
   const fenceBefore = new Uint8Array(n);
   const fenceAfter = new Uint8Array(n);
   const table = new Uint8Array(n);
@@ -92,6 +118,11 @@ function analyzeLines(lines) {
   for (let i = 0; i < n; i += 1) {
     const line = lines[i];
     fenceBefore[i] = open ? 1 : 0;
+    if (i < inertLines) {
+      // front matter 内部：不打开/不关闭围栏、不算标题与切点（避免内部 `# 注释`/``` 产生游离切点）
+      fenceAfter[i] = 0;
+      continue;
+    }
     if (!open) {
       const match = FENCE_OPEN_RE.exec(line);
       if (match) {
@@ -112,7 +143,12 @@ function analyzeLines(lines) {
     setext[i] = !inFence && SETEXT_RE.test(line) ? 1 : 0;
   }
 
-  return { n, fenceBefore, fenceAfter, table, blank, heading, setext };
+  return { n, inertLines, fenceBefore, fenceAfter, table, blank, heading, setext };
+}
+
+/** 该行是否在围栏代码块内（含开/闭围栏行本身）。 */
+function lineInFence(index, info) {
+  return info.fenceBefore[index] === 1 || info.fenceAfter[index] === 1;
 }
 
 /** 能否在第 p 行之前切块：不在围栏内、不拆表格、不拆 setext 标题。 */
@@ -230,7 +266,7 @@ export function splitBlocks(markdown, options = {}) {
   }
 
   const lines = splitLines(text);
-  const info = analyzeLines(lines);
+  const info = analyzeLines(lines, frontMatterLineCount(text));
   const prefix = new Array(info.n + 1);
   prefix[0] = 0;
   for (let i = 0; i < info.n; i += 1) {
@@ -241,6 +277,9 @@ export function splitBlocks(markdown, options = {}) {
   const lineCuts = [];
   const paraCuts = [];
   for (let p = 1; p < info.n; p += 1) {
+    if (p < info.inertLines) {
+      continue; // front matter 内部不切分（内部 `# 注释` 不是标题）
+    }
     if (!isSafeBefore(p, info)) {
       continue;
     }
@@ -297,9 +336,98 @@ export function splitBlocks(markdown, options = {}) {
   return { blocks, totalBytes: prefix[info.n] };
 }
 
-/** 是否进入大文件模式（brief 阈值：20 MB）。 */
+/** 是否进入大文件模式（brief 阈值：20 MB，按 UTF-8 字节与 renderDone.bytes 同源）。 */
 export function isHuge(markdown) {
-  return String(markdown ?? '').length >= HUGE_THRESHOLD;
+  return utf8Length(markdown) >= HUGE_THRESHOLD;
+}
+
+/** 引用式链接 label 归一化（与 markdown-it 口径一致：折叠空白、忽略大小写）。 */
+function normalizeRefLabel(label) {
+  return String(label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * 从全文预抽取引用式链接定义（Task 11 修复：分块独立 parse 时定义在文末会失效）。
+ * 口径：`^ {0,3}\[label\]:` 起始行 + 其后以空白缩进的续行；围栏代码块内的伪定义不算；
+ * 脚注定义（label 以 `^` 开头）不抽取——跨块脚注是已知限制，补进来会改变既有输出（正文里多出脚注区）。
+ * 同名 label 只保留第一个（markdown-it 也只认第一个）。
+ * @param {string} markdown
+ * @returns {{label: string, text: string}[]} text 是可直接追加到块末尾的定义原文（以换行结尾）
+ */
+export function extractLinkDefinitions(markdown) {
+  const text = String(markdown ?? '');
+  if (text === '') {
+    return [];
+  }
+  const lines = splitLines(text);
+  const info = analyzeLines(lines, frontMatterLineCount(text));
+  const entries = [];
+  const seen = new Set();
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lineInFence(i, info)) {
+      continue;
+    }
+    const match = REF_DEF_RE.exec(lines[i]);
+    if (!match) {
+      continue;
+    }
+    const rawLabel = match[1];
+    if (FOOTNOTE_LABEL_RE.test(rawLabel.trim())) {
+      continue;
+    }
+    const label = normalizeRefLabel(rawLabel);
+    if (label === '' || seen.has(label)) {
+      continue;
+    }
+    let end = i + 1;
+    while (end < lines.length && !lineInFence(end, info) && /^[ \t]+[^\s]/.test(lines[end])) {
+      end += 1;
+    }
+    let definition = lines.slice(i, end).join('');
+    if (!definition.endsWith('\n')) {
+      definition += '\n';
+    }
+    seen.add(label);
+    entries.push({ label, text: definition });
+    i = end - 1;
+  }
+  return entries;
+}
+
+/**
+ * 把全文引用定义里「块自身没有」的部分追加到块文本末尾（定义本身不产生输出，不影响正文）。
+ * 块内已有同名定义（围栏代码块里的伪定义不算）时不重复追加；空块不追加。
+ * @param {string} blockText
+ * @param {{label: string, text: string}[]} definitions extractLinkDefinitions 的结果
+ * @returns {string} 交给 renderMarkdown 的块文本
+ */
+export function appendLinkDefinitions(blockText, definitions) {
+  const text = String(blockText ?? '');
+  const list = Array.isArray(definitions) ? definitions : [];
+  if (text === '' || list.length === 0) {
+    return text;
+  }
+  const lines = splitLines(text);
+  const info = analyzeLines(lines, frontMatterLineCount(text));
+  const ownLabels = new Set();
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lineInFence(i, info)) {
+      continue;
+    }
+    const match = REF_DEF_RE.exec(lines[i]);
+    if (match) {
+      ownLabels.add(normalizeRefLabel(match[1]));
+    }
+  }
+  const missing = list.filter(
+    (entry) => entry && typeof entry.text === 'string' && !ownLabels.has(normalizeRefLabel(entry.label)),
+  );
+  if (missing.length === 0) {
+    return text;
+  }
+  // 定义必须独占块起点：块尾不是换行时先补一个换行；然后再空一行，避免定义粘到上一段/列表项里。
+  const separator = text.endsWith('\n') ? '\n' : '\n\n';
+  return `${text}${separator}${missing.map((entry) => entry.text).join('')}`;
 }
 
 /** 生产观察器：全局 IntersectionObserver 可用时构造；不可用返回 null。 */
@@ -326,17 +454,17 @@ function defaultObserverFactory(onIntersect, root) {
 /**
  * 渐进渲染器：首屏同步渲染累计 HTML 字节 ≤ initialBytes 的块（首块无条件），
  * 其余块由哨兵 IntersectionObserver 逐块渲染（插在哨兵前，保持 DOM 顺序）；
- * 全部渲染完移除哨兵并断开观察器。
+ * 全部渲染完移除哨兵并断开观察器。首屏与 renderAll 的批量插入各只做一次 DOM 操作。
  * @param {{
  *   container: Element,
  *   render: (blockText: string) => string,
  *   blocks: string[],
  *   initialBytes?: number,
  *   observerFactory?: (onIntersect: () => void) => {observe: Function, unobserve?: Function, disconnect: Function},
- *   onChunkRendered?: (info: {index: number, count: number, container: Element}) => void,
+ *   onChunkRendered?: (info: {index: number, count: number, container: Element, nodes: Element[]}) => void,
  *   observerRoot?: Element|null,
  * }} options
- * @returns {{start: () => void, renderAll: () => number, renderedCount: () => number, destroy: () => void}}
+ * @returns {{start: () => boolean, renderAll: () => number, renderedCount: () => number, destroy: () => void}}
  */
 export function createChunkedRenderer(options = {}) {
   const host = options.container;
@@ -351,29 +479,69 @@ export function createChunkedRenderer(options = {}) {
 
   let started = false;
   let finished = false;
+  let destroyed = false;
   let sentinel = null;
   let observer = null;
   let usedBytes = 0;
   let renderedCount = 0;
   let pending = null; // 预算中断时「已渲染但未插入」的块，下次直接复用，避免重复解析
 
-  function insertHtml(html) {
-    if (!html) {
-      return;
+  /**
+   * 把一批已渲染 HTML 合并成一个 DocumentFragment 一次插入（renderAll/首屏只做一次 DOM 插入），
+   * 返回每块新增的顶层元素（供 onChunkRendered 回调做「只增强新节点」）。
+   * 极端环境没有 template 时退回字符串插入，此时 nodes 为空（调用方按无新节点处理）。
+   */
+  function insertBatch(entries) {
+    const nodeLists = [];
+    if (entries.length === 0) {
+      return nodeLists;
     }
-    if (sentinel && sentinel.parentNode === host) {
-      sentinel.insertAdjacentHTML('beforebegin', html);
-    } else {
-      host.insertAdjacentHTML('beforeend', html);
+    const doc = globalThis.document;
+    if (doc && typeof doc.createElement === 'function' && typeof doc.createDocumentFragment === 'function') {
+      const batch = doc.createDocumentFragment();
+      for (const value of entries) {
+        if (!value.html) {
+          nodeLists.push([]);
+          continue;
+        }
+        const template = doc.createElement('template');
+        template.innerHTML = value.html;
+        const nodes = [];
+        for (const child of Array.from(template.content.childNodes)) {
+          if (child.nodeType === 1) {
+            nodes.push(child);
+          }
+        }
+        batch.append(template.content);
+        nodeLists.push(nodes);
+      }
+      if (sentinel && sentinel.parentNode === host) {
+        host.insertBefore(batch, sentinel);
+      } else {
+        host.append(batch);
+      }
+      return nodeLists;
     }
+    for (const value of entries) {
+      nodeLists.push([]);
+      if (!value.html) {
+        continue;
+      }
+      if (sentinel && sentinel.parentNode === host) {
+        sentinel.insertAdjacentHTML('beforebegin', value.html);
+      } else {
+        host.insertAdjacentHTML('beforeend', value.html);
+      }
+    }
+    return nodeLists;
   }
 
-  function emit(index) {
+  function emit(index, nodes) {
     if (!emitChunk) {
       return;
     }
     try {
-      emitChunk({ index, count: list.length, container: host });
+      emitChunk({ index, count: list.length, container: host, nodes: Array.isArray(nodes) ? nodes : [] });
     } catch {
       // 回调失败（增强/统计异常）不能中断正文渲染
     }
@@ -391,10 +559,10 @@ export function createChunkedRenderer(options = {}) {
 
   function renderAt(index) {
     const value = takeHtml(index);
-    insertHtml(value.html);
+    const nodeLists = insertBatch([value]);
     usedBytes += value.bytes;
     renderedCount = index + 1;
-    emit(index);
+    emit(index, nodeLists[0]);
   }
 
   function observeSentinel() {
@@ -428,7 +596,7 @@ export function createChunkedRenderer(options = {}) {
   }
 
   function onIntersect() {
-    if (!started || finished) {
+    if (destroyed || !started || finished) {
       return;
     }
     if (renderedCount >= list.length) {
@@ -460,33 +628,46 @@ export function createChunkedRenderer(options = {}) {
     return Boolean(observer);
   }
 
+  /**
+   * 首屏：渲染预算内的前缀块（首块无条件），合并成一次 DOM 插入；还有剩余块时挂哨兵。
+   * @returns {boolean} false 表示渲染器已 destroy，不再接受启动
+   */
   function start() {
+    if (destroyed) {
+      return false;
+    }
     if (started) {
-      return;
+      return true;
     }
     started = true;
     if (list.length === 0) {
       finished = true;
-      return;
+      return true;
     }
 
     let index = 0;
+    const entries = [];
     while (index < list.length) {
       const value = takeHtml(index);
       if (index > 0 && usedBytes + value.bytes > budget) {
         pending = value;
         break;
       }
-      insertHtml(value.html);
       usedBytes += value.bytes;
-      renderedCount = index + 1;
+      entries.push(value);
       index += 1;
-      emit(index - 1);
+    }
+    renderedCount = index;
+    if (entries.length > 0) {
+      const nodeLists = insertBatch(entries);
+      for (let offset = 0; offset < entries.length; offset += 1) {
+        emit(entries[offset].index, nodeLists[offset]);
+      }
     }
 
     if (index >= list.length) {
       finished = true;
-      return;
+      return true;
     }
 
     sentinel = globalThis.document.createElement('div');
@@ -496,26 +677,47 @@ export function createChunkedRenderer(options = {}) {
     if (!ensureObserver()) {
       // 环境不支持 IntersectionObserver：直接渲染全部，绝不让正文卡在半截
       renderAll();
-      return;
+      return true;
     }
     observeSentinel();
+    return true;
   }
 
+  /** 剩余块合并成一批渲染 + 一次 DOM 插入；destroy 后调用是空操作。 */
   function renderAll() {
+    if (destroyed) {
+      return renderedCount;
+    }
     if (!started) {
       started = true;
     }
-    while (renderedCount < list.length) {
-      renderAt(renderedCount);
+    if (renderedCount < list.length) {
+      const base = renderedCount;
+      const entries = [];
+      for (let index = base; index < list.length; index += 1) {
+        entries.push(takeHtml(index));
+      }
+      const nodeLists = insertBatch(entries);
+      renderedCount = list.length;
+      for (let offset = 0; offset < entries.length; offset += 1) {
+        usedBytes += entries[offset].bytes;
+        emit(base + offset, nodeLists[offset]);
+      }
     }
     finish();
     return renderedCount;
+  }
+
+  /** 断开观察器并移除哨兵；destroy 后 start 明确拒绝（返回 false），不会留下无观察器的哨兵。 */
+  function destroy() {
+    destroyed = true;
+    finish();
   }
 
   return {
     start,
     renderAll,
     renderedCount: () => renderedCount,
-    destroy: finish,
+    destroy,
   };
 }

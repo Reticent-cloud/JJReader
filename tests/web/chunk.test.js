@@ -602,3 +602,358 @@ describe('shell 分块渲染与大文件模式', () => {
     expect(posted.filter((message) => message.type === 'renderDone')).toHaveLength(1);
   });
 });
+
+// ── 评审修复（Task 11 review）：内联 TOC / 跨块引用定义 / 增量增强与 id 配对 / 口径细节 ──
+
+/** 每节标题都叫「本章要点」的大文档（验证跨块重复标题 id 重配对）。 */
+function duplicateHeadingDoc() {
+  return largeDoc().replace(/^## 小节\d+$/gm, '## 本章要点');
+}
+
+describe('评审 #1：内联 [TOC] 点击', () => {
+  it('分块模式点击内联目录靠后标题：先 renderAll，再按实时 offsetTop 滚动', () => {
+    const observer = installObserverStub();
+    const restoreTops = stubHeadingTop('末尾标题', 4000);
+    const originalCreate = JJ.createChunkedRenderer;
+    let renderAllCalls = 0;
+    JJ.createChunkedRenderer = (options) => {
+      const renderer = originalCreate(options);
+      const originalRenderAll = renderer.renderAll;
+      renderer.renderAll = (...args) => {
+        renderAllCalls += 1;
+        return originalRenderAll(...args);
+      };
+      return renderer;
+    };
+    try {
+      const { root, shell } = mount();
+      load(shell, largeDoc());
+      const content = root.querySelector('#content');
+      const calls = [];
+      content.scrollTo = (options) => calls.push(options);
+
+      const link = [...content.querySelectorAll('nav.toc-inline a')].find(
+        (item) => item.getAttribute('href') === '#末尾标题',
+      );
+      expect(link).toBeTruthy();
+      expect(content.querySelector('.chunk-sentinel')).toBeTruthy();
+
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      link.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(renderAllCalls).toBe(1);
+      expect(content.querySelector('.chunk-sentinel')).toBeNull();
+      expect(content.textContent).toContain('END-MARKER');
+      expect(calls).toEqual([{ top: 4000 - 80, behavior: 'smooth' }]);
+    } finally {
+      JJ.createChunkedRenderer = originalCreate;
+      restoreTops();
+      observer.restore();
+    }
+  });
+
+  it('普通文档点击内联目录仍正常滚动（preventDefault + top-80）', () => {
+    const restoreTops = stubHeadingTop('乙', 900);
+    try {
+      const { root, shell } = mount();
+      load(shell, '# 甲\n\n[TOC]\n\n## 乙');
+      const content = root.querySelector('#content');
+      const calls = [];
+      content.scrollTo = (options) => calls.push(options);
+
+      const link = [...content.querySelectorAll('nav.toc-inline a')].find(
+        (item) => item.getAttribute('href') === '#乙',
+      );
+      expect(link).toBeTruthy();
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      link.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(calls.at(-1)).toEqual({ top: 900 - 80, behavior: 'smooth' });
+    } finally {
+      restoreTops();
+    }
+  });
+
+  it('正文非目录锚点（如脚注回跳）不被接管，保持浏览器默认行为', () => {
+    const { root, shell } = mount();
+    load(shell, '# 甲\n\n正文脚注[^1]\n\n[^1]: 脚注内容\n');
+    const content = root.querySelector('#content');
+    const calls = [];
+    content.scrollTo = (options) => calls.push(options);
+    const anchor = [...content.querySelectorAll('a[href^="#"]')].find(
+      (item) => !item.closest('nav.toc-inline'),
+    );
+    if (anchor) {
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      anchor.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(calls).toHaveLength(0);
+    }
+  });
+});
+
+describe('评审 #2：跨块引用式链接定义', () => {
+  it('定义在文末时首块引用仍渲染成链接（blocks.join 语义不变）', () => {
+    const observer = installObserverStub();
+    try {
+      const markdown = `# 引用文档\n\n首段引用 [首页][home]。\n\n${largeDoc()}\n\n尾段引用 [尾页][home]。\n\n[home]: https://example.com/home "主页"\n`;
+      // 零丢失语义不受追加影响：切块只看原文，追加只发生在 render 调用层面
+      expect(JJ.splitBlocks(markdown).blocks.join('')).toBe(markdown);
+
+      const { root, shell } = mount();
+      load(shell, markdown);
+      const content = root.querySelector('#content');
+
+      const firstLink = [...content.querySelectorAll('a[href="https://example.com/home"]')].find(
+        (item) => item.textContent === '首页',
+      );
+      expect(firstLink).toBeTruthy();
+      expect(firstLink.textContent).toBe('首页');
+      // 定义本身不产生可见输出
+      expect(content.textContent).not.toContain('[home]:');
+
+      // 触发 renderAll（点击末条侧栏 TOC）：后块里的引用也能解析
+      const lastSideLink = [...root.querySelectorAll('#toc a')].at(-1);
+      lastSideLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const links = [...content.querySelectorAll('a[href="https://example.com/home"]')];
+      expect(links.map((item) => item.textContent).sort()).toEqual(['尾页', '首页']);
+    } finally {
+      observer.restore();
+    }
+  });
+
+  it('抽取/追加去重：围栏伪定义不算、脚注定义不抽取、多行定义整段保留', () => {
+    const defs = JJ.extractLinkDefinitions('[a][x]\n\n[x]: /u "x"\n[^1]: 脚注\n[y]: /v\n');
+    expect(defs.map((entry) => entry.label)).toEqual(['x', 'y']);
+
+    const once = JJ.appendLinkDefinitions('[a][x]\n', defs);
+    expect(once).toContain('[x]: /u "x"');
+    const twice = JJ.appendLinkDefinitions(once, defs);
+    expect(twice).toBe(once); // 块内已有定义：不重复追加
+    expect((twice.match(/\[x\]:/g) ?? []).length).toBe(1);
+
+    // 围栏代码块里的 [x]: 是伪定义，不能当成「块内已有」
+    const fenced = JJ.appendLinkDefinitions('```\n[x]: /fake\n```\n', defs);
+    expect((fenced.match(/\[x\]: /g) ?? []).length).toBe(2);
+
+    const multiline = JJ.extractLinkDefinitions('[m]:\n  /multi\n');
+    expect(multiline).toHaveLength(1);
+    expect(multiline[0].label).toBe('m');
+    expect(multiline[0].text).toContain('/multi');
+  });
+
+  it('脚注定义在文末仍是已知限制：不崩、保留字面文本、无危险 HTML', () => {
+    const observer = installObserverStub();
+    try {
+      const markdown = `# 脚注\n\n正文脚注[^1]。\n\n${largeDoc()}\n\n[^1]: 脚注内容\n`;
+      const { root, shell } = mount();
+      load(shell, markdown);
+      const content = root.querySelector('#content');
+      expect(content.textContent).toContain('[^1]');
+      expect(content.innerHTML).not.toContain('<script');
+      // 全量渲染（含定义块）也不应抛异常
+      const lastSideLink = [...root.querySelectorAll('#toc a')].at(-1);
+      expect(() =>
+        lastSideLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })),
+      ).not.toThrow();
+      expect(content.querySelector('.chunk-sentinel')).toBeNull();
+    } finally {
+      observer.restore();
+    }
+  });
+});
+
+describe('评审 #3：增量增强与增量标题 id 配对', () => {
+  it('分块渲染只增强新增节点（扫描量线性，不再每块重扫整个容器）', () => {
+    const observer = installObserverStub();
+    const originalEnhance = JJ.enhance;
+    const scopes = [];
+    JJ.enhance = (container, options) => {
+      scopes.push(container);
+      return originalEnhance(container, options);
+    };
+    try {
+      const { root, shell } = mount();
+      load(shell, largeDoc());
+      const content = root.querySelector('#content');
+      expect(content.querySelector('.chunk-sentinel')).toBeTruthy();
+
+      expect(scopes.length).toBeGreaterThan(0);
+      expect(scopes.every((scope) => scope !== content)).toBe(true);
+      expect(scopes.every((scope) => content.contains(scope))).toBe(true);
+      let scanned = 0;
+      for (const scope of scopes) {
+        scanned += scope.querySelectorAll('*').length;
+      }
+      // 旧实现：每块都对 #content 全量 querySelectorAll（块数 × 全文节点数）；新实现只扫各新节点子树
+      expect(scanned).toBeLessThanOrEqual(content.querySelectorAll('*').length);
+      expect(
+        [...content.querySelectorAll('.code-wrap button.copy')].every(
+          (button) => button.getAttribute('data-jj-enhanced') === '1',
+        ),
+      ).toBe(true);
+    } finally {
+      JJ.enhance = originalEnhance;
+      observer.restore();
+    }
+  });
+
+  it('多次追加后标题 id 仍与 extractHeadings 逐项一致且唯一（含跨块重复标题）', () => {
+    const observer = installObserverStub();
+    try {
+      const markdown = duplicateHeadingDoc();
+      const { root, shell } = mount();
+      load(shell, markdown);
+      const content = root.querySelector('#content');
+      let guard = 0;
+      while (content.querySelector('.chunk-sentinel') && guard < 300) {
+        observer.trigger();
+        guard += 1;
+      }
+      expect(content.querySelector('.chunk-sentinel')).toBeNull();
+
+      const ids = [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')].map((element) => element.id);
+      const expected = JJ.extractHeadings(markdown).map((heading) => heading.id);
+      expect(ids).toEqual(expected);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(expected.filter((id) => id === '本章要点')).toHaveLength(1);
+      expect(expected).toContain('本章要点-2');
+      for (const id of ids) {
+        expect(document.getElementById(id)).not.toBeNull();
+      }
+    } finally {
+      observer.restore();
+    }
+  });
+
+  it('onChunkRendered 回传本次新增顶层元素，renderAll 剩余块合并为一次 DOM 插入', () => {
+    const observer = { trigger: null, disconnectCount: 0, observeCount: 0 };
+    const container = document.createElement('div');
+    document.body.append(container);
+    const calls = [];
+    const renderer = JJ.createChunkedRenderer({
+      container,
+      render: (text) => `<p>${text}</p>`,
+      blocks: ['A', 'B', 'C', 'D'],
+      initialBytes: 0,
+      onChunkRendered: (info) => calls.push(info),
+      observerFactory: (onIntersect) => {
+        observer.trigger = onIntersect;
+        return { observe() {}, disconnect() {} };
+      },
+    });
+    renderer.start();
+    expect(calls[0].nodes).toHaveLength(1);
+    expect(calls[0].nodes[0].tagName).toBe('P');
+    expect(container.contains(calls[0].nodes[0])).toBe(true);
+
+    const originalInsertBefore = container.insertBefore.bind(container);
+    let insertCalls = 0;
+    container.insertBefore = (...args) => {
+      insertCalls += 1;
+      return originalInsertBefore(...args);
+    };
+    renderer.renderAll();
+    expect(insertCalls).toBe(1); // 剩余 3 块只做一次插入
+    expect(calls.map((info) => info.index)).toEqual([0, 1, 2, 3]);
+    expect(calls.slice(1).every((info) => info.nodes.length === 1)).toBe(true);
+    expect([...container.querySelectorAll('p')].map((node) => node.textContent)).toEqual([
+      'A',
+      'B',
+      'C',
+      'D',
+    ]);
+  });
+
+  it('destroy() 后 start() 明确拒绝，不留无观察器的哨兵；destroy 后 renderAll 不追加', () => {
+    const observer = { trigger: null, disconnectCount: 0, observeCount: 0 };
+    const container = document.createElement('div');
+    document.body.append(container);
+    const renderer = JJ.createChunkedRenderer({
+      container,
+      render: (text) => `<p>${text}</p>`,
+      blocks: ['A', 'B', 'C'],
+      initialBytes: 0,
+      observerFactory: (onIntersect) => {
+        observer.trigger = onIntersect;
+        return {
+          observe() {
+            observer.observeCount += 1;
+          },
+          disconnect() {
+            observer.disconnectCount += 1;
+          },
+        };
+      },
+    });
+    renderer.start();
+    expect(observer.observeCount).toBeGreaterThan(0);
+    renderer.destroy();
+    expect(renderer.start()).toBe(false);
+    expect(renderer.renderedCount()).toBe(1);
+    expect(container.querySelector('.chunk-sentinel')).toBeNull();
+    expect(renderer.renderAll()).toBe(1);
+
+    // destroy 在 start 之前：start 也必须拒绝（不能创建无观察器的哨兵）
+    const beforeStart = document.createElement('div');
+    document.body.append(beforeStart);
+    const second = JJ.createChunkedRenderer({
+      container: beforeStart,
+      render: (text) => `<p>${text}</p>`,
+      blocks: ['A', 'B'],
+      initialBytes: 0,
+    });
+    second.destroy();
+    expect(second.start()).toBe(false);
+    expect(second.renderedCount()).toBe(0);
+    expect(beforeStart.querySelector('.chunk-sentinel')).toBeNull();
+  });
+});
+
+describe('评审 Minor：UTF-8 阈值与 front matter 切点', () => {
+  it('大文件阈值按 UTF-8 字节判定（中文文档不被 UTF-16 长度低估）', () => {
+    const text = '中'.repeat(Math.ceil(JJ.HUGE_THRESHOLD / 3));
+    expect(text.length).toBeLessThan(JJ.HUGE_THRESHOLD);
+    expect(JJ.utf8Length(text)).toBeGreaterThanOrEqual(JJ.HUGE_THRESHOLD);
+    expect(JJ.isHuge(text)).toBe(true);
+  });
+
+  it('shell 分块阈值按 UTF-8 字节：UTF-16 长度未超阈值也走分块', () => {
+    const observer = installObserverStub();
+    const originalThreshold = JJ.CHUNK_THRESHOLD;
+    const originalInitial = JJ.INITIAL_BYTES;
+    JJ.CHUNK_THRESHOLD = 40000;
+    JJ.INITIAL_BYTES = 1;
+    try {
+      const body = Array.from({ length: 2000 }, (_, i) => `第${i}行：中文正文内容测试。`).join('\n');
+      const markdown = `# 中文\n\n${body}\n`;
+      expect(markdown.length).toBeLessThan(40000);
+      expect(JJ.utf8Length(markdown)).toBeGreaterThan(40000);
+
+      const { root, shell } = mount();
+      load(shell, markdown);
+      const content = root.querySelector('#content');
+      expect(content.querySelector('.chunk-sentinel')).toBeTruthy();
+      observer.trigger(); // 观察器触发后渲染余下正文
+      expect(content.textContent).toContain('第0行');
+    } finally {
+      JJ.CHUNK_THRESHOLD = originalThreshold;
+      JJ.INITIAL_BYTES = originalInitial;
+      observer.restore();
+    }
+  });
+
+  it('front matter 内的 # 注释行不产生游离切点', () => {
+    const markdown =
+      '---\ntitle: 测试\n# 元数据注释\ntags: [a, b]\n---\n\n## 一\n\n正文\n\n## 二\n\n正文\n';
+    const { blocks } = JJ.splitBlocks(markdown, { maxBlockBytes: 32 });
+    expect(blocks.join('')).toBe(markdown);
+    expect(blocks[0].startsWith('---\n')).toBe(true);
+    expect((blocks[0].match(/^---\s*$/gm) ?? []).length).toBe(2); // front matter 块完整（未在 # 注释处裂开）
+    expect(blocks[0]).toContain('tags: [a, b]');
+    expect(blocks.some((block) => block.startsWith('# 元数据注释'))).toBe(false);
+  });
+});
+
