@@ -71,6 +71,12 @@ public enum AssocUninstallResult
 }
 
 /// <summary>
+/// 卸载的完整结果（C1）：<see cref="Result"/> 是既有枚举；<see cref="UserChoiceNeedsReselect"/>
+/// 为 true 时表示 Windows UserChoice 仍指向本程序，需要在「默认应用」里重新选择（无法程序化恢复）。
+/// </summary>
+public sealed record AssocUninstallOutcome(AssocUninstallResult Result, bool UserChoiceNeedsReselect);
+
+/// <summary>
 /// Task 16：<c>.md</c> 文件关联的安装/卸载逻辑（不直接碰注册表，全部经 <see cref="IAssocRegistry"/>）。
 /// 只写 HKCU\Software\Classes；安装前把「.md 默认值是否有值 / 默认值本身 / OpenWithProgids 里我们的值 /
 /// ProgID 键是否存在及其子树值」原子写入备份 JSON，卸载时据此恢复——不覆盖用户已有的默认程序
@@ -131,20 +137,15 @@ public static class Assoc
 
     /// <summary>
     /// 当前关联状态：Registered = <c>.md\OpenWithProgids</c> 里有本程序。
-    /// IsDefault（M5）：优先看 <c>FileExts\.md\UserChoice\ProgId</c>（Win10/11 用户实际生效的默认程序），
-    /// 没有 UserChoice 时才回退到 <c>Software\Classes\.md</c> 默认值——只看后者会把「用户已改默认」误报成默认。
+    /// IsDefault：走 <see cref="EffectiveAssociation.Resolve"/>（UserChoice 优先、Classes 默认回退）——
+    /// 只看 Classes 会把「用户已改默认」误报成默认（C1）。
     /// </summary>
     public static (bool Registered, bool IsDefault) GetState(IAssocRegistry registry)
     {
         ArgumentNullException.ThrowIfNull(registry);
 
         var registered = registry.GetValue(OpenWithProgidsKey(), ProgId) is not null;
-        var userChoice = registry.GetValue(UserChoiceKey(), "ProgId");
-        var effectiveDefault = string.IsNullOrWhiteSpace(userChoice)
-            ? registry.GetValue(DotMdKey(), null)
-            : userChoice;
-        var isDefault = string.Equals(effectiveDefault, ProgId, StringComparison.OrdinalIgnoreCase);
-        return (registered, isDefault);
+        return (registered, EffectiveAssociation.IsJingjingReaderDefault(registry));
     }
 
     /// <summary>
@@ -189,8 +190,10 @@ public static class Assoc
         registry.SetValue(ProgIdKey() + @"\shell\open\command", null, CommandValue(exePath));
         registry.SetValue(OpenWithProgidsKey(), ProgId, string.Empty);
 
-        // Win10/11：.md 已有默认程序时只加「打开方式」，不静默抢占；没有默认程序才写默认值。
-        if (string.IsNullOrEmpty(dotMdDefault))
+        // Win10/11：只有「有效默认程序」不存在时才写 Classes 默认值（C1）。
+        // UserChoice 指向别的程序时，即使 Classes\.md 为空也不能把自己的 ProgID 写成 Classes 默认——
+        // 否则卸载后 / 用户在默认应用里改回时会出现「看起来已是默认」的误报。
+        if (string.IsNullOrWhiteSpace(EffectiveAssociation.Resolve(registry)))
         {
             registry.SetValue(DotMdKey(), null, ProgId);
         }
@@ -202,8 +205,17 @@ public static class Assoc
     /// 然后删除 <c>.md\OpenWithProgids</c> 里的本程序值，并只在 <c>.md</c> 默认值仍指向本程序时
     /// 恢复备份默认值（备份默认值本身就是本 ProgID 的旧残留时删除它，避免悬空默认程序）。
     /// 备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时不做任何注册表改动、也不删备份。
+    /// 返回的 <see cref="AssocUninstallOutcome.UserChoiceNeedsReselect"/> 表示 Windows 的 UserChoice
+    /// 仍指向本程序：该键受 Windows 保护、无法程序化恢复，CLI 据此输出「需在默认应用中重新选择」的警告。
     /// </summary>
     public static AssocUninstallResult Uninstall(IAssocRegistry registry, string backupJsonPath)
+        => UninstallDetailed(registry, backupJsonPath).Result;
+
+    /// <summary>
+    /// 卸载的完整结果（C1 关联收尾）：除枚举结果外，告诉调用方 UserChoice 是否仍指向本程序。
+    /// 卸载流程与 <see cref="Uninstall"/> 完全相同，只是多返回一个警告标志（不删除 UserChoice）。
+    /// </summary>
+    public static AssocUninstallOutcome UninstallDetailed(IAssocRegistry registry, string backupJsonPath)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentException.ThrowIfNullOrWhiteSpace(backupJsonPath);
@@ -212,10 +224,16 @@ public static class Assoc
         switch (status)
         {
             case BackupReadStatus.Corrupt:
-                return AssocUninstallResult.BackupCorrupt;
+                return new AssocUninstallOutcome(AssocUninstallResult.BackupCorrupt, UserChoiceNeedsReselect: false);
             case BackupReadStatus.Incompatible:
-                return AssocUninstallResult.BackupIncompatible;
+                return new AssocUninstallOutcome(AssocUninstallResult.BackupIncompatible, UserChoiceNeedsReselect: false);
         }
+
+        // 删除注册表项之前读取：UserChoice 是 Windows 的「用户已选择」记录，卸载不修改它，
+        // 但它可能仍指向即将消失的 ProgID（Windows 会提示「应用已移除」），必须让用户知情。
+        var userChoice = registry.GetValue(UserChoiceKey(), EffectiveAssociation.UserChoiceProgIdValueName);
+        var needsReselect = !string.IsNullOrWhiteSpace(userChoice)
+            && string.Equals(userChoice, ProgId, StringComparison.OrdinalIgnoreCase);
 
         RestoreProgId(registry, backup);
         RestoreOpenWithProgid(registry, backup);
@@ -226,9 +244,10 @@ public static class Assoc
             File.Delete(backupJsonPath);
         }
 
-        return backup is null
+        var result = backup is null
             ? AssocUninstallResult.RemovedWithoutBackup
             : AssocUninstallResult.RestoredFromBackup;
+        return new AssocUninstallOutcome(result, needsReselect);
     }
 
     /// <summary>

@@ -12,6 +12,13 @@
 //     [^1]: 不在抽取范围——跨块脚注是已知限制，见任务报告）。
 // 安全口径：createChunkedRenderer 只把 render(blockText) 的返回值插入容器，render 由调用方提供
 // （shell 传 JJ.renderMarkdown，出口已过 DOMPurify）；本模块不拼任何不可信 HTML。
+// 修复波 B-I2（前端评审）：结构保护扩展到 markdown-it 的真实语法——
+//   - 无前导 `|` 的 GFM 表格（分隔行 + 连续含 `|` 行）整块不切；
+//   - 引用块/列表项内的围栏（`> ``` `、`- ```` `）也识别为围栏；
+//   - HTML 块（块级开标签到空行）整块不切；
+//   - front matter 用引擎的 extractFrontmatter 校验：无效 YAML 不算惰性块，避免首块超预算。
+
+import { extractFrontmatter } from './engine.js';
 
 /** 超过这个字节数走分块渲染（brief：512 KB）。 */
 export const CHUNK_THRESHOLD = 512 * 1024;
@@ -22,16 +29,25 @@ export const MAX_BLOCK_BYTES = 64 * 1024;
 /** 大文件模式阈值：关闭代码高亮、不启用滚动联动（brief：20 MB）。 */
 export const HUGE_THRESHOLD = 20 * 1024 * 1024;
 
-/** 标题行：按 brief 口径 `^#{1,6}\s`。 */
+/** 标题行：按 brief 口径 `^#{1,6}\s`（顶层行；引用/列表内的标题不参与段切分）。 */
 const HEADING_RE = /^#{1,6}\s/;
-/** 表格行：行首（允许缩进）为 `|`。 */
-const TABLE_RE = /^\s*\|/;
 /** 空行（含只有空白的行）。 */
 const BLANK_RE = /^\s*$/;
-/** 围栏起始行：最多 3 个前导空格 + 3 个以上 ` 或 ~。 */
+/** 围栏起始行：最多 3 个前导空格 + 3 个以上 ` 或 ~（在剥离容器前缀后的行上匹配）。 */
 const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
 /** Setext 标题的下划线行：切在它前面会把标题文字与下划线拆开。 */
 const SETEXT_RE = /^ {0,3}(?:=+|-+)\s*$/;
+/** 引用块前缀：最多 3 个前导空格 + `>` + 可选空格（可嵌套，最多剥 3 层）。 */
+const QUOTE_PREFIX_RE = /^ {0,3}>[ \t]?/;
+/** 列表项前缀：`-`/`+`/`*` 或 `1.`/`1)` + 空白（可嵌套；任务清单的 `[ ] ` 另剥）。 */
+const LIST_ITEM_PREFIX_RE = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/;
+/** 任务清单前缀：列表项内容开头的 `[ ] ` / `[x] `。 */
+const TASK_PREFIX_RE = /^\[[ xX]\][ \t]+/;
+/** 无前导 `|` 的表格分隔行：`--- | ---`、`:---: | ---:`（至少一个 `|`；有前导 `|` 也命中）。 */
+const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{3,}/;
+/** 块级 HTML 开标签：从该行起直到空行整块不切（与 CommonMark HTML block 的常见形态一致）。 */
+const HTML_BLOCK_OPEN_RE =
+  /^ {0,3}<(?:address|article|aside|audio|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|section|source|style|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|video)(?=[\s/>]|$)/i;
 /** 文档开头的 front matter 块（与 ext/frontmatter.js 口径一致）：内部 `#` 注释行不能当标题切点。 */
 const FRONT_MATTER_RE = /^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/;
 /** 引用式链接定义起始行：`[label]:`（最多 3 个前导空格；label 允许转义字符）。 */
@@ -42,6 +58,14 @@ const FOOTNOTE_LABEL_RE = /^\^/;
 export const SENTINEL_CLASS = 'chunk-sentinel';
 /** 哨兵提前触发距离：接近视口底部就渲染下一块，滚动更顺。 */
 const OBSERVER_ROOT_MARGIN = '800px 0px';
+
+/** HTML 文本转义（单块渲染失败时把该块原文当纯文本展示，绝不把原文当 HTML 执行）。 */
+const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const ESCAPE_RE = /[&<>"']/g;
+
+function escapeHtml(text) {
+  return String(text ?? '').replace(ESCAPE_RE, (ch) => ESCAPE_MAP[ch]);
+}
 
 /**
  * 文本的 UTF-8 字节数（与 shell 的 renderDone.bytes 口径一致）。
@@ -85,20 +109,54 @@ function splitLines(text) {
 }
 
 /**
- * 文首 front matter 占用的行数（无 front matter / 未闭合时 0）。
+ * 文首 front matter 占用的行数（无 front matter / 未闭合 / 无效 YAML 时 0）。
  * front matter 是原子块：内部行不参与围栏/标题/表格/setext 判定，也不允许产生块切点。
+ * 修复波 B：用引擎的 extractFrontmatter 校验——解析失败时正文并未被剥离（body===原文），
+ * 这时把整块当惰性会让首块超出预算，因此按 0 处理（内部行恢复普通结构判定）。
  */
 function frontMatterLineCount(text) {
   const match = FRONT_MATTER_RE.exec(text);
   if (!match) {
     return 0;
   }
+  const parsed = extractFrontmatter(text);
+  if (!parsed || typeof parsed.body !== 'string' || parsed.body === text) {
+    return 0; // 无效 YAML：引擎不剥离，分块也不应把整块当原子
+  }
   const newlines = (match[0].match(/\n/g) ?? []).length;
   return match[0].endsWith('\n') ? newlines : newlines + 1;
 }
 
 /**
- * 逐行分析结构：围栏深度、表格行、空行、标题行、setext 下划线。
+ * 剥离围栏判定用的容器前缀（修复波 B-I2）：最多 3 层引用 `>` 与列表项缩进/任务清单前缀。
+ * 例：`> ``` ` → ```` ``` ````；`- ~~~ js` → `~~~ js`；`> - `` ` → ``` ``` `。
+ * 只用于结构识别（围栏/表格/setext/HTML 块），不改变原文与切块内容。
+ */
+function stripContainerPrefixes(line) {
+  let text = String(line ?? '');
+  for (let depth = 0; depth < 3; depth += 1) {
+    const match = QUOTE_PREFIX_RE.exec(text);
+    if (!match) {
+      break;
+    }
+    text = text.slice(match[0].length);
+  }
+  for (let depth = 0; depth < 4; depth += 1) {
+    const match = LIST_ITEM_PREFIX_RE.exec(text);
+    if (!match) {
+      break;
+    }
+    text = text.slice(match[0].length);
+    const task = TASK_PREFIX_RE.exec(text);
+    if (task) {
+      text = text.slice(task[0].length);
+    }
+  }
+  return text;
+}
+
+/**
+ * 逐行分析结构：围栏深度、表格块、HTML 块、空行、标题行、setext 下划线。
  * fenceBefore/fenceAfter 是「该行之前/之后是否在围栏内」，用于判断块边界是否落在围栏外。
  * skipLines：前 N 行（front matter）按惰性行处理——不产生围栏状态与任何结构标记。
  */
@@ -107,10 +165,15 @@ function analyzeLines(lines, skipLines = 0) {
   const inertLines = Math.max(0, Math.min(Number(skipLines) || 0, n));
   const fenceBefore = new Uint8Array(n);
   const fenceAfter = new Uint8Array(n);
-  const table = new Uint8Array(n);
   const blank = new Uint8Array(n);
   const heading = new Uint8Array(n);
   const setext = new Uint8Array(n);
+  const rowPipe = new Uint8Array(n);
+  const separator = new Uint8Array(n);
+  const table = new Uint8Array(n);
+  const htmlBlock = new Uint8Array(n);
+  // 引用/列表容器内的围栏起始行：切在它前面会把围栏从容器里撕出来（顶层围栏不受此限制）。
+  const nestedFenceStart = new Uint8Array(n);
 
   let open = null; // { symbol: '`' | '~', length: number }
   let closeRe = null;
@@ -123,14 +186,21 @@ function analyzeLines(lines, skipLines = 0) {
       fenceAfter[i] = 0;
       continue;
     }
+    // 引用块/列表项内的围栏也要识别：结构判定统一用剥离容器前缀后的文本。
+    const structural = stripContainerPrefixes(line);
     if (!open) {
-      const match = FENCE_OPEN_RE.exec(line);
+      const match = FENCE_OPEN_RE.exec(structural);
       if (match) {
         const marker = match[1];
         open = { symbol: marker.charAt(0), length: marker.length };
         closeRe = new RegExp(`^ {0,3}${open.symbol === '`' ? '`' : '~'}{${open.length},}\\s*$`);
+        // 引用/列表内的围栏：结构文本与原文不同（剥过 `>`/列表前缀），或围栏本身有缩进
+        // （列表项内容通常缩进 2+ 空格）。这类起始行前不切，避免把围栏从容器里撕出来。
+        if (structural !== line || /^[ \t]/.test(line)) {
+          nestedFenceStart[i] = 1;
+        }
       }
-    } else if (closeRe && closeRe.test(line)) {
+    } else if (closeRe && closeRe.test(structural)) {
       open = null;
       closeRe = null;
     }
@@ -138,12 +208,63 @@ function analyzeLines(lines, skipLines = 0) {
 
     const inFence = fenceBefore[i] === 1 || fenceAfter[i] === 1;
     blank[i] = BLANK_RE.test(line) ? 1 : 0;
-    table[i] = !inFence && TABLE_RE.test(line) ? 1 : 0;
     heading[i] = fenceBefore[i] === 0 && HEADING_RE.test(line) ? 1 : 0;
-    setext[i] = !inFence && SETEXT_RE.test(line) ? 1 : 0;
+    setext[i] = !inFence && SETEXT_RE.test(structural) ? 1 : 0;
+    if (!inFence) {
+      const trimmed = structural.trim();
+      rowPipe[i] = trimmed !== '' && trimmed.includes('|') ? 1 : 0;
+      separator[i] = rowPipe[i] === 1 && TABLE_SEPARATOR_RE.test(structural) ? 1 : 0;
+    }
   }
 
-  return { n, inertLines, fenceBefore, fenceAfter, table, blank, heading, setext };
+  // 表格块：从分隔行向上收表格头、向下收连续含 `|` 的非围栏行；整块标为原子，切点不落在其中。
+  for (let i = 0; i < n; i += 1) {
+    if (table[i] === 1) {
+      continue; // 已经属于前一个表格块：避免连续分隔行把同一段数据反复扫描成 O(n²)
+    }
+    if (separator[i] !== 1 || fenceBefore[i] === 1 || fenceAfter[i] === 1) {
+      continue;
+    }
+    let start = i - 1;
+    if (start < inertLines || rowPipe[start] !== 1 || fenceBefore[start] === 1 || fenceAfter[start] === 1) {
+      continue; // 分隔行上方没有表头行：不是表格（例如单独一行 `--- | ---` 更像段落）
+    }
+    while (
+      start - 1 >= inertLines
+      && rowPipe[start - 1] === 1
+      && fenceBefore[start - 1] === 0
+      && fenceAfter[start - 1] === 0
+    ) {
+      start -= 1;
+    }
+    let end = i;
+    while (end + 1 < n && rowPipe[end + 1] === 1 && fenceBefore[end + 1] === 0 && fenceAfter[end + 1] === 0) {
+      end += 1;
+    }
+    for (let row = start; row <= end; row += 1) {
+      table[row] = 1;
+    }
+  }
+
+  // HTML 块：块级开标签行开始，到空行为止（含）整块原子。
+  for (let i = inertLines; i < n; i += 1) {
+    if (fenceBefore[i] === 1 || fenceAfter[i] === 1 || blank[i] === 1) {
+      continue;
+    }
+    const structural = stripContainerPrefixes(lines[i]);
+    if (!HTML_BLOCK_OPEN_RE.test(structural)) {
+      continue;
+    }
+    htmlBlock[i] = 1;
+    let end = i + 1;
+    while (end < n && blank[end] !== 1) {
+      htmlBlock[end] = 1;
+      end += 1;
+    }
+    i = end - 1;
+  }
+
+  return { n, inertLines, fenceBefore, fenceAfter, table, htmlBlock, blank, heading, setext, nestedFenceStart };
 }
 
 /** 该行是否在围栏代码块内（含开/闭围栏行本身）。 */
@@ -151,7 +272,7 @@ function lineInFence(index, info) {
   return info.fenceBefore[index] === 1 || info.fenceAfter[index] === 1;
 }
 
-/** 能否在第 p 行之前切块：不在围栏内、不拆表格、不拆 setext 标题。 */
+/** 能否在第 p 行之前切块：不在围栏内、不拆表格/HTML 块、不拆 setext 标题。 */
 function isSafeBefore(p, info) {
   if (p <= 0 || p >= info.n) {
     return false;
@@ -161,10 +282,16 @@ function isSafeBefore(p, info) {
     return false; // 上一行结束于围栏内：切下去会把围栏劈开
   }
   if (info.table[prev] === 1 && info.table[p] === 1) {
-    return false; // 连续表格行整块不切
+    return false; // 表格块整块不切（含无前导 `|` 的 GFM 表格）
+  }
+  if (info.htmlBlock[prev] === 1 && info.htmlBlock[p] === 1) {
+    return false; // HTML 块整块不切
   }
   if (info.setext[p] === 1) {
     return false; // 不把 setext 下划线从标题文字上撕下来
+  }
+  if (info.nestedFenceStart[p] === 1) {
+    return false; // 引用/列表内的围栏：切在它前面会把围栏从容器（列表项/引用块）里撕出来
   }
   return true;
 }
@@ -462,6 +589,7 @@ function defaultObserverFactory(onIntersect, root) {
  *   initialBytes?: number,
  *   observerFactory?: (onIntersect: () => void) => {observe: Function, unobserve?: Function, disconnect: Function},
  *   onChunkRendered?: (info: {index: number, count: number, container: Element, nodes: Element[]}) => void,
+ *   onChunkError?: (error: unknown, index: number) => void,
  *   observerRoot?: Element|null,
  * }} options
  * @returns {{start: () => boolean, renderAll: () => number, renderedCount: () => number, destroy: () => void}}
@@ -553,8 +681,28 @@ export function createChunkedRenderer(options = {}) {
       pending = null;
       return value;
     }
-    const html = String(renderBlock(list[index]) ?? '');
+    let html;
+    try {
+      html = String(renderBlock(list[index]) ?? '');
+    } catch (error) {
+      // 修复波 B（§5.11）：单块渲染失败不中断分块流程——该块降级为转义 <pre>，后续块继续渲染。
+      const source = list[index];
+      html = `<pre class="jj-fallback">${escapeHtml(source)}</pre>\n`;
+      notifyChunkError(error, index);
+    }
     return { index, html, bytes: utf8Length(html) };
+  }
+
+  /** 把单块渲染失败报告给调用方（可显示错误条）；回调异常不能影响后续块。 */
+  function notifyChunkError(error, index) {
+    if (typeof options.onChunkError !== 'function') {
+      return;
+    }
+    try {
+      options.onChunkError(error, index);
+    } catch {
+      // 错误回调失败（例如 UI 已被销毁）时继续渲染剩余块
+    }
   }
 
   function renderAt(index) {

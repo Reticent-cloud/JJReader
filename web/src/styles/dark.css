@@ -42,6 +42,16 @@ html[data-theme='dark'] {
   --panel-shadow: 0 8px 24px rgba(1, 4, 9, 0.8);
   --toast-bg: #e6edf3;
   --toast-fg: #0d1117;
+  /* 错误条/大文件横幅（修复波 B-§5.11） */
+  --notice-bg: #3b2300;
+  --notice-fg: #f0e6c8;
+  --notice-border: #9e6a03;
+  --notice-error-bg: #3d0f16;
+  --notice-error-fg: #ffb3b8;
+  --notice-error-border: #cf222e;
+  --notice-banner-bg: #0c2d4a;
+  --notice-banner-fg: #cae8ff;
+  --notice-banner-border: #1f6feb;
 
   /* highlight.js token（深色） */
   --hljs-fg: #e6edf3;

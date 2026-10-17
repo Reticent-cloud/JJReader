@@ -751,3 +751,121 @@ nav.toc-inline li[data-level='6'] {
   color: var(--fg-muted);
   font-size: 13px;
 }
+
+/* ── 修复波 B-§5.11：内容顶部通知栈（错误条 + 大文件横幅）与渲染兜底 ──
+   固定定位在工具条下方（z-index 28 低于工具条 30，工具条显示时不会被遮挡），
+   不自动消失；右侧「关闭」按钮由 shell 绑定。 */
+#notice-stack {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 8px);
+  left: 50%;
+  z-index: 28;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(760px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+#notice-stack > * {
+  pointer-events: auto;
+}
+
+#error-bar,
+#huge-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid var(--notice-border);
+  border-radius: 8px;
+  background: var(--notice-bg);
+  color: var(--notice-fg);
+  font-size: 13px;
+  box-shadow: var(--panel-shadow);
+}
+
+#error-bar {
+  border-color: var(--notice-error-border);
+  background: var(--notice-error-bg);
+  color: var(--notice-error-fg);
+}
+
+#error-bar[data-level='warn'] {
+  border-color: var(--notice-border);
+  background: var(--notice-bg);
+  color: var(--notice-fg);
+}
+
+#huge-banner {
+  border-color: var(--notice-banner-border);
+  background: var(--notice-banner-bg);
+  color: var(--notice-banner-fg);
+}
+
+/* [hidden] 必须显式压过上面的 display: flex（UA 样式表优先级不够） */
+#error-bar[hidden],
+#huge-banner[hidden] {
+  display: none;
+}
+
+#notice-stack .notice-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#notice-stack .notice-close {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#notice-stack .notice-close:hover,
+#notice-stack .notice-close:focus-visible {
+  background: rgba(127, 127, 127, 0.18);
+  outline: none;
+}
+
+/* 渲染异常兜底：原始 markdown 按纯文本显示（保留换行、可滚动，不撑破布局） */
+#content pre.jj-fallback {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 空白启动页「打开文件」按钮（修复波 B-§5.11） */
+.recent-panel .recent-open {
+  display: inline-block;
+  margin: 0 0 14px;
+  padding: 8px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.recent-panel .recent-open:hover,
+.recent-panel .recent-open:focus-visible {
+  background: var(--toc-active-bg);
+  outline: none;
+}

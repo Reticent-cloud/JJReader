@@ -270,6 +270,23 @@ function keepDataAttributeValue(node, data) {
   }
 }
 
+/** fail-closed 告警只打一次（DOMPurify 在当前环境不可用时避免每次渲染刷屏）。 */
+let unsupportedWarned = false;
+
+/** DOMPurify 工厂（测试可注入 isSupported=false 的桩；产品默认使用真实实现）。 */
+let purifierFactory = createDOMPurify;
+
+/**
+ * 测试专用：替换 DOMPurify 工厂并清空缓存实例（不传函数时恢复默认）。
+ * 仅用于验证 isSupported=false 的失败关闭行为；产品代码不要调用。
+ * @param {Function | null} factory
+ */
+export function __setPurifierFactoryForTest(factory) {
+  purifierFactory = typeof factory === 'function' ? factory : createDOMPurify;
+  purifiers.clear();
+  unsupportedWarned = false;
+}
+
 /** 按 allowDataImages 缓存两个清洗实例（hook 闭包捕获配置，避免共享可变状态；清洗是同步的，天然可重入）。 */
 const purifiers = new Map();
 
@@ -283,7 +300,20 @@ function getPurifier(allowDataImages) {
     // 非浏览器环境（无 DOM）：不装配清洗器，sanitizeHtml 返回空串（安全侧失败，绝不透传未清洗 HTML）
     return null;
   }
-  const instance = createDOMPurify(win);
+  const instance = purifierFactory(win);
+  // 修复波 B-I5（fail-open）：DOMPurify 在当前环境不受支持时 sanitize 会原样返回输入（等于不清洗）。
+  // 这里显式失败关闭：返回空串，首次记录一条 console.warn 便于排查。
+  if (!instance || instance.isSupported === false) {
+    if (!unsupportedWarned) {
+      unsupportedWarned = true;
+      try {
+        console.warn('[JJ] DOMPurify 在当前环境不可用，HTML 清洗已失败关闭（输出空串）');
+      } catch {
+        // 无 console 环境忽略
+      }
+    }
+    return null;
+  }
   instance.addHook('uponSanitizeAttribute', keepDataAttributeValue);
   instance.addHook('afterSanitizeAttributes', (node) => hardenAttributes(node, allowDataImages));
   purifiers.set(key, instance);

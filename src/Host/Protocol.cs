@@ -57,7 +57,9 @@ public static class Protocol
         string baseUrl,
         string markdown,
         AppSettings settings,
-        double? position)
+        double? position,
+        // 修复波 B-§5.11：附带编码名供前端调试（旧调用方不传时按 utf-8）。
+        string encoding = "utf-8")
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
@@ -65,7 +67,7 @@ public static class Protocol
         ArgumentNullException.ThrowIfNull(markdown);
         ArgumentNullException.ThrowIfNull(settings);
 
-        return Serialize("load", new { path, key, baseUrl, markdown, settings, position });
+        return Serialize("load", new { path, key, baseUrl, markdown, settings, position, encoding });
     }
 
     /// <summary>构造 <c>toast</c>：宿主主动提示（编码异常、二进制文件等）。</summary>
@@ -75,6 +77,28 @@ public static class Protocol
         ArgumentException.ThrowIfNullOrWhiteSpace(level);
 
         return Serialize("toast", new { text, level });
+    }
+
+    /// <summary>
+    /// 构造 <c>notice</c>（修复波 B-§5.11）：宿主主动的持久提示（编码异常、二进制拒绝、文件打不开）。
+    /// <paramref name="persistent"/> 为 true 时前端显示为可关闭的顶部错误条（而不是 3 秒消失的 toast）。
+    /// </summary>
+    public static string Notice(string text, string level = "warn", bool persistent = true)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentException.ThrowIfNullOrWhiteSpace(level);
+
+        return Serialize("notice", new { text, level, persistent });
+    }
+
+    /// <summary>
+    /// 构造 <c>settings</c>（修复波 B-前端空白启动）：宿主在 shellReady 后下发已持久化的偏好，
+    /// 空白启动页也应用主题/字号（不必等 load）。payload 直接是 AppSettings 的 camelCase 字段。
+    /// </summary>
+    public static string Settings(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return Serialize("settings", settings);
     }
 
     /// <summary>构造 <c>assocState</c>：.md 文件关联状态（Task 16 使用）。</summary>

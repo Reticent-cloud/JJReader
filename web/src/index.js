@@ -110,6 +110,27 @@ export function install(target = {}) {
   return api;
 }
 
+/**
+ * WebView2 消息监听的安全入口（修复波 B-§5.11）：单条坏消息/渲染异常不能让监听器抛异常
+ * （异常会冒泡到 WebView 宿主事件，表现成「界面卡住」）。宿主消息是外部输入，严格按数据对待。
+ * @param {{onMessage?: (message: any) => void}} shell mountShell 的返回值
+ * @param {unknown} data event.data
+ */
+export function dispatchWebMessage(shell, data) {
+  if (!shell || typeof shell.onMessage !== 'function') {
+    return;
+  }
+  try {
+    shell.onMessage(data);
+  } catch (error) {
+    try {
+      console.warn('[JJ] 消息监听失败，已忽略该消息', error);
+    } catch {
+      // 无 console 环境忽略
+    }
+  }
+}
+
 // 浏览器（WebView2）环境：DOM ready 后自动 mountShell 并注册消息监听。
 // jsdom / 单测环境没有 window.chrome.webview，不会自动 mount（用例显式调用 JJ.mountShell）。
 function bootWebViewShell() {
@@ -129,7 +150,7 @@ function bootWebViewShell() {
     });
     // mountShell 内部已发出 shellReady；监听器在同一个同步任务里注册完成，
     // 宿主的 load 只会在收到 shellReady 之后推送，因此这一小段先后顺序不会丢消息。
-    webview.addEventListener('message', (event) => shell.onMessage(event.data));
+    webview.addEventListener('message', (event) => dispatchWebMessage(shell, event.data));
   };
 
   if (document.readyState === 'loading') {

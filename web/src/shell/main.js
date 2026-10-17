@@ -140,11 +140,71 @@ export function mountShell({ root, post } = {}) {
   const toast = document.createElement('div');
   toast.id = 'toast';
   toast.hidden = true;
+
+  // 修复波 B-§5.11：内容顶部通知栈（错误条 + 大文件横幅）。
+  // 固定定位在工具条下方（z-index 低于工具条 30，不遮挡工具条），可关闭、持久显示。
+  const noticeStack = document.createElement('div');
+  noticeStack.id = 'notice-stack';
+  const errorBar = document.createElement('div');
+  errorBar.id = 'error-bar';
+  errorBar.hidden = true;
+  errorBar.setAttribute('role', 'alert');
+  const errorBarText = document.createElement('span');
+  errorBarText.className = 'notice-text';
+  const errorBarClose = document.createElement('button');
+  errorBarClose.type = 'button';
+  errorBarClose.className = 'notice-close';
+  errorBarClose.textContent = '关闭';
+  errorBarClose.setAttribute('aria-label', '关闭错误提示');
+  errorBar.append(errorBarText, errorBarClose);
+
+  const hugeBanner = document.createElement('div');
+  hugeBanner.id = 'huge-banner';
+  hugeBanner.hidden = true;
+  hugeBanner.setAttribute('role', 'status');
+  const hugeBannerText = document.createElement('span');
+  hugeBannerText.className = 'notice-text';
+  hugeBannerText.textContent = '大文件模式：已关闭代码高亮';
+  const hugeBannerClose = document.createElement('button');
+  hugeBannerClose.type = 'button';
+  hugeBannerClose.className = 'notice-close';
+  hugeBannerClose.textContent = '关闭';
+  hugeBannerClose.setAttribute('aria-label', '关闭大文件模式提示');
+  hugeBanner.append(hugeBannerText, hugeBannerClose);
+  noticeStack.append(errorBar, hugeBanner);
+
   const { progress, progressEl, backToTopEl } = createChromeElements();
-  root.append(toolbar, toc, tocResizer, content, progress, backToTopEl, aaPanel, recentMenu, toast);
+  root.append(toolbar, toc, tocResizer, content, progress, backToTopEl, aaPanel, recentMenu, toast, noticeStack);
   setToastContainer(toast);
   // 悬浮工具条默认隐藏：鼠标进顶部 40px 或按 Alt 才显示（隐藏时键盘快捷键照常可用）。
   root.dataset.toolbar = 'hidden';
+
+  /**
+   * 显示持久错误条（spec §5.11：文件打不开/编码异常/渲染异常）。可关闭；不自动消失。
+   * @param {string} text
+   * @param {{level?: 'error'|'warn'|'info'}} [options]
+   */
+  function showErrorBar(text, { level = 'error' } = {}) {
+    const value = typeof text === 'string' ? text.trim() : '';
+    if (value === '') {
+      return;
+    }
+    errorBarText.textContent = value;
+    errorBar.dataset.level = level;
+    errorBar.hidden = false;
+  }
+
+  function hideErrorBar() {
+    errorBar.hidden = true;
+  }
+
+  function showHugeBanner() {
+    hugeBanner.hidden = false;
+  }
+
+  function hideHugeBanner() {
+    hugeBanner.hidden = true;
+  }
 
   // TOC/标题 id 控制器：持有标题快照、滚动联动 spy 与 TOC 高亮（实现见 headings.js）。
   // Task 14：只接管 #toc-nav（文件树容器是 aside 的另一个子元素，不能被 TOC 渲染替换）。
@@ -158,6 +218,8 @@ export function mountShell({ root, post } = {}) {
     position: null,
     // Task 16：宿主下发的 .md 关联状态 { registered, isDefault }（关于按钮 title 用）
     assocState: null,
+    // 修复波 B-§5.11：load 附带的编码名（utf-8 / gb18030 / binary …，仅调试用）
+    encoding: 'utf-8',
     dirListing: null,
     // Task 12：是否收到过 load（空白启动页显示最近文件面板）、最近文件列表（Alt+←/→ 切换用）
     loaded: false,
@@ -188,6 +250,9 @@ export function mountShell({ root, post } = {}) {
     tocController,
     send,
     showToast,
+    showErrorBar,
+    showHugeBanner,
+    hideHugeBanner,
   });
 
   // Task 15 修复：PDF 导出前由 print.js 调用，把分块懒渲染的剩余块同步渲染出来再进打印模式。
@@ -461,6 +526,18 @@ export function mountShell({ root, post } = {}) {
     root.dataset.toolbar = 'hidden';
   }
 
+  /**
+   * 焦点是否落在工具条/浮层面板内（修复波 B-键盘可达性）：键盘用户在工具条按钮/最近菜单/Aa 面板里
+   * 操作时不能因为鼠标离开就隐藏工具条，否则焦点元素不可见。
+   */
+  function isFocusInsideOverlays() {
+    const active = typeof document.activeElement === 'object' ? document.activeElement : null;
+    if (!active) {
+      return false;
+    }
+    return toolbar.contains(active) || aaPanel.contains(active) || recentMenu.contains(active);
+  }
+
   /** 800ms 后自动隐藏（鼠标离开工具条时调用；期间再进入/移到顶部会取消）。 */
   function scheduleToolbarHide() {
     if (toolbarHideTimer !== null) {
@@ -468,13 +545,30 @@ export function mountShell({ root, post } = {}) {
     }
     toolbarHideTimer = setTimeout(() => {
       toolbarHideTimer = null;
-      if (!recentMenu.hidden) {
-        // 菜单开着：工具条保持可见（菜单是它的浮层），关闭菜单时再按规则隐藏
+      if (!recentMenu.hidden || isFocusInsideOverlays()) {
+        // 菜单开着或焦点仍在工具条/浮层内：工具条保持可见，等菜单关闭/焦点离开后再隐藏
         toolbarHidePendingForMenu = true;
         return;
       }
       root.dataset.toolbar = 'hidden';
     }, TOOLBAR_HIDE_DELAY_MS);
+  }
+
+  /** focusin：焦点进入工具条/浮层时显示工具条（键盘 Tab 到隐藏工具条里的按钮也能看见）。 */
+  function onOverlayFocusIn() {
+    showToolbar();
+  }
+
+  /** focusout：焦点离开工具条/浮层后按常规延迟隐藏（工具条已显示时才需要）。 */
+  function onOverlayFocusOut(event) {
+    if (root.dataset.toolbar !== 'shown') {
+      return;
+    }
+    const next = event && event.relatedTarget;
+    if (next && (toolbar.contains(next) || aaPanel.contains(next) || recentMenu.contains(next))) {
+      return;
+    }
+    scheduleToolbarHide();
   }
 
   /** 鼠标进入窗口顶部 40px 区域：显示工具条（隐藏时也可唤出）。 */
@@ -637,10 +731,15 @@ export function mountShell({ root, post } = {}) {
     content.replaceChildren();
   }
 
-  /** 空白启动页：在 #content 渲染最近文件面板（标题 + 列表 + 拖入/Ctrl+O 提示）。 */
+  /** 空白启动页：在 #content 渲染最近文件面板（标题 + 列表 + 「打开文件」按钮 + 拖入/Ctrl+O 提示）。 */
   function renderRecentPanel() {
     content.replaceChildren(
-      renderRecent(state.recent, { onOpen: openRecentFile, onClose: closeRecentPanel }),
+      renderRecent(state.recent, {
+        onOpen: openRecentFile,
+        onClose: closeRecentPanel,
+        // 修复波 B-§5.11：空白启动也要有可点击的「打开文件」入口（不依赖用户记住 Ctrl+O）。
+        onPickFile: () => send('pickFile'),
+      }),
     );
   }
 
@@ -649,7 +748,14 @@ export function mountShell({ root, post } = {}) {
   /** 用当前 state.recent 渲染菜单内容（复用 renderRecent 的同一列表与键盘行为）。 */
   function renderRecentMenu() {
     recentMenu.replaceChildren(
-      renderRecent(state.recent, { onOpen: openRecentFromMenu, onClose: closeRecentMenu }),
+      renderRecent(state.recent, {
+        onOpen: openRecentFromMenu,
+        onClose: closeRecentMenu,
+        onPickFile: () => {
+          closeRecentMenu();
+          send('pickFile');
+        },
+      }),
     );
   }
 
@@ -700,7 +806,7 @@ export function mountShell({ root, post } = {}) {
 
   /**
    * 全局快捷键（输入框内不触发）：
-   * Esc 关浮层（Aa/最近面板/工具条）；Alt 显示工具条；Alt+←/→ 切换最近文件；F5 重载；
+   * Esc 关浮层（Aa/最近面板/工具条）；Alt 显示工具条；Alt+←/→ 切换最近文件；Alt+T 主题循环、Alt+A 关于；F5 重载；
    * Ctrl+O 打开文件、Ctrl+Shift+O 打开文件夹（宿主弹系统对话框）；
    * Ctrl+B 侧栏显隐、Ctrl+= / Ctrl+- 字号 ±1、Ctrl+0 重置 16、Ctrl+, 排版面板、Ctrl+Shift+C 定位文件。
    */
@@ -728,7 +834,8 @@ export function mountShell({ root, post } = {}) {
       return;
     }
 
-    // Alt 相关：Alt 显示工具条，Alt+←/→ 在最近文件列表里切换（不抢浏览器默认行为）
+    // Alt 相关：Alt 显示工具条，Alt+←/→ 在最近文件列表里切换（不抢浏览器默认行为）；
+    // 修复波 B-键盘可达性：Alt+T 主题三态循环、Alt+A 打开关于（README 快捷键表同步）。
     if (event.altKey && !event.ctrlKey && !event.metaKey) {
       if (key === 'ArrowLeft') {
         event.preventDefault();
@@ -738,6 +845,16 @@ export function mountShell({ root, post } = {}) {
       if (key === 'ArrowRight') {
         event.preventDefault();
         openAdjacentRecent('newer');
+        return;
+      }
+      if (key === 't' || key === 'T') {
+        event.preventDefault();
+        updateSettings({ theme: nextTheme(state.settings.theme) });
+        return;
+      }
+      if (key === 'a' || key === 'A') {
+        event.preventDefault();
+        send('openAbout');
         return;
       }
     }
@@ -807,8 +924,12 @@ export function mountShell({ root, post } = {}) {
     state.path = typeof payload.path === 'string' ? payload.path : '';
     state.key = typeof payload.key === 'string' ? payload.key : '';
     state.baseUrl = typeof payload.baseUrl === 'string' ? payload.baseUrl : '';
+    // §5.11 调试字段：宿主附带编码名（旧宿主不传时按 utf-8），只记录到 state，供排查用。
+    state.encoding = typeof payload.encoding === 'string' ? payload.encoding : 'utf-8';
     state.position = typeof payload.position === 'number' && Number.isFinite(payload.position) ? payload.position : null;
     state.loaded = true;
+    // 新文档先收起上一份的错误条（宿主的编码/二进制/打开失败通知会在 load 之后重新下发）
+    hideErrorBar();
     // Task 15：有文档才允许导出 PDF（与 Ctrl+E 的「请先打开文档」提示同口径）
     exportPdfButton.disabled = !state.path;
     // 文档已打开：工具条最近菜单不再需要（避免浮层盖住新正文）
@@ -826,9 +947,22 @@ export function mountShell({ root, post } = {}) {
     syncTocResizerWidth();
 
     const started = now();
-    renderer.render(markdown);
-    // 契约（spec §4.4）：renderDone{path, elapsedMs, tocCount, bytes}；tocCount 复用渲染期 extractHeadings 的结果
-    const tocCount = tocController.getExtractedCount();
+    let tocCount = 0;
+    try {
+      renderer.render(markdown);
+      // 契约（spec §4.4）：renderDone{path, elapsedMs, tocCount, bytes}；tocCount 复用渲染期 extractHeadings 的结果
+      tocCount = tocController.getExtractedCount();
+    } catch (error) {
+      // 修复波 B-§5.11：渲染管线整体失败 → 转义 <pre> 兜底 + 持久错误条；renderDone 仍照常发出。
+      try {
+        console.warn('[JJ] renderLoad 渲染失败，已降级为纯文本', error);
+      } catch {
+        // 无 console 环境忽略
+      }
+      renderer.renderFallback(markdown);
+      tocCount = 0;
+      showErrorBar('渲染失败，已以纯文本显示');
+    }
     const elapsedMs = Math.max(0, now() - started);
 
     send('renderDone', {
@@ -846,8 +980,34 @@ export function mountShell({ root, post } = {}) {
     scheduleRefreshHeadingTops();
   }
 
-  /** 消息分发：load/toast/recent/assocState/dirListing；未知 type 静默忽略（坏消息不能中断 shell）。 */
+  /** 消息分发：load/toast/notice/settings/recent/assocState/dirListing；未知 type 静默忽略（坏消息不能中断 shell）。 */
   function onMessage(message) {
+    // 修复波 B-§5.11：单条坏消息/渲染异常不能中断 shell，也不让异常冒泡到 WebView 消息监听。
+    try {
+      dispatchMessage(message);
+    } catch (error) {
+      try {
+        console.warn('[JJ] 处理宿主消息失败', error);
+      } catch {
+        // 无 console 环境忽略
+      }
+      showErrorBar('处理消息失败，部分界面可能未更新');
+    }
+  }
+
+  /** 把宿主下发的持久偏好应用到界面（空白启动页与 load 之后都走同一入口）。 */
+  function applyIncomingSettings(payload) {
+    const incoming = payload && typeof payload === 'object' ? payload : {};
+    state.settings = normalizeSettings({ ...state.settings, ...incoming });
+    applySettings(state.settings);
+    applyThemeState();
+    applyTocVisibility();
+    syncAaControls();
+    syncTocResizerWidth();
+    scheduleRefreshHeadingTops();
+  }
+
+  function dispatchMessage(message) {
     if (!message || typeof message !== 'object') {
       return;
     }
@@ -862,6 +1022,19 @@ export function mountShell({ root, post } = {}) {
         showToast(payload.text, payload.level);
         // 读取目录失败时宿主只发 warn/error toast：浏览控制器据此把在途目录标为失败（单击可重试）
         browser.onToast(payload);
+        break;
+      case 'notice':
+        // §5.11：宿主主动的持久提示（编码异常 / 二进制拒绝 / 文件打不开）。
+        // persistent !== false 显示为可关闭错误条；否则退回 3 秒 toast（旧宿主兼容）。
+        if (payload.persistent === false) {
+          showToast(payload.text, payload.level);
+        } else {
+          showErrorBar(payload.text, { level: payload.level === 'warn' ? 'warn' : 'error' });
+        }
+        break;
+      case 'settings':
+        // 修复波 B-空白启动：宿主在 shellReady 后下发已持久化偏好，未打开文档也应用主题/字号。
+        applyIncomingSettings(payload);
         break;
       case 'recent':
         // 宿主每次打开文档后都会推最新列表；空白启动页用它渲染面板（已有文档时只更新 state）。
@@ -932,6 +1105,14 @@ export function mountShell({ root, post } = {}) {
   content.addEventListener('click', onContentClick);
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('click', onDocumentClick);
+  // 修复波 B-§5.11：错误条/大文件横幅可手动关闭（持久显示，不自动消失）。
+  errorBarClose.addEventListener('click', hideErrorBar);
+  hugeBannerClose.addEventListener('click', hideHugeBanner);
+  // 键盘可达性：焦点进入工具条/浮层时保持工具条可见；离开后再按 800ms 规则隐藏。
+  toolbar.addEventListener('focusin', onOverlayFocusIn);
+  aaPanel.addEventListener('focusin', onOverlayFocusIn);
+  recentMenu.addEventListener('focusin', onOverlayFocusIn);
+  document.addEventListener('focusout', onOverlayFocusOut);
   // Task 12：滚动驱动进度条/回到顶部；鼠标进顶部 40px 显示工具条，离开工具条 800ms 隐藏
   content.addEventListener('scroll', onContentScroll, { passive: true });
   document.addEventListener('mousemove', onMouseMove, { passive: true });
@@ -985,6 +1166,12 @@ export function mountShell({ root, post } = {}) {
     aaPanel.removeEventListener('mouseleave', flushSettingsSave);
     flushSettingsSave();
     recentToggle.removeEventListener('click', toggleRecentMenu);
+    errorBarClose.removeEventListener('click', hideErrorBar);
+    hugeBannerClose.removeEventListener('click', hideHugeBanner);
+    toolbar.removeEventListener('focusin', onOverlayFocusIn);
+    aaPanel.removeEventListener('focusin', onOverlayFocusIn);
+    recentMenu.removeEventListener('focusin', onOverlayFocusIn);
+    document.removeEventListener('focusout', onOverlayFocusOut);
     // 浏览控制器的工具条监听（根名切回树 / 大纲返回）与内部状态一并清理
     browser.destroy();
     tocResizerControl.destroy();

@@ -111,10 +111,110 @@ function ensureAllRendered() {
 }
 
 /**
- * 宿主调用（ExecuteScriptAsync）：进入打印模式，保存退出函数到 window.__jjPrintExit，
- * 再经消息通道回报 readyToPrint（宿主收到后才 PrintToPdfAsync）。任何一步失败都不抛。
+ * 等待单张图片就绪：已 complete 的图片直接 decode；未完成的等 load/error 后再 decode。
+ * decode 失败（图片解码不了）不算错误——打印继续，避免导出卡死。
+ * @param {HTMLImageElement} image
+ * @returns {Promise<void>}
  */
-export function enterPrintModeForPdf() {
+function waitForImage(image) {
+  const decode = () => {
+    if (typeof image.decode === 'function') {
+      return image.decode().catch(() => {});
+    }
+    return Promise.resolve();
+  };
+  if (image.complete) {
+    return Promise.resolve(decode());
+  }
+  return new Promise((resolve) => {
+    const done = () => {
+      image.removeEventListener('load', done);
+      image.removeEventListener('error', done);
+      resolve(decode());
+    };
+    image.addEventListener('load', done, { once: true });
+    image.addEventListener('error', done, { once: true });
+  });
+}
+
+/** 打印前资源等待上限（修复波 B-I3）：图片/字体等待合计最多 2 秒，超时继续导出。 */
+export const PRINT_ASSET_WAIT_MS = 2000;
+
+/**
+ * 修复波 B-I3（PDF 导出可能漏掉 lazy 图片）：
+ * 1. 所有 `img[loading=lazy]` 改为 eager（打印布局前先把图片纳入加载）；
+ * 2. 等待图片 load/error + decode（未完成的图片最多等到整体 deadline）；
+ * 3. 可选等待 document.fonts.ready（字体就绪后分页更准）；
+ * 4. 强制一次 reflow，让打印样式下的布局在 PrintToPdf 前稳定。
+ * 任何一步失败/超时都继续（导出宁可少等，也不能卡住 readyToPrint）。
+ * @param {{document?: Document, timeoutMs?: number}} [options]
+ * @returns {Promise<void>}
+ */
+export async function waitForPrintAssets({ document: doc = globalThis.document, timeoutMs = PRINT_ASSET_WAIT_MS } = {}) {
+  if (!doc) {
+    return;
+  }
+  const limit = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : PRINT_ASSET_WAIT_MS;
+  const deadline = Date.now() + limit;
+
+  const images = typeof doc.querySelectorAll === 'function' ? Array.from(doc.querySelectorAll('img')) : [];
+  for (const image of images) {
+    try {
+      // 打印前不让浏览器继续延迟加载：lazy 图片可能根本没开始请求
+      image.loading = 'eager';
+    } catch {
+      // 只读/不支持 loading 的环境忽略
+    }
+  }
+
+  const remaining = () => Math.max(0, deadline - Date.now());
+  if (images.length > 0) {
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(resolve, remaining());
+    });
+    try {
+      await Promise.race([Promise.all(images.map((image) => waitForImage(image))), timeout]);
+    } finally {
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  // 字体就绪（jsdom 无 document.fonts：直接跳过；超过剩余时间也继续）
+  const fonts = doc.fonts;
+  if (fonts && fonts.ready && typeof fonts.ready.then === 'function') {
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(resolve, remaining());
+    });
+    try {
+      await Promise.race([fonts.ready.catch(() => {}), timeout]);
+    } finally {
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  // 强制一次 reflow：把 print-mode 的布局/图片尺寸在调用 PrintToPdfAsync 前落定。
+  try {
+    const body = doc.body;
+    if (body) {
+      void body.offsetHeight;
+    }
+  } catch {
+    // 无布局环境忽略
+  }
+}
+
+/**
+ * 宿主调用（ExecuteScriptAsync）：进入打印模式，保存退出函数到 window.__jjPrintExit，
+ * 等图片/字体就绪后经消息通道回报 readyToPrint（宿主收到后才 PrintToPdfAsync）。任何一步失败都不抛。
+ * 返回 Promise 便于测试等待；宿主 ExecuteScriptAsync 不依赖返回值。
+ */
+export async function enterPrintModeForPdf() {
   const win = globalThis.window ?? null;
 
   // 上一次导出残留的退出函数先收掉，保证 window.__jjPrintExit 只对应本次打印模式
@@ -139,6 +239,13 @@ export function enterPrintModeForPdf() {
   if (!post) {
     log('消息通道不可用，无法发送 readyToPrint');
     return;
+  }
+
+  // 修复波 B-I3：先等图片（lazy → eager + decode）与字体，最多 2s；超时照常导出。
+  try {
+    await waitForPrintAssets({ document: globalThis.document });
+  } catch {
+    log('等待图片/字体就绪失败，按当前内容导出');
   }
 
   try {

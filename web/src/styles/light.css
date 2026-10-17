@@ -43,6 +43,16 @@ html[data-theme='light'] {
   --panel-shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
   --toast-bg: #1f2328;
   --toast-fg: #ffffff;
+  /* 错误条/大文件横幅（修复波 B-§5.11；深色主题在 dark.css 覆盖） */
+  --notice-bg: #fff8c5;
+  --notice-fg: #3b2300;
+  --notice-border: #d4a72c;
+  --notice-error-bg: #ffebe9;
+  --notice-error-fg: #82071e;
+  --notice-error-border: #cf222e;
+  --notice-banner-bg: #ddf4ff;
+  --notice-banner-fg: #0a3069;
+  --notice-banner-border: #54aeff;
 
   /* highlight.js token（浅色） */
   --hljs-fg: #1f2328;

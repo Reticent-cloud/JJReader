@@ -267,9 +267,10 @@ MDReader/
 ### 5.9 文件关联与单实例
 
 - `install.ps1`：写 `HKCU\Software\Classes\JingjingReader.md`（含 `DefaultIcon`、`shell\open\command` 指向 `JingjingReader.exe "%1"`）、加入 `.md` 的 `OpenWithProgids`，并在「打开方式」中显示为**鲸鲸阅读器**。
-- 若 `.md` 当前无默认程序，同时写入 `HKCU\Software\Classes\.md` 默认值；若已有默认程序，只加入打开方式并提示用户在「默认应用」中一键切换（提供按钮跳转 `ms-settings:defaultapps`）。
-- `uninstall.ps1`：删除本程序写入的全部注册表项，恢复安装前备份的原值（安装时先备份到 `%APPDATA%\JingjingReader\assoc-backup.json`）。
-- 单实例：第二次双击不新开窗口，转交给已运行窗口打开。
+- 「有效默认程序」按 Windows 的规则读取：`HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice\ProgId` 优先，没有 UserChoice 时才回退 `HKCU\Software\Classes\.md` 默认值。
+- 仅当有效默认程序不存在时才写入 `HKCU\Software\Classes\.md` 默认值；已有默认程序（含 UserChoice 指向别的程序）时只加入打开方式，并提示用户在「默认应用」中一键切换（提供按钮跳转 `ms-settings:defaultapps`）。
+- `uninstall.ps1`：删除本程序写入的注册表项、恢复安装前备份的原值（安装时先备份到 `%APPDATA%\JingjingReader\assoc-backup.json`）。**Classes 与打开方式可完整恢复；Windows `UserChoice` 由系统保护，需用户在「默认应用」中重新选择**——若 UserChoice 仍指向本程序，卸载输出明确警告并提示 `ms-settings:defaultapps`，但不视为失败。
+- 单实例：第二次双击不新开窗口，转交给已运行窗口打开（最小化时先还原并激活）。
 
 ### 5.10 PDF 导出
 

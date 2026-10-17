@@ -165,13 +165,13 @@ it('打印模式隐藏工具条与侧栏并强制浅色', () => {
   expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
 });
 
-it('导出流程：进入打印模式后回报 readyToPrint', () => {
+it('导出流程：进入打印模式后回报 readyToPrint', async () => {
   const root = document.createElement('div');
   document.body.append(root);
   const posted = [];
   const shell = JJ.mountShell({ root, post: (type) => posted.push(type) });
   mounted.push(shell);
-  JJ.enterPrintModeForPdf();
+  await JJ.enterPrintModeForPdf();
   expect(posted).toContain('readyToPrint');
   expect(typeof window.__jjPrintExit).toBe('function');
   JJ.exitPrintModeForPdf();
@@ -204,13 +204,13 @@ it('退出打印模式后恢复 #content 的 scrollTop（print.css 的 overflow:
   expect(content.scrollTop).toBe(640);
 });
 
-it('消息通道缺失时不抛，只打日志', () => {
+it('消息通道缺失时不抛，只打日志', async () => {
   document.body.innerHTML = '<main id="content">x</main>';
   document.documentElement.dataset.theme = 'dark';
   delete JJ.__post;
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-  expect(() => JJ.enterPrintModeForPdf()).not.toThrow();
+  await expect(JJ.enterPrintModeForPdf()).resolves.toBeUndefined();
   expect(document.body.classList.contains('print-mode')).toBe(true);
   expect(document.documentElement.dataset.theme).toBe('light');
   expect(warn).toHaveBeenCalled();
@@ -293,7 +293,7 @@ it('输入框内 Ctrl+E 不触发导出（快捷键交还给输入控件）', ()
 
 // ── 分块大文档导出全文（Task 15 修复：原来只导出已渲染块） ──
 
-it('分块未渲染完成时：先同步渲染全文，再回报 readyToPrint', () => {
+it('分块未渲染完成时：先同步渲染全文，再回报 readyToPrint', async () => {
   const observer = installObserverStub();
   const splitStub = stubTwoBlocks();
   const originalThreshold = JJ.CHUNK_THRESHOLD;
@@ -330,7 +330,7 @@ it('分块未渲染完成时：先同步渲染全文，再回报 readyToPrint', 
         }
         return originalPost(type, payload);
       };
-      JJ.enterPrintModeForPdf();
+      await JJ.enterPrintModeForPdf();
     } finally {
       bodyClassList.add = originalAdd;
       JJ.__ensureAllRendered = originalEnsure;
@@ -387,12 +387,66 @@ it('分块已全部渲染时 __ensureAllRendered 不重复渲染', () => {
   }
 });
 
-it('__ensureAllRendered 缺失时照常回报 readyToPrint 且不抛', () => {
+it('__ensureAllRendered 缺失时照常回报 readyToPrint 且不抛', async () => {
   delete JJ.__ensureAllRendered;
   const posted = [];
   JJ.__post = (type) => posted.push(type);
 
-  expect(() => JJ.enterPrintModeForPdf()).not.toThrow();
+  await expect(JJ.enterPrintModeForPdf()).resolves.toBeUndefined();
   expect(posted).toContain('readyToPrint');
   expect(document.body.classList.contains('print-mode')).toBe(true);
+});
+
+// ── 修复波 B-I3：导出前等待 lazy 图片/字体（最多 2s） ──
+
+it('导出前把 lazy 图片改为 eager，并等图片就绪/超时后才发 readyToPrint', async () => {
+  vi.useFakeTimers();
+  try {
+    document.body.innerHTML = '<main id="content"></main>';
+    const image = document.createElement('img');
+    image.setAttribute('loading', 'lazy');
+    Object.defineProperty(image, 'complete', { configurable: true, get: () => false });
+    image.decode = () => Promise.resolve();
+    document.getElementById('content').append(image);
+    const posted = [];
+    JJ.__post = (type) => posted.push(type);
+
+    const pending = JJ.enterPrintModeForPdf();
+    await vi.advanceTimersByTimeAsync(0);
+    // 图片未完成：readyToPrint 必须等待（但打印模式已先进入，布局可按打印样式进行）
+    expect(posted).not.toContain('readyToPrint');
+    expect(image.loading).toBe('eager');
+    expect(document.body.classList.contains('print-mode')).toBe(true);
+
+    // 2 秒等待上限：超时后照常导出（不能卡住宿主）
+    await vi.advanceTimersByTimeAsync(2000);
+    await pending;
+    expect(posted).toContain('readyToPrint');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('图片在等待窗口内完成时立即发 readyToPrint（不必等满 2s）', async () => {
+  vi.useFakeTimers();
+  try {
+    document.body.innerHTML = '<main id="content"></main>';
+    const image = document.createElement('img');
+    Object.defineProperty(image, 'complete', { configurable: true, get: () => false });
+    image.decode = () => Promise.resolve();
+    document.getElementById('content').append(image);
+    const posted = [];
+    JJ.__post = (type) => posted.push(type);
+
+    const pending = JJ.enterPrintModeForPdf();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(posted).not.toContain('readyToPrint');
+    // 模拟图片加载完成
+    image.dispatchEvent(new Event('load'));
+    await vi.advanceTimersByTimeAsync(0);
+    await pending;
+    expect(posted).toContain('readyToPrint');
+  } finally {
+    vi.useRealTimers();
+  }
 });

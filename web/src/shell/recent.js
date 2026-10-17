@@ -122,13 +122,14 @@ export function nextRecentPath(items, currentPath, direction) {
 }
 
 /**
- * 渲染最近文件面板（标题 + 列表 + 打开提示）。
+ * 渲染最近文件面板（标题 + 「打开文件」按钮 + 列表 + 打开提示）。
  * 列表项是 button[data-path]（显示名 + 目录 + 相对时间）；↑↓ 移动焦点、Enter 打开、Esc 关闭、点击打开。
+ * 修复波 B-§5.11：空白启动页必须有可见的「打开文件」按钮（不依赖用户记住 Ctrl+O）。
  * @param {object[]} items {path, name, dir, openedAt}[]
- * @param {{onOpen?: (path: string) => void, onClose?: () => void}} [options]
+ * @param {{onOpen?: (path: string) => void, onClose?: () => void, onPickFile?: () => void}} [options]
  * @returns {HTMLElement} section.recent-panel
  */
-export function renderRecent(items, { onOpen, onClose } = {}) {
+export function renderRecent(items, { onOpen, onClose, onPickFile } = {}) {
   const list = normalizeRecentItems(items);
   const panel = document.createElement('section');
   panel.className = 'recent-panel';
@@ -138,6 +139,24 @@ export function renderRecent(items, { onOpen, onClose } = {}) {
   title.className = 'recent-title';
   title.textContent = '最近文件';
   panel.append(title);
+
+  // 空白启动页的「打开文件」入口：与工具条/Ctrl+O 走同一条 pickFile 消息（宿主弹系统对话框）。
+  const pickFileButton = document.createElement('button');
+  pickFileButton.type = 'button';
+  pickFileButton.className = 'recent-open';
+  pickFileButton.textContent = '打开文件…';
+  pickFileButton.title = '打开 Markdown 文件（Ctrl+O）';
+  pickFileButton.addEventListener('click', () => {
+    if (typeof onPickFile !== 'function') {
+      return;
+    }
+    try {
+      onPickFile();
+    } catch {
+      // 打开对话框失败不能打断面板
+    }
+  });
+  panel.append(pickFileButton);
 
   const listRoot = document.createElement('nav');
   listRoot.className = 'recent-list';

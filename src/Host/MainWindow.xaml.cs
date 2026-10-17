@@ -1,9 +1,12 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 
 namespace JingjingReader;
@@ -41,18 +44,175 @@ public partial class MainWindow : Window
     /// <summary>前端完成一次渲染（来自 <c>renderDone</c> 消息；--verify-render 与 debug 日志使用）。</summary>
     public event Action<InboundMessage>? RenderDone;
 
+    /// <summary>savePosition 日志折叠（M2）：同一文档只记一次，避免每 500ms 一行刷爆 debug.log。</summary>
+    private string? _lastPositionLogKey;
+
+    /// <summary>WebView2 启动失败时只弹一次原生对话框（重试/重载不再重复打扰）。</summary>
+    private bool _webViewFailureShown;
+
+    /// <summary>
+    /// 离屏自检窗口（--verify-render / --verify-pdf）不写回窗口几何：它们把窗口放到 -32000，
+    /// 若照常保存会覆盖用户真实的窗口位置/大小。由 VerifyRender/VerifyPdf 在 Show 前设置。
+    /// </summary>
+    internal bool SuppressGeometryPersistence { get; set; }
+
+    /// <summary>
+    /// 离屏自检窗口不弹 WebView2 失败模态框：命令行自检缺运行时必须快速失败/退出，
+    /// 不能被一个需要人点的对话框挂住（仍显示 WPF 解释页并写日志）。
+    /// </summary>
+    internal bool SuppressFailureDialog { get; set; }
+
     public MainWindow()
     {
         InitializeComponent();
 
-        // 数据目录统一由 AppPaths 计算（只给路径，Store 落盘时自行创建）；WebView2 缓存仍留在 %LOCALAPPDATA%。
+        // 数据目录统一由 AppPaths 计算（只给路径，Store 落盘时自行创建）；WebView2 缓存默认仍在
+        // %LOCALAPPDATA%\JingjingReader\WebView2，验收隔离时随 JJ_DATA_DIR 一起改到临时目录。
         _store = new Store(AppPaths.DataDir);
-        _webViewDataFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            AppPaths.DataDirectoryName,
-            "WebView2");
+        _webViewDataFolder = AppPaths.WebViewDataDir;
 
+        // I1（spec §5.1）：启动时恢复窗口几何；关闭时把位置/大小/最大化写回 settings.json。
+        ApplySavedWindowGeometry();
+        Closing += OnWindowClosing;
         Loaded += OnLoaded;
+    }
+
+    /// <summary>
+    /// I1：把 settings.Window 夹紧到虚拟屏幕工作区后应用。WindowStartupLocation=Manual
+    /// （XAML 默认按位置手动）避免 WPF 再把窗口挪到主屏中央。
+    /// 读取失败只记日志：窗口几何是锦上添花，不能阻断启动。
+    /// </summary>
+    private void ApplySavedWindowGeometry()
+    {
+        try
+        {
+            var saved = _store.LoadSettings().Window;
+            if (saved is null)
+            {
+                return;
+            }
+
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            var workArea = ResolveWorkArea(saved);
+            var clamped = WindowGeometryClamp.Clamp(saved, workArea);
+            Left = clamped.X;
+            Top = clamped.Y;
+            Width = clamped.W;
+            Height = clamped.H;
+            if (clamped.Max)
+            {
+                WindowState = WindowState.Maximized;
+            }
+
+            DebugLog.Write(
+                $"恢复窗口几何 saved=({saved.X},{saved.Y},{saved.W},{saved.H},max={saved.Max}) " +
+                $"workArea=({workArea.X},{workArea.Y},{workArea.Width},{workArea.Height}) " +
+                $"applied=({clamped.X},{clamped.Y},{clamped.W},{clamped.H})");
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"恢复窗口几何失败：{exception}");
+        }
+    }
+
+    /// <summary>
+    /// I1：取几何所在屏幕的工作区。必须使用 WPF 的 DIP 口径（<see cref="SystemParameters.WorkArea"/> /
+    /// 虚拟屏幕），不能把 Win32 GetMonitorInfo 的物理像素与 <see cref="Window.Left"/>（DIP）混用——
+    /// 200% DPI 下会把窗口"夹紧"到屏幕外的双倍坐标。
+    /// 保存位置与主屏工作区有交集 → 用主屏工作区（排除任务栏）；在副屏/完全出屏 → 用虚拟屏幕范围（近似工作区）。
+    /// </summary>
+    private static Rect ResolveWorkArea(WindowGeometry geometry)
+    {
+        var saved = new Rect(
+            geometry.X,
+            geometry.Y,
+            Math.Max(geometry.W, 1),
+            Math.Max(geometry.H, 1));
+        var primaryWorkArea = SystemParameters.WorkArea;
+        if (saved.IntersectsWith(primaryWorkArea))
+        {
+            return primaryWorkArea;
+        }
+
+        var virtualScreen = new Rect(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight);
+        var multiMonitor = virtualScreen.Width > primaryWorkArea.Width + 1
+            || virtualScreen.Height > primaryWorkArea.Height + 1
+            || Math.Abs(virtualScreen.Left - primaryWorkArea.Left) > 1
+            || Math.Abs(virtualScreen.Top - primaryWorkArea.Top) > 1;
+        return multiMonitor ? virtualScreen : primaryWorkArea;
+    }
+
+    /// <summary>
+    /// I1：关闭时写回窗口几何。最大化时保存 <see cref="Window.RestoreBounds"/>（还原后的正常尺寸），
+    /// 下次启动最大化且还原尺寸正确；写盘失败只记日志。
+    /// </summary>
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (SuppressGeometryPersistence)
+        {
+            return;
+        }
+
+        try
+        {
+            var bounds = RestoreBounds;
+            if (bounds.IsEmpty || bounds.Width <= 0 || bounds.Height <= 0)
+            {
+                bounds = new Rect(Left, Top, Math.Max(Width, WindowGeometryClamp.MinWidth), Math.Max(Height, WindowGeometryClamp.MinHeight));
+            }
+
+            var geometry = new WindowGeometry(
+                (int)Math.Round(bounds.X),
+                (int)Math.Round(bounds.Y),
+                (int)Math.Round(bounds.Width),
+                (int)Math.Round(bounds.Height),
+                WindowState == WindowState.Maximized);
+            var settings = _store.LoadSettings();
+            _store.SaveSettings(settings with { Window = geometry });
+            DebugLog.Write(
+                $"保存窗口几何 ({geometry.X},{geometry.Y},{geometry.W},{geometry.H},max={geometry.Max})");
+        }
+        catch (Exception exception)
+        {
+            // 退出路径：写盘失败只记日志，绝不能阻止窗口关闭（spec §6.2）
+            DebugLog.Write($"保存窗口几何失败：{exception}");
+        }
+    }
+
+    /// <summary>
+    /// I1：在首次点击前把窗口带到前台（单实例转交入口）：最小化 → 还原，然后 Show/Activate。
+    /// 放在 MainWindow 上便于 App 的 IPC 回调与正常启动共用一段逻辑（也便于手测）。
+    /// </summary>
+    public void BringToForeground()
+    {
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        Show();
+        Activate();
+        Focus();
+    }
+
+    /// <summary>
+    /// I4：全局异常兜底的可恢复错误提示（仅 UI 线程异常使用；只弹一次，避免异常风暴刷屏）。
+    /// 宿主已把完整异常写进 debug.log，这里只给用户一个不打断阅读的 toast。
+    /// </summary>
+    public void ShowRecoverableError(string text)
+    {
+        try
+        {
+            Post(Protocol.Toast(text, "error"));
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"显示异常提示失败：{exception.Message}");
+        }
     }
 
     /// <summary>
@@ -76,18 +236,188 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            // 窗口初始化是 UI 顶层边界：WebView2 运行时缺失/初始化失败时记录并提示，
-            // 不让异常冒泡成未处理异常（原生错误对话框由 Task 16 负责）。
+            // 窗口初始化是 UI 顶层边界：WebView2 运行时缺失/初始化失败时记录并弹原生对话框，
+            // 不让异常冒泡成未处理异常（I3 / spec §5.11）。
             DebugLog.Write($"WebView2 初始化失败：{exception}");
             ConsoleHelper.WriteLine($"ERROR WebView2 初始化失败：{exception.Message}");
+            ShowWebView2StartupFailure(exception);
+            if (SuppressFailureDialog)
+            {
+                // 命令行自检：WebView2 无法初始化时没有可等待的 renderDone，直接以退出码 2 失败。
+                Application.Current?.Shutdown(2);
+            }
         }
     }
 
     private Task EnsureWebViewInitializedAsync() => _webViewInitialization ??= InitializeWebViewAsync();
 
+    /// <summary>
+    /// I3（spec §5.11）：WebView2 缺失/初始化失败 → 原生对话框（说明 + 下载运行时 + 打开数据目录）；
+    /// 关闭后显示 WPF 解释页并保持窗口可用（缺运行时连 NavigateToString 都无法渲染，所以用 WPF 控件承载说明）。
+    /// 只弹一次：重试/重载失败不重复打扰。
+    /// </summary>
+    private void ShowWebView2StartupFailure(Exception exception)
+    {
+        if (_webViewFailureShown)
+        {
+            return;
+        }
+
+        _webViewFailureShown = true;
+        var model = WebView2StartupFailure.BuildDialogModel(exception);
+        if (SuppressFailureDialog)
+        {
+            // 命令行自检：只显示解释页（不阻塞）。
+            ShowWebView2ExplanationPage(model);
+            return;
+        }
+
+        try
+        {
+            var dialog = new Window
+            {
+                Title = model.Title,
+                Owner = this,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                ShowInTaskbar = false,
+                SizeToContent = SizeToContent.Height,
+                Width = 560,
+                Background = SystemColors.WindowBrush,
+            };
+
+            var panel = new StackPanel { Margin = new Thickness(20) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = model.Summary,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 14,
+                Margin = new Thickness(0, 0, 0, 12),
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = model.Detail,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12,
+                Foreground = SystemColors.GrayTextBrush,
+                Margin = new Thickness(0, 0, 0, 16),
+            });
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+            };
+            var download = new Button { Content = model.DownloadButtonText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
+            download.Click += (_, _) => TryOpenExternal(model.DownloadUrl);
+            var openDataDir = new Button { Content = model.OpenDataDirButtonText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
+            openDataDir.Click += (_, _) => TryOpenDirectory(model.DataDir);
+            var close = new Button { Content = model.CloseButtonText, Padding = new Thickness(12, 4, 12, 4), IsDefault = true, IsCancel = true };
+            close.Click += (_, _) => dialog.Close();
+            buttons.Children.Add(download);
+            buttons.Children.Add(openDataDir);
+            buttons.Children.Add(close);
+            panel.Children.Add(buttons);
+            dialog.Content = panel;
+            dialog.ShowDialog();
+        }
+        catch (Exception dialogError)
+        {
+            // 连对话框都建不出来时退回最简消息框：说明书必须让用户看到
+            DebugLog.Write($"显示 WebView2 失败对话框失败：{dialogError}");
+            MessageBox.Show(this, model.Summary + Environment.NewLine + model.DownloadUrl, model.Title);
+        }
+
+        ShowWebView2ExplanationPage(model);
+    }
+
+    /// <summary>I3：关闭对话框后的解释页（WebView2 不可用时用 WPF 控件承载，窗口继续可用）。</summary>
+    private void ShowWebView2ExplanationPage(WebView2FailureDialog model)
+    {
+        try
+        {
+            WebView.Visibility = Visibility.Collapsed;
+            if (Content is not Panel root)
+            {
+                return;
+            }
+
+            var box = new Border
+            {
+                Margin = new Thickness(32),
+                Padding = new Thickness(28),
+                Background = SystemColors.WindowBrush,
+            };
+            var panel = new StackPanel
+            {
+                MaxWidth = 640,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            panel.Children.Add(new TextBlock
+            {
+                Text = model.Title,
+                FontSize = 22,
+                FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 12),
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = model.Summary,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = model.RuntimeMissing
+                    ? $"安装完成后重新启动本程序。数据目录：{model.DataDir}"
+                    : $"可尝试重新启动；若仍失败，请安装/修复 WebView2 Runtime。数据目录：{model.DataDir}",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = SystemColors.GrayTextBrush,
+                FontSize = 13,
+            });
+            box.Child = panel;
+            root.Children.Add(box);
+            Title = "无法启动 — 鲸鲸阅读器";
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"显示 WebView2 解释页失败：{exception}");
+        }
+    }
+
+    /// <summary>打开 http(s) 地址（WebView2 失败对话框的下载按钮；失败只记日志）。</summary>
+    private static void TryOpenExternal(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"打开下载页失败 url={url}：{exception.Message}");
+        }
+    }
+
+    /// <summary>在资源管理器打开目录（失败只记日志；目录不存在时先创建）。</summary>
+    private static void TryOpenDirectory(string directory)
+    {
+        try
+        {
+            Directory.CreateDirectory(directory);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{directory}\"") { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"打开目录失败 path={directory}：{exception.Message}");
+        }
+    }
+
     private async Task InitializeWebViewAsync()
     {
-        // userDataFolder 固定到 %LOCALAPPDATA%\JingjingReader\WebView2（目录不存在则创建）。
+        // userDataFolder 默认 %LOCALAPPDATA%\JingjingReader\WebView2；设置 JJ_DATA_DIR 时随数据目录隔离
+        // （修复波 B-I2 验收隔离，目录不存在则创建）。
         Directory.CreateDirectory(_webViewDataFolder);
 
         var environment = await CoreWebView2Environment.CreateAsync(
@@ -159,10 +489,15 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            // 文件不存在/无权限/路径非法：保持窗口可用，前端给错误提示（错误条在 Task 12 完善）。
+            // 文件不存在/无权限/路径非法：保持窗口可用；toast 之外再发持久 notice，
+            // 前端显示可关闭的顶部错误条（spec §5.11「错误条（持续显示，可关闭）」）。
             DebugLog.Write($"打开文档失败 path={normalizedPath} error={exception}");
             Title = $"{Path.GetFileName(normalizedPath)} — 鲸鲸阅读器";
             Post(Protocol.Toast($"无法打开文件：{Path.GetFileName(normalizedPath)}", "error"));
+            Post(Protocol.Notice(
+                $"无法打开文件：{Path.GetFileName(normalizedPath)}（{exception.Message}）",
+                "error",
+                persistent: true));
             return;
         }
 
@@ -176,20 +511,28 @@ public partial class MainWindow : Window
 
         DebugLog.Write(
             $"load path={document.Path} encoding={document.EncodingName} hadBom={document.HadBom} " +
-            $"size={document.Size} binary={isBinary}");
+            $"size={document.Size} binary={isBinary} hadReplacement={document.HadReplacement}");
 
         // 二进制文件不渲染正文：给前端空 markdown + toast 拒绝提示（DocumentRead 以 encoding=binary 为信号）。
+        // 修复波 B-§5.11：load 附带 encoding 供前端调试；持久 notice 进错误条（比 3 秒 toast 更容易看到）。
         Post(Protocol.Load(
             document.Path,
             document.Key,
             FileHost.VirtualHostUrl(document.Path, relativeOrAbsolutePath: null),
             isBinary ? string.Empty : document.Text,
             settings,
-            position));
+            position,
+            document.EncodingName));
 
         if (isBinary)
         {
             Post(Protocol.Toast("该文件不是文本文件，已拒绝渲染", "warn"));
+            Post(Protocol.Notice("该文件不是文本文件，已拒绝渲染", "warn", persistent: true));
+        }
+        else if (document.HadReplacement)
+        {
+            // §5.11 编码异常：尽力显示 + 提示条「文件编码可能不是 UTF-8，部分字符已替换」
+            Post(Protocol.Notice("文件编码可能不是 UTF-8，部分字符已替换", "warn", persistent: true));
         }
 
         // 只有可渲染的文本文档才记入最近文件（裁定 4）：二进制拒绝渲染时 recent.json 与前端列表都保持原样。
@@ -251,6 +594,22 @@ public partial class MainWindow : Window
         finally
         {
             _aboutWindow = null;
+        }
+    }
+
+    /// <summary>
+    /// 修复波 B-前端空白启动：把持久化偏好推给前端（消息 <c>settings</c>；payload 是 AppSettings 字段）。
+    /// 读设置失败只记日志：偏好不能影响 shell 握手与正文推送。
+    /// </summary>
+    private void PostSettings()
+    {
+        try
+        {
+            Post(Protocol.Settings(_store.LoadSettings()));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            DebugLog.Write($"读取设置失败：{exception.Message}");
         }
     }
 
@@ -392,6 +751,8 @@ public partial class MainWindow : Window
                 TryPushPendingDocument();
                 // 无论是否推了 load 都发最近文件：空白启动页要靠它渲染面板。
                 PostRecent();
+                // 修复波 B-前端空白启动：空白页也应用持久偏好（主题/字号/行宽），不必等 load。
+                PostSettings();
                 // Task 16：把 .md 关联状态推给前端（工具条「关于」按钮 title）。
                 PostAssocState();
                 break;
@@ -1086,7 +1447,14 @@ public partial class MainWindow : Window
         }
 
         _store.SavePosition(message.Key, document.Path, message.Ratio, DateTimeOffset.UtcNow);
-        DebugLog.Write($"savePosition key={message.Key} ratio={message.Ratio:0.###}");
+
+        // M2：savePosition 每 500ms 一条，逐条写日志会把 debug.log 刷爆（触发无意义的滚动）。
+        // 同一文档的滚动上报只记首条（ratio 每次仍会持久化，只是不进日志）。
+        if (!string.Equals(_lastPositionLogKey, document.Key, StringComparison.OrdinalIgnoreCase))
+        {
+            _lastPositionLogKey = document.Key;
+            DebugLog.Write($"savePosition key={message.Key} ratio={message.Ratio:0.###}（后续同文档滚动不再逐条记录）");
+        }
     }
 
     /// <summary>M3：位置消息的 key 是否就是当前文档的 key（大小写不敏感；空值不接受）。</summary>

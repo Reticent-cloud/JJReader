@@ -12,7 +12,7 @@
 - **最近文件与位置记忆**：空白启动页显示最近文件；退出重开后回到上次阅读位置；`F5` 重载并保持位置；`Alt+←/→` 在最近文件间切换。
 - **文件树**：选择一个文件夹作为浏览根，左栏切换到文件树，点击目录展开、点击文件直接打开；工具条可切回大纲。
 - **大文档**：超过 512 KB 自动分块渐进渲染（首屏 256 KB，剩余块滚动进入视口时渲染），超过 20 MB 进入大文件模式（关闭代码高亮与滚动联动并提示）。
-- **系统能力**：原生打开文件/文件夹对话框、拖放打开、在资源管理器定位当前文件、单实例（第二次启动把路径转交给已运行窗口）、PDF 导出（A4、12 mm 页边距、深色主题导出浅色底）、`.md` 关联安装/卸载（HKCU，可恢复原状）、关于面板。
+- **系统能力**：原生打开文件/文件夹对话框、拖放打开、在资源管理器定位当前文件、单实例（第二次启动把路径转交给已运行窗口）、PDF 导出（A4、12 mm 页边距、深色主题导出浅色底）、`.md` 关联安装/卸载（HKCU；Classes 与打开方式可完整恢复，Windows UserChoice 需用户在默认应用中重新选择）、关于面板。
 - **安全**：Markdown 内嵌 HTML 一律经 DOMPurify 白名单清洗；WebView2 关闭开发者工具与浏览器快捷键，WebView 内导航被拦截（外部链接在新窗口/系统浏览器打开），前端消息按应用文档来源校验，内容里的 wikilink/附件只允许打开文档目录内的相对路径。
 
 ## 系统要求
@@ -84,6 +84,8 @@ pwsh -NoProfile -File scripts/install.ps1 -OpenSettings
 | 导出 PDF | `Ctrl+E` | 保存对话框；无文档时提示先打开 |
 | 重载 | `F5` | 重新读文件并保持滚动位置 |
 | 上一份 / 下一份 | `Alt+←` / `Alt+→` | 按最近文件顺序切换 |
+| 主题循环 | `Alt+T` | 浅色 → 深色 → 跟随系统 |
+| 关于 | `Alt+A` | 打开关于面板（含 .md 默认应用设置入口） |
 | 定位到文件 | `Ctrl+Shift+C` | 在资源管理器中打开当前文档所在目录 |
 | 显示工具条 | `Alt` | 鼠标移入顶部也会显示；移出后自动隐藏 |
 | 关闭浮层 | `Esc` | 关闭排版面板/最近菜单/工具条 |
@@ -110,6 +112,8 @@ cd web; npm test                                      # vitest + jsdom（含 5 �
 dotnet test tests/host/JingjingReader.Tests.csproj    # xUnit
 ```
 
+测试用隔离变量：设置 `JJ_DATA_DIR` 环境变量可把数据目录与 WebView2 用户数据目录改到指定路径（仅显式设置时生效，生产默认路径不变），避免测试/验收污染 `%APPDATA%`。
+
 ## 验收
 
 ```powershell
@@ -132,7 +136,7 @@ pwsh -NoProfile -File scripts/uninstall.ps1
 pwsh -NoProfile -File scripts/uninstall.ps1 -ExePath "D:\apps\JingjingReader\JingjingReader.exe"
 ```
 
-卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。卸载不会删除阅读偏好、最近文件与 WebView2 缓存；如需彻底清理，手动删除 `%APPDATA%\JingjingReader` 与 `%LOCALAPPDATA%\JingjingReader`。
+卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态。**Classes 与「打开方式」可完整恢复；Windows `UserChoice` 由系统保护、程序无法改写**——若 `.md` 的默认应用仍指向鲸鲸阅读器，卸载会明确提示到「设置 → 应用 → 默认应用」重新选择（`ms-settings:defaultapps`），不视为卸载失败。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。卸载不会删除阅读偏好、最近文件与 WebView2 缓存；如需彻底清理，手动删除 `%APPDATA%\JingjingReader` 与 `%LOCALAPPDATA%\JingjingReader`。
 
 ## 目录结构
 
@@ -173,7 +177,7 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -ExePath "D:\apps\JingjingReader\Jin
 
 - **分块渲染与跨块脚注**：超过 512 KB 的文档按块独立解析，定义在文末的脚注引用在较早的块里会显示为字面文本（`[^1]`）。引用式链接定义已做全文预抽取并补齐，脚注不在补齐范围（脚注区重复会改变既有输出）。这是已知取舍，不是渲染错误。
 - **超大文档导出 PDF 会先全量渲染**：导出前会把分块懒渲染的剩余块一次性渲染出来（保证内容完整），因此 5 万行文档导出要约 5 秒、1000+ 页；导出完成后以 toast 提示成功/失败。交互导出的超时保护为「等待 readyToPrint 10 秒 + PrintToPdf 60 秒」（合计最长 70 秒）；`--verify-pdf` 验收命令的外层导出超时为 75 秒。
-- **默认关联受 Windows 限制**：安装只写当前用户的「打开方式」，不能静默抢占已有默认程序；`HKCU` 之外的机器级关联不修改，也不需要管理员权限。
+- **默认关联受 Windows 限制**：安装只写当前用户的「打开方式」，不能静默抢占已有默认程序；`HKCU` 之外的机器级关联不修改，也不需要管理员权限。卸载可完整恢复 `Software\Classes` 与「打开方式」；Windows 的 `UserChoice` 由系统保护，需用户在「默认应用」中重新选择（界面/CLI 会提示 `ms-settings:defaultapps`）。
 - **内存主要在 WebView2 内核（Chromium 基线）**：程序会常驻 WebView2 的浏览器/渲染/GPU/工具等进程。验证机上（宿主 50 ms / WebView2 500 ms 采样，多次运行）实测：宿主私有内存（`PrivateMemorySize64`）约 160–175 MB、WebView2 进程组（直接子进程与全部后代）`WorkingSet64` 约 419–449 MB、整树 `WorkingSet64` 约 577–603 MB。验收口径为「宿主进程私有内存峰值 ≤ 200 MB」（150 MB 为后续优化目标），WebView2 进程组单列为信息项、不计入该预算；进程数不作为验收项（WebView2 进程组数量随运行时版本变化，本机实测 6 个）。数值受 WebView2 Runtime 版本、GPU 与系统环境影响，详见 `out/verify-report.md`。
 - **图标为占位**：`src/Host/app.ico` 是 `scripts/gen-icon.py` 生成的临时鲸鱼图标（16/32/48/256），正式图标待设计（spec Q1）。
 - **不支持**：数学公式 `$...$` / `$$...$$`、Mermaid、定义列表；内嵌 `<script>`/`<style>`/`<iframe>` 会被清洗移除；只读、无编辑、无多标签页、无全文搜索；不做笔记库级双链解析，`[[...]]` 只在当前文档目录及浅层子目录查找。

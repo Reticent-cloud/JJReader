@@ -76,6 +76,10 @@ public static class VerifyPdf
         // 不打扰用户：任务栏无图标、不抢焦点、窗口放到屏幕外；仍必须 Show() 才能完成渲染。
         window.ShowInTaskbar = false;
         window.ShowActivated = false;
+        // I1：离屏自检窗口的几何不能写回用户 settings.json（-32000 会覆盖真实窗口位置）。
+        window.SuppressGeometryPersistence = true;
+        // I3：命令行自检不弹需要人点的模态框（缺运行时快速失败）。
+        window.SuppressFailureDialog = true;
         window.WindowStartupLocation = WindowStartupLocation.Manual;
         window.Left = -32000;
         window.Top = -32000;

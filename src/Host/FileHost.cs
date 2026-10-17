@@ -14,7 +14,10 @@ public sealed record DocumentRead(
     bool HadBom,
     long Size,
     DateTime LastWriteUtc,
-    string Key);
+    string Key,
+    // §5.11 编码异常提示：严格 UTF-8 与 GB18030 都失败后，用宽松 UTF-8 兜底会产生 U+FFFD 替换字符。
+    // 放在 record 末尾并带默认值，旧构造点（测试）保持向后兼容。
+    bool HadReplacement = false);
 
 /// <summary>
 /// 宿主侧文件能力：路径规范化、扩展名判断、编码探测、文档读取、虚拟主机 URL 转换、相对资源解析（含目录穿越防护）。
@@ -38,6 +41,12 @@ public static class FileHost
     private static readonly Encoding Gb18030;
 
     /// <summary>
+    /// 严格 GB18030（非法字节抛 <see cref="DecoderFallbackException"/>）：用于区分「真正合法的 GB18030」
+    /// 与「勉强解码、含丢弃/替换字符」的坏字节。宽松版仍保留，坏字节时尽力显示原文并标记编码异常。
+    /// </summary>
+    private static readonly Encoding Gb18030Strict;
+
+    /// <summary>
     /// 注册 CodePages provider：GB18030 不在 .NET 默认编码表里，不注册就取不到（System.Text.Encoding.CodePages
     /// 已随 .NET 10 共享运行库分发，无需额外 NuGet 包）。显式静态构造函数保证首次使用任何成员之前完成注册。
     /// </summary>
@@ -45,6 +54,10 @@ public static class FileHost
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         Gb18030 = Encoding.GetEncoding("GB18030");
+        Gb18030Strict = Encoding.GetEncoding(
+            "GB18030",
+            EncoderFallback.ExceptionFallback,
+            DecoderFallback.ExceptionFallback);
     }
 
     /// <summary>
@@ -103,34 +116,36 @@ public static class FileHost
     /// <summary>
     /// 编码探测：BOM（UTF-8 / UTF-16LE / UTF-16BE）→ 含 NUL 判二进制 → 严格 UTF-8 → GB18030 → 兜底 UTF-8（替换字符）。
     /// BOM 优先于 NUL 判断，否则 UTF-16 文本会被误判为二进制。
+    /// 返回的 <c>HadReplacement</c> 只在「前两种 UTF-8 解码都失败、用宽松 UTF-8 兜底」时为 true，
+    /// 调用方据此在界面上提示编码异常（spec §5.11）。
     /// </summary>
-    public static (string Text, string EncodingName, bool HadBom, bool IsBinary) Decode(byte[] bytes)
+    public static (string Text, string EncodingName, bool HadBom, bool IsBinary, bool HadReplacement) Decode(byte[] bytes)
     {
         ArgumentNullException.ThrowIfNull(bytes);
 
         if (HasPrefix(bytes, 0xEF, 0xBB, 0xBF))
         {
-            return (LooseUtf8.GetString(bytes, 3, bytes.Length - 3), "utf-8", true, false);
+            return (LooseUtf8.GetString(bytes, 3, bytes.Length - 3), "utf-8", true, false, false);
         }
 
         if (HasPrefix(bytes, 0xFF, 0xFE))
         {
-            return (Utf16Le.GetString(bytes, 2, bytes.Length - 2), "utf-16le", true, false);
+            return (Utf16Le.GetString(bytes, 2, bytes.Length - 2), "utf-16le", true, false, false);
         }
 
         if (HasPrefix(bytes, 0xFE, 0xFF))
         {
-            return (Utf16Be.GetString(bytes, 2, bytes.Length - 2), "utf-16be", true, false);
+            return (Utf16Be.GetString(bytes, 2, bytes.Length - 2), "utf-16be", true, false, false);
         }
 
         if (Array.IndexOf(bytes, (byte)0) >= 0)
         {
-            return (string.Empty, "binary", false, true);
+            return (string.Empty, "binary", false, true, false);
         }
 
         try
         {
-            return (StrictUtf8.GetString(bytes), "utf-8", false, false);
+            return (StrictUtf8.GetString(bytes), "utf-8", false, false, false);
         }
         catch (DecoderFallbackException)
         {
@@ -139,12 +154,21 @@ public static class FileHost
 
         try
         {
-            return (Gb18030.GetString(bytes), "gb18030", false, false);
+            // 严格 GB18030：合法字节序列直接通过（中文文档最常见的非 UTF-8 情形），不误报编码异常。
+            return (Gb18030Strict.GetString(bytes), "gb18030", false, false, false);
         }
         catch (Exception e) when (e is DecoderFallbackException or ArgumentException)
         {
-            // 兜底：UTF-8 替换字符；调用方据 encoding 提示「编码可能有问题」
-            return (LooseUtf8.GetString(bytes), "utf-8", false, false);
+            // 非法字节：宽松 GB18030 尽力解码（会丢弃/替换坏字节），标记 HadReplacement 让界面提示；
+            // 若宽松版也失败，退回宽松 UTF-8（同样标记编码异常）。
+            try
+            {
+                return (Gb18030.GetString(bytes), "gb18030", false, false, true);
+            }
+            catch (Exception fallback) when (fallback is DecoderFallbackException or ArgumentException or NotSupportedException)
+            {
+                return (LooseUtf8.GetString(bytes), "utf-8", false, false, true);
+            }
         }
     }
 
@@ -159,11 +183,11 @@ public static class FileHost
 
         var path = NormalizePath(filePath);
         var bytes = File.ReadAllBytes(path);
-        var (text, encodingName, hadBom, _) = Decode(bytes);
+        var (text, encodingName, hadBom, _, hadReplacement) = Decode(bytes);
         var lastWriteUtc = File.GetLastWriteTimeUtc(path);
         var key = Store.ComputeKey(path, bytes.Length, lastWriteUtc);
 
-        return new DocumentRead(path, text, encodingName, hadBom, bytes.Length, lastWriteUtc, key);
+        return new DocumentRead(path, text, encodingName, hadBom, bytes.Length, lastWriteUtc, key, hadReplacement);
     }
 
     /// <summary>

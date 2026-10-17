@@ -1,11 +1,66 @@
 using System.IO;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace JingjingReader;
 
 public partial class App : Application
 {
+    /// <summary>UI 线程异常只提示一次（异常风暴时避免刷屏）；完整异常始终写 debug.log。</summary>
+    private bool _uiErrorToastShown;
+
+    public App()
+    {
+        // I4（spec §4.2）：三类全局异常兜底在 Application 建立时注册，覆盖启动早期（窗口尚未创建）的异常。
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+    }
+
+    /// <summary>
+    /// UI 线程未处理异常：完整异常写 debug.log；非致命异常标记 Handled 让阅读继续，并弹一次 toast。
+    /// 内存耗尽/栈溢出/访问冲突属于不可恢复错误，交给进程终止（吞掉只会留下更坏的状态）。
+    /// </summary>
+    private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
+    {
+        DebugLog.Write($"未处理的 UI 异常：{e.Exception}");
+        if (IsFatal(e.Exception))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (_uiErrorToastShown)
+        {
+            return;
+        }
+
+        _uiErrorToastShown = true;
+        if (MainWindow is JingjingReader.MainWindow window)
+        {
+            window.ShowRecoverableError("发生内部错误，已记录日志，可以继续阅读");
+        }
+    }
+
+    /// <summary>非 UI 线程未处理异常：只能记录（进程即将终止），不能 recover。</summary>
+    private static void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        var exception = e.ExceptionObject as Exception;
+        DebugLog.Write($"未处理的后台异常（即将终止={e.IsTerminating}）：{exception}");
+    }
+
+    /// <summary>未被观察的 Task 异常：记录并标记已观察，避免进程在 GC 终结时崩溃。</summary>
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        DebugLog.Write($"未观察的 Task 异常：{e.Exception}");
+        e.SetObserved();
+    }
+
+    /// <summary>不可恢复异常（吞掉只会让进程停在损坏状态）。</summary>
+    private static bool IsFatal(Exception exception)
+        => exception is OutOfMemoryException or StackOverflowException or AccessViolationException;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -85,14 +140,16 @@ public partial class App : Application
         MainWindow = window;
 
         // 主实例：后台管道收到路径后在 UI 线程切换文档（空串只激活已有窗口，主实例不新开窗口）。
+        // I2（修复波 B）：两个分支都先把最小化窗口还原并 Show/Activate，再打开路径——
+        // 只 Activate 一个最小化窗口不会把它带回屏幕。管道名跟着 SingleInstance 的有效 mutex 名走
+        // （Global 无权限时退化到 Local）。
         IpcServer.Start(
-            SingleInstance.MutexName + ".pipe",
+            SingleInstance.PipeName,
             path => Dispatcher.Invoke(() =>
             {
+                window.BringToForeground();
                 if (string.IsNullOrWhiteSpace(path))
                 {
-                    window.Activate();
-                    window.Focus();
                     return;
                 }
 
@@ -141,8 +198,8 @@ public partial class App : Application
             }
 
             var backupPath = AppPaths.AssocBackupPath;
-            var result = Assoc.Uninstall(registry, backupPath);
-            switch (result)
+            var outcome = Assoc.UninstallDetailed(registry, backupPath);
+            switch (outcome.Result)
             {
                 case AssocUninstallResult.RestoredFromBackup:
                     ConsoleHelper.WriteLine("已卸载 .md 文件关联，并恢复安装前的状态。");
@@ -167,10 +224,23 @@ public partial class App : Application
                     return;
 
                 default:
-                    throw new InvalidOperationException($"未知的卸载结果：{result}");
+                    throw new InvalidOperationException($"未知的卸载结果：{outcome.Result}");
             }
 
-            DebugLog.Write("uninstall 完成");
+            // C1（关联收尾）：Windows UserChoice 受系统保护，程序无法程序化恢复；仍指向本程序时明确提示
+            // 用户去「默认应用」重新选择，但这是警告而非失败（退出码仍为 0）。
+            if (outcome.UserChoiceNeedsReselect)
+            {
+                ConsoleHelper.WriteLine(
+                    "警告：Windows 的 .md 默认应用仍指向鲸鲸阅读器（UserChoice）。" +
+                    "卸载后请在 设置 → 应用 → 默认应用 中重新选择 .md 的默认程序（ms-settings:defaultapps）。");
+                DebugLog.Write("uninstall 完成，但 UserChoice 仍指向本程序，已提示用户重新选择默认应用");
+            }
+            else
+            {
+                DebugLog.Write("uninstall 完成");
+            }
+
             Shutdown(0);
         }
         catch (Exception exception)
