@@ -44,6 +44,7 @@ describe('性能冒烟：5 万行文档', () => {
     const headings = JJ.extractHeadings(markdown);
     const elapsedMs = performance.now() - started;
     expect(headings).toEqual([]); // 全文没有标题行：预扫描本身仍要跑完
+    // 300 ms 是宽松上限（慢机/CI 余量；本机实测约 46 ms），避免抖动导致 flaky，不是性能预算。
     expect(elapsedMs).toBeLessThan(300);
   });
 });

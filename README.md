@@ -101,6 +101,8 @@ pwsh -NoProfile -File scripts/build.ps1 -SelfContained # 内置运行时 → out
 
 构建脚本依次执行：`web/` 下 `npm ci` 与 `npm run build`（esbuild → `web/dist/md-engine.js`，体积门禁 500 KB）→ 拷贝到 `src/Host/Resources/md-engine.js` → `dotnet publish`（Release、win-x64、PublishSingleFile）。
 
+> 上述 `scripts/*.ps1` 与命令示例在 **Windows PowerShell 5.1 与 PowerShell 7 下均可运行**（5.1 用 `powershell -NoProfile -ExecutionPolicy Bypass -File <脚本>` 调用；推荐 PowerShell 7）。
+
 单独跑测试：
 
 ```powershell
@@ -112,13 +114,15 @@ dotnet test tests/host/JingjingReader.Tests.csproj    # xUnit
 
 ```powershell
 pwsh -NoProfile -File scripts/verify.ps1
+# Windows PowerShell 5.1 同样可运行：
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
 ```
 
-脚本会在 ASCII 临时目录复制一份 `out\` 后依次检查：构建、宿主单测、前端单测、环境自检、`samples/full-syntax.md` 首屏（≤ 1000 ms、`tocCount ≥ 30`）、`samples/huge-50k-lines.md` 首屏（≤ 1500 ms）与宿主私有内存峰值（≤ 200 MB，`PrivateMemorySize64` 50 ms 采样；WebView2 进程组只记录、不参与判定）、PDF 导出（hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100）、双开单实例、前端产物 ≤ 500 KB 且两份字节一致。终端打印 `VERIFY OK` / `VERIFY FAILED`，报告写入 `out/verify-report.md`。
+脚本会先把 `out\` 复制到纯 ASCII 临时目录（优先 `%TEMP%\jj-verify-<guid>`；若 `%TEMP%` 含非 ASCII 字符，依次回退到 `%LOCALAPPDATA%\Temp`、脚本所在盘根目录下的 `jj-verify-<guid>`；这样要求是因为 WebView2 子进程会在该目录创建用户数据目录，且 `--verify-*` 的命令行/环境变量在非 ASCII 路径上受系统代码页影响），然后依次检查：构建、宿主单测（总计 > 0 且失败 0）、前端单测（`Test Files` 与 `Tests` 均 > 0）、环境自检、`samples/full-syntax.md` 首屏（exit 0、READY 严格校验、≤ 1000 ms、`tocCount ≥ 30`）、`samples/huge-50k-lines.md` 首屏（exit 0、READY 严格校验、≤ 1500 ms、`tocCount ≥ 400`）与宿主私有内存峰值（≤ 200 MB，`PrivateMemorySize64` 宿主 50 ms 采样；WebView2 进程组 `WorkingSet64` 每 500 ms 独立采样、只记录、不参与判定）、PDF 导出（hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100）、双开单实例（等第 1 个窗口启动后启动第 2 个，断言第 2 个进程已退出且进程数 = 1）、前端产物 ≤ 500 KB 且两份字节一致。终端打印 `VERIFY OK` / `VERIFY FAILED`，报告写入 `out/verify-report.md`。
 
 无法自动化的交互项（拖放、对话框、主题、字体、文件树、关联前后注册表一致性、长路径等）见 [docs/verify-checklist.md](docs/verify-checklist.md)。
 
-> 注意：内存判定项按 T17 裁定 2 后的「宿主进程私有内存峰值（`PrivateMemorySize64`，50 ms 采样）≤ 200 MB」口径统计；WebView2 进程组（直接子进程与全部后代）的 `WorkingSet64` 只作为信息项记录，不参与 PASS/FAIL。上限按实测由原 150 MB 修正为 200 MB（150 MB 保留为优化目标）：验证机上宿主私有峰值约 160–175 MB，低于上限，因此该项通过。其余交互项（TOC 位置记忆、拖放等）见手测清单。
+> 注意：内存判定项按 T17 裁定 2 后的「宿主进程私有内存峰值（`PrivateMemorySize64`，**宿主 50 ms** 采样）≤ 200 MB」口径统计；WebView2 进程组（直接子进程与全部后代）的 `WorkingSet64` 由独立 runspace 每 **500 ms** 采样，只作为信息项记录，不参与 PASS/FAIL。上限按实测由原 150 MB 修正为 200 MB（150 MB 保留为优化目标）：验证机上宿主私有峰值约 160–175 MB，低于上限，因此该项通过。其余交互项（TOC 位置记忆、拖放等）见手测清单。
 
 ## 卸载
 
@@ -168,9 +172,9 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -ExePath "D:\apps\JingjingReader\Jin
 ## 已知限制
 
 - **分块渲染与跨块脚注**：超过 512 KB 的文档按块独立解析，定义在文末的脚注引用在较早的块里会显示为字面文本（`[^1]`）。引用式链接定义已做全文预抽取并补齐，脚注不在补齐范围（脚注区重复会改变既有输出）。这是已知取舍，不是渲染错误。
-- **超大文档导出 PDF 会先全量渲染**：导出前会把分块懒渲染的剩余块一次性渲染出来（保证内容完整），因此 5 万行文档导出要约 5 秒、1000+ 页；导出完成后以 toast 提示成功/失败，超时保护为 75 秒。
+- **超大文档导出 PDF 会先全量渲染**：导出前会把分块懒渲染的剩余块一次性渲染出来（保证内容完整），因此 5 万行文档导出要约 5 秒、1000+ 页；导出完成后以 toast 提示成功/失败。交互导出的超时保护为「等待 readyToPrint 10 秒 + PrintToPdf 60 秒」（合计最长 70 秒）；`--verify-pdf` 验收命令的外层导出超时为 75 秒。
 - **默认关联受 Windows 限制**：安装只写当前用户的「打开方式」，不能静默抢占已有默认程序；`HKCU` 之外的机器级关联不修改，也不需要管理员权限。
-- **内存主要在 WebView2 内核（Chromium 基线）**：程序会常驻 WebView2 的浏览器/渲染/GPU/工具等进程。验证机上（50 ms 采样峰值，多次运行）实测：宿主私有内存（`PrivateMemorySize64`）约 160–175 MB、WebView2 进程组（直接子进程与全部后代）`WorkingSet64` 约 430–475 MB、整树 `WorkingSet64` 约 590–630 MB。验收口径为「宿主进程私有内存峰值 ≤ 200 MB」（150 MB 为后续优化目标），WebView2 进程组单列为信息项、不计入该预算。数值受 WebView2 Runtime 版本、GPU 与系统环境影响，详见 `out/verify-report.md`。
+- **内存主要在 WebView2 内核（Chromium 基线）**：程序会常驻 WebView2 的浏览器/渲染/GPU/工具等进程。验证机上（宿主 50 ms / WebView2 500 ms 采样，多次运行）实测：宿主私有内存（`PrivateMemorySize64`）约 160–175 MB、WebView2 进程组（直接子进程与全部后代）`WorkingSet64` 约 419–449 MB、整树 `WorkingSet64` 约 577–603 MB。验收口径为「宿主进程私有内存峰值 ≤ 200 MB」（150 MB 为后续优化目标），WebView2 进程组单列为信息项、不计入该预算；进程数不作为验收项（WebView2 进程组数量随运行时版本变化，本机实测 6 个）。数值受 WebView2 Runtime 版本、GPU 与系统环境影响，详见 `out/verify-report.md`。
 - **图标为占位**：`src/Host/app.ico` 是 `scripts/gen-icon.py` 生成的临时鲸鱼图标（16/32/48/256），正式图标待设计（spec Q1）。
 - **不支持**：数学公式 `$...$` / `$$...$$`、Mermaid、定义列表；内嵌 `<script>`/`<style>`/`<iframe>` 会被清洗移除；只读、无编辑、无多标签页、无全文搜索；不做笔记库级双链解析，`[[...]]` 只在当前文档目录及浅层子目录查找。
 - **长路径**：清单已声明 `longPathAware`，文件读取对超长路径做 `\\?\` 规范化；网络共享/权限受限目录仍受系统策略约束。
