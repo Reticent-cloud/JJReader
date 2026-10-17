@@ -1,7 +1,10 @@
 // 鲸鲸阅读器前端引擎入口：装配 engine/shell 并暴露 window.JJ（后续任务往 install 的 API 上逐个加成员）。
-// 当前成员：version、mountShell、renderMarkdown、extractHeadings、slugify（标题锚点 id 生成）；
+// 当前成员：version、mountShell、renderMarkdown、extractHeadings、slugify（标题锚点 id 生成）、
+// highlight（代码高亮）、enhance（渲染后增强：复制按钮/外链）；
 // 浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
 import { extractHeadings, renderMarkdown, slugify } from './engine.js';
+import { enhance } from './enhance.js';
+import { highlight } from './highlight.js';
 import { mountShell } from './shell/main.js';
 
 const STYLE_ATTR = 'data-jj';
@@ -29,7 +32,15 @@ export function applyCss(cssText) {
 
 // 前端 API 的唯一出口：测试在 setup.js 里 install(globalThis)，浏览器里 install(window)。
 export function install(target = {}) {
-  const api = { version: '0.1.0', mountShell, renderMarkdown, extractHeadings, slugify };
+  const api = {
+    version: '0.1.0',
+    mountShell,
+    renderMarkdown,
+    extractHeadings,
+    slugify,
+    highlight,
+    enhance,
+  };
   target.JJ = api;
   applyCss(globalThis.window?.__JJ_CSS_TEXT__);
   return api;

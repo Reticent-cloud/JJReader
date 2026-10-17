@@ -1,8 +1,13 @@
-// 鲸鲸阅读器渲染引擎（Task 5）：markdown-it 单例 + 标题 id + 图片相对路径改写。
+// 鲸鲸阅读器渲染引擎：markdown-it 单例 + 标题 id + 图片相对路径改写 + GFM 扩展语法与代码高亮。
 // 单例让 renderMarkdown 与 extractHeadings 对同一文档产生完全一致的标题 id（共用 slugify 分配逻辑）。
-// 本任务只做 GFM 基础语法：不装配扩展插件（Task 6），不清洗 HTML（Task 7，故 html:true 原样保留内嵌 HTML）。
+// Task 6 起装配脚注/任务清单/emoji 插件并自定义 fence 渲染器（代码高亮 + 复制按钮）；
+// 尚不清洗 HTML（Task 7 加 DOMPurify，故 html:true 目前原样保留内嵌 HTML）。
 
 import MarkdownIt from 'markdown-it';
+import footnote from 'markdown-it-footnote';
+import taskLists from 'markdown-it-task-lists';
+import { full as emoji } from 'markdown-it-emoji';
+import { highlight } from './highlight.js';
 
 /** env 中保存「本文档已占用标题 id」的键：每次渲染/提取用新 Set，保证同一文档的 id 稳定可复现。 */
 const USED_IDS_KEY = '__jjHeadingUsedIds';
@@ -16,6 +21,15 @@ const SLUG_KEEP_RE = /[\p{L}\p{N}\p{M}]/u;
 /** 空白（含全角空格）统一视为分隔符。 */
 const SLUG_SPACE_RE = /\s/u;
 
+/** 属性值转义映射（data-code 等属性必须整段转义，保证 dataset.code 能还原原始代码）。 */
+const ATTR_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const ATTR_ESCAPE_RE = /[&<>"']/g;
+
+/** HTML 属性级转义：& < > " ' 全转（引号内的语言串/代码原样还原）。 */
+function escapeAttr(text) {
+  return String(text ?? '').replace(ATTR_ESCAPE_RE, (ch) => ATTR_ESCAPE_MAP[ch]);
+}
+
 const md = new MarkdownIt({
   html: true,
   linkify: true,
@@ -23,8 +37,14 @@ const md = new MarkdownIt({
   typographer: false,
 });
 
+// GFM 扩展语法（Task 6）：脚注、任务清单（只读 checkbox，不回写）、emoji 全量短码。
+// 顺序放在核心规则/渲染器自定义之前，插件之间互不依赖；task-lists 只处理「列表项首字符 [ ]/[x]」。
+md.use(footnote);
+md.use(taskLists, { enabled: false, label: false });
+md.use(emoji);
+
 /**
- * 把 inline 子 token 还原成纯文本：去掉强调/链接/HTML 等行内标记，保留文字、行内代码与图片 alt。
+ * 把 inline 子 token 还原成纯文本：去掉强调/链接/HTML 等行内标记，保留文字、行内代码、emoji 与图片 alt。
  * 注意标题 id 规则挂在 core 链末尾（text_join 之后），因此此时转义字符已合并回 text token。
  */
 function inlinePlainText(children) {
@@ -33,6 +53,9 @@ function inlinePlainText(children) {
     switch (child.type) {
       case 'text':
       case 'code_inline':
+        text += child.content;
+        break;
+      case 'emoji': // Task 6 起 emoji 是独立 token（content 就是 unicode 字符），标题文本不能丢字
         text += child.content;
         break;
       case 'image': // 图片在标题里按 alt 文本参与 id 计算
@@ -118,6 +141,23 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
     }
   }
   return defaultImageRenderer(tokens, idx, options, env, self);
+};
+
+// 代码围栏渲染（Task 6）：高亮 + 复制按钮。
+// 固定结构：<div class="code-wrap"><pre><code class="hljs language-x">…</code></pre><button class="copy" data-code="…">复制</button></div>
+// data-code 存原始代码（属性级转义，enhance.js 用 btn.dataset.code 取回）；高亮失败/未知语言时 highlight() 已降级为转义纯文本。
+md.renderer.rules.fence = (tokens, idx) => {
+  const token = tokens[idx];
+  // info 形如 "js" 或 "js title=..."：只取第一个词当语言（与 markdown-it 默认 renderer 口径一致）
+  const info = token.info ? token.info.trim() : '';
+  const lang = info.split(/\s+/)[0] || '';
+  const code = token.content;
+  const highlighted = highlight(code, lang);
+  const codeClass = lang ? `hljs language-${escapeAttr(lang)}` : 'hljs';
+  return (
+    `<div class="code-wrap"><pre><code class="${codeClass}">${highlighted}</code></pre>` +
+    `<button class="copy" type="button" data-code="${escapeAttr(code)}">复制</button></div>\n`
+  );
 };
 
 /**

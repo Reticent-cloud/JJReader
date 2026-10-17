@@ -73,12 +73,16 @@ export function mountShell({ root, post } = {}) {
 
   /**
    * 正文渲染：优先走 JJ.renderMarkdown（与宿主共用同一 markdown-it 实现，baseUrl 用于解析相对图片）。
+   * 渲染后调用 JJ.enhance（Task 6 起）绑代码复制按钮/处理外链；enhance 缺失时跳过，正文已经渲染，不白屏。
    * 引擎缺失（打包缺失/加载失败）时降级为 escapeHtml + <pre>，保证正文区永远不白屏。
    */
   function render(markdown) {
     const engine = globalThis.JJ;
     if (engine && typeof engine.renderMarkdown === 'function') {
       content.innerHTML = engine.renderMarkdown(markdown, { baseUrl: state.baseUrl });
+      if (typeof engine.enhance === 'function') {
+        engine.enhance(content, { baseUrl: state.baseUrl });
+      }
       return;
     }
     content.innerHTML = `<pre class="jj-fallback">${escapeHtml(markdown)}</pre>`;

@@ -33,7 +33,9 @@ await build({
   outfile,
   bundle: true,
   format: 'iife',
-  minify: false,
+  // Task 6 起开启压缩：GFM 插件（脚注/任务清单/emoji）+ highlight.js 语言模块让未压缩产物到 533.2 KB，
+  // 超过 500 KB 门禁；Controller 决策 7 预授权此开关（压缩后见构建日志，仍满足 ≤350 KB 目标）。
+  minify: true,
   // .css 按文本处理：后续任务直接在 JS 里 import css 也得拿到字符串，而不是让 esbuild 报无 loader。
   loader: { '.css': 'text' },
   // banner 在 bundle（含自动 install）之前执行，因此 install() 里能读到内联的 CSS 文本。
