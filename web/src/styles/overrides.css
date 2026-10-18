@@ -338,3 +338,139 @@ html[data-theme='dark'] {
     transform: none;
   }
 }
+
+/* ── v3：更圆润（统一大圆角 / 胶囊按钮 / 柔和滚动条） ── */
+:root {
+  --radius: 12px;
+}
+
+/* 工具条与按钮：底角大圆角 + 胶囊按钮 */
+#toolbar {
+  border-radius: 0 0 20px 20px;
+}
+
+#toolbar .tool,
+#toolbar .tool.active,
+#toolbar .tool:focus-visible {
+  border-radius: 999px;
+}
+
+/* 弹层与侧栏：更大的圆角 */
+#recent-menu,
+.aa-panel {
+  border-radius: 22px;
+}
+
+#toc nav.toc {
+  border-radius: 18px;
+}
+
+#toc nav.toc a,
+#toc nav.toc a.active {
+  border-radius: 999px;
+}
+
+/* 最近文件卡片与按钮 */
+.recent-panel .recent-item {
+  border-radius: 18px;
+}
+
+.recent-panel .recent-open {
+  border-radius: 999px;
+}
+
+/* 正文：代码块 / 行内代码 / 图片 / 引用 / 表格 / 分隔线 / 属性表 */
+#content pre,
+#content .code-wrap pre {
+  border-radius: 16px;
+}
+
+#content .code-wrap .copy {
+  border-radius: 999px;
+}
+
+#content :not(pre) > code {
+  border-radius: 7px;
+}
+
+#content img {
+  border-radius: 14px;
+}
+
+#content blockquote {
+  border-radius: 4px 16px 16px 4px;
+}
+
+#content table {
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+#content th:first-child {
+  border-top-left-radius: 14px;
+}
+
+#content th:last-child {
+  border-top-right-radius: 14px;
+}
+
+#content tr:last-child td:first-child {
+  border-bottom-left-radius: 14px;
+}
+
+#content tr:last-child td:last-child {
+  border-bottom-right-radius: 14px;
+}
+
+#content .frontmatter {
+  border-radius: 18px;
+}
+
+/* 通知条 / 错误条 / 大文件横幅 / toast / 回到顶部 */
+#notice-stack > *,
+#huge-banner,
+#error-bar {
+  border-radius: 14px;
+}
+
+#toast .toast,
+#toast .toast-action {
+  border-radius: 999px;
+}
+
+#back-to-top {
+  border-radius: 999px;
+}
+
+/* 排版面板控件 */
+.aa-panel select,
+.aa-row select {
+  border-radius: 10px;
+}
+
+.aa-row input[type='range'] {
+  border-radius: 999px;
+}
+
+.aa-row input[type='range']::-webkit-slider-thumb {
+  border-radius: 50%;
+}
+
+/* 任务清单复选框 */
+#content input[type='checkbox'] {
+  border-radius: 6px;
+}
+
+/* 正文滚动条：细窄 + 圆角滑块（WebKit） */
+#content::-webkit-scrollbar {
+  width: 10px;
+}
+
+#content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--border-strong, #c9ccd1);
+}
+
+#content::-webkit-scrollbar-track {
+  background: transparent;
+}

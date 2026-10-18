@@ -243,3 +243,14 @@ describe('正文居中、toast 对齐与进度条移除', () => {
     expect(readRepoFile('web/src/styles/print.css')).not.toContain('#progress');
   });
 });
+
+describe('圆角化（v3）', () => {
+  it('统一大圆角与胶囊按钮，滚动条细窄圆角', () => {
+    const css = readRepoFile('web/src/styles/overrides.css');
+    expect(css).toMatch(/:root\s*\{[^}]*--radius:\s*12px;/s);
+    expect(css).toMatch(/#toolbar \.tool[^{]*\{[^}]*border-radius:\s*999px;/s);
+    expect(css).toMatch(/#recent-menu,\s*\.aa-panel\s*\{[^}]*border-radius:\s*22px;/s);
+    expect(css).toMatch(/#content pre,\s*#content \.code-wrap pre\s*\{[^}]*border-radius:\s*16px;/s);
+    expect(css).toMatch(/#content::-webkit-scrollbar-thumb\s*\{[^}]*border-radius:\s*999px;/s);
+  });
+});
