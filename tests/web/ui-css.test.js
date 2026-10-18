@@ -22,6 +22,25 @@ function repoFileSize(relativePath) {
   return statSync(repoPath(relativePath)).size;
 }
 
+/** #rrggbb → WCAG 相对亮度（用于正文/代码底对比度断言，避免只锁色值不锁可读性）。 */
+function relativeLuminance(hex) {
+  const value = hex.replace('#', '');
+  const channels = [0, 2, 4].map((offset) => {
+    const channel = parseInt(value.slice(offset, offset + 2), 16) / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+/** 两色 WCAG 对比度（1–21）。 */
+function contrastRatio(foreground, background) {
+  const a = relativeLuminance(foreground);
+  const b = relativeLuminance(background);
+  const lighter = Math.max(a, b);
+  const darker = Math.min(a, b);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 const overridesCss = readRepoFile('web/src/styles/overrides.css');
 const printCss = readRepoFile('web/src/styles/print.css');
 const codeCss = readRepoFile('web/src/styles/code.css');
@@ -276,5 +295,110 @@ describe('横向滚动条与目录高亮（v5）', () => {
     const css = readRepoFile('web/src/styles/overrides.css');
     expect(css).not.toContain('a.active::before');
     expect(css).toMatch(/#toc nav\.toc a\.active\s*\{[^}]*background:\s*var\(--toc-active-bg\);/s);
+  });
+});
+
+describe('顶栏/目录栏 chrome 底色与配色维度（palette）', () => {
+  const lightCss = readRepoFile('web/src/styles/light.css');
+  const darkCss = readRepoFile('web/src/styles/dark.css');
+  const baseCss = readRepoFile('web/src/styles/base.css');
+
+  it('顶栏直角、实色 chrome 底、保留底部分隔线（不再是半透明毛玻璃）', () => {
+    const toolbarRule = ruleBody(layoutCss, '#toolbar {');
+    expect(toolbarRule).toContain('background: var(--chrome-bg);');
+    expect(toolbarRule).toContain('border-bottom: 1px solid var(--chrome-border);');
+    expect(toolbarRule).not.toContain('backdrop-filter');
+    // 顶栏不再读取 --toolbar-bg（保留变量但改指向 chrome 值）
+    expect(toolbarRule).not.toContain('--toolbar-bg');
+    expect(lightCss).toContain('--toolbar-bg: var(--chrome-bg);');
+    expect(darkCss).toContain('--toolbar-bg: var(--chrome-bg);');
+
+    const radiusRule = ruleBody(overridesCss, '#toolbar {');
+    expect(radiusRule).toContain('border-radius: 0;');
+    expect(overridesCss).not.toContain('border-radius: 0 0 20px 20px');
+  });
+
+  it('目录栏用 chrome 底 + 右侧分隔线，正文区用 content 底', () => {
+    const tocRule = ruleBody(layoutCss, '\n#toc {');
+    expect(tocRule).toContain('background: var(--chrome-bg);');
+    expect(tocRule).toContain('border-right: 1px solid var(--chrome-border);');
+
+    const contentRule = ruleBody(layoutCss, '\n#content {');
+    expect(contentRule).toContain('background: var(--content-bg);');
+  });
+
+  it('工具条按钮 hover/active 在 chrome 底上使用专门的对比色', () => {
+    expect(ruleBody(overridesCss, '#toolbar .tool:hover')).toContain('background: var(--chrome-hover-bg);');
+    expect(ruleBody(overridesCss, '#toolbar .tool:active')).toContain('background: var(--chrome-active-bg);');
+    expect(ruleBody(overridesCss, '#toolbar .tool.active')).toContain('background: var(--chrome-active-bg);');
+  });
+
+  it('默认（鲸鱼蓝）两主题变量 + 首屏兜底值齐备', () => {
+    const lightVars = ruleBody(lightCss, ':root,');
+    expect(lightVars).toContain('--chrome-bg: #e6efff;');
+    expect(lightVars).toContain('--chrome-border: #c9d9f7;');
+    expect(lightVars).toContain('--chrome-hover-bg: #d9e6ff;');
+    expect(lightVars).toContain('--chrome-active-bg: #d4e3ff;');
+    expect(lightVars).toContain('--content-bg: #f3f8ff;');
+    expect(lightVars).toContain('--toc-active-bg: #d8e6ff;');
+    expect(lightVars).toContain('--code-bg: #e8f0fd;');
+
+    const darkVars = ruleBody(darkCss, "html[data-theme='dark']");
+    expect(darkVars).toContain('--chrome-bg: #101a2e;');
+    expect(darkVars).toContain('--chrome-border: #22304a;');
+    expect(darkVars).toContain('--chrome-hover-bg: #18243c;');
+    expect(darkVars).toContain('--chrome-active-bg: #1b2a4a;');
+    expect(darkVars).toContain('--content-bg: #0c1424;');
+
+    const baseVars = ruleBody(baseCss, ':root {');
+    expect(baseVars).toContain('--chrome-bg: #e6efff;');
+    expect(baseVars).toContain('--content-bg: #f3f8ff;');
+  });
+
+  it('正文浅蓝白（不是纯白）：两套底色与代码块可见差异', () => {
+    const lightVars = ruleBody(lightCss, ':root,');
+    expect(lightVars).toContain('--content-bg: #f3f8ff;'); // 鲸鱼蓝浅色正文
+    expect(lightVars).toContain('--code-bg: #e8f0fd;'); // 代码块比正文底更明显一档
+
+    const defaultLight = ruleBody(overridesCss, "html[data-palette='default'] {");
+    expect(defaultLight).toContain('--content-bg: #fafbfc;'); // 中性配色微灰
+    const defaultCode = ruleBody(overridesCss, "html[data-palette='default']:not([data-theme='dark'])");
+    expect(defaultCode).toContain('--code-bg: #f6f8fa;');
+    const blueLightUi = ruleBody(overridesCss, "html[data-palette='blue']:not([data-theme='dark'])");
+    expect(blueLightUi).toContain('--ui-table-head: #e8f0fd;');
+    expect(blueLightUi).toContain('--ui-inline-code: #e8f0fd;');
+
+    // WCAG 对比度：正文 ≥ 7:1、次要文字/代码文字 ≥ 4.5:1（浅色鲸鱼蓝底）。
+    expect(contrastRatio('#1f2328', '#f3f8ff')).toBeGreaterThanOrEqual(7);
+    expect(contrastRatio('#59636e', '#f3f8ff')).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio('#1f2328', '#e8f0fd')).toBeGreaterThanOrEqual(7);
+    expect(contrastRatio('#1f2328', '#fafbfc')).toBeGreaterThanOrEqual(7);
+  });
+
+  it('「默认」中性配色覆盖两套主题，且与 data-theme 正交组合', () => {
+    const defaultLight = ruleBody(overridesCss, "html[data-palette='default'] {");
+    expect(defaultLight).toContain('--chrome-bg: #f3f4f6;');
+    expect(defaultLight).toContain('--chrome-border: #e2e4e8;');
+    expect(defaultLight).toContain('--content-bg: #fafbfc;');
+    expect(defaultLight).toContain('--toc-active-bg: #eef0f4;');
+
+    const defaultDark = ruleBody(overridesCss, "html[data-theme='dark'][data-palette='default']");
+    expect(defaultDark).toContain('--chrome-bg: #16181d;');
+    expect(defaultDark).toContain('--chrome-border: #2a2d34;');
+    expect(defaultDark).toContain('--content-bg: #0d0f13;');
+
+    // 默认配色块在 light.css / dark.css 之后（文件名字母序），能压过主题规则；dark 用双属性提高优先级。
+    expect(overridesCss.indexOf("html[data-palette='default'] {")).toBeGreaterThan(-1);
+    expect(overridesCss).toContain("html[data-theme='dark'][data-palette='default'] {");
+  });
+
+  it('打印 / PDF 不继承 chrome 色：界面 chrome 隐藏、正文纯白', () => {
+    expect(printCss).not.toContain('--chrome-');
+    expect(printCss).not.toContain('data-palette');
+    expect(printCss).toMatch(
+      /body\.print-mode #app,\s*body\.print-mode #toc,\s*body\.print-mode #content\s*\{[^}]*background: #ffffff !important;/s,
+    );
+    expect(printCss).toMatch(/body\.print-mode #content\s*\{[^}]*background: #ffffff;/s);
+    expect(printCss).toMatch(/body\.print-mode #toolbar,[\s\S]*display: none !important;/);
   });
 });

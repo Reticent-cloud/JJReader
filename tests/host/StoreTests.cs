@@ -18,6 +18,7 @@ public class StoreTests
         var defaults = store.LoadSettings();
         Assert.Equal(new AppSettings(), defaults);
         Assert.Equal("system", defaults.Theme);
+        Assert.Equal("blue", defaults.Palette);
 
         store.SaveSettings(defaults with
         {
@@ -176,6 +177,7 @@ public class StoreTests
         Assert.Contains("\"tocWidth\": 240", json);
         Assert.Contains("\"window\": null", json);
         Assert.Contains("\"monoFont\": \"consolas\"", json);
+        Assert.Contains("\"palette\": \"blue\"", json);
         Assert.DoesNotContain("\"uiStyle\"", json); // whale 主题已删除：不再写界面风格字段
         Assert.False(File.Exists(target + ".tmp")); // 原子写完成后不留临时文件
     }
@@ -192,6 +194,44 @@ public class StoreTests
         store.SaveSettings(new AppSettings(MonoFont: "Cascadia Mono"));
         Assert.Equal("Cascadia Mono", new Store(dir).LoadSettings().MonoFont);
         Assert.Equal("system", new Store(dir).LoadSettings().CjkFont); // 相邻字体字段不受影响
+    }
+
+    [Fact]
+    public void Settings_roundtrip_includes_palette()
+    {
+        var dir = TestDir();
+        var store = new Store(dir);
+
+        // 默认配色 = 鲸鱼蓝（blue），来自 record 位置参数默认值。
+        Assert.Equal("blue", store.LoadSettings().Palette);
+
+        store.SaveSettings(new AppSettings(Palette: "default"));
+        Assert.Equal("default", new Store(dir).LoadSettings().Palette);
+
+        store.SaveSettings(new AppSettings());
+        Assert.Equal("blue", new Store(dir).LoadSettings().Palette);
+    }
+
+    [Fact]
+    public void LoadSettings_old_file_without_palette_defaults_blue()
+    {
+        // 兼容旧 settings.json：升级前写出的文件没有 palette 字段，读取时必须取默认值 blue。
+        var dir = TestDir();
+        File.WriteAllText(
+            Path.Combine(dir, "settings.json"),
+            """
+            {
+              "theme": "light",
+              "fontSize": 17,
+              "monoFont": "Cascadia Mono"
+            }
+            """);
+
+        var loaded = new Store(dir).LoadSettings();
+
+        Assert.Equal("blue", loaded.Palette);
+        Assert.Equal("light", loaded.Theme);
+        Assert.Equal(17, loaded.FontSize);
     }
 
     [Fact]

@@ -132,6 +132,7 @@ function nextFrame() {
 beforeEach(() => {
   document.body.innerHTML = '';
   document.documentElement.removeAttribute('data-theme');
+  document.documentElement.removeAttribute('data-palette');
   delete window.matchMedia;
   delete window.ResizeObserver;
 });
@@ -559,11 +560,12 @@ it('主题按钮三态循环并持久化 patch', () => {
 it('load 下发设置后应用主题、侧栏与排版', () => {
   const { root, shell } = mount();
   load(shell, {
-    settings: { theme: 'dark', fontSize: 20, lineHeight: 1.5, contentWidth: 640, tocVisible: false },
+    settings: { theme: 'dark', fontSize: 20, lineHeight: 1.5, contentWidth: 640, tocVisible: false, palette: 'default' },
   });
 
   const style = document.documentElement.style;
   expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+  expect(document.documentElement.dataset.palette).toBe('default');
   expect(style.getPropertyValue('--font-size')).toBe('20px');
   expect(style.getPropertyValue('--line-height')).toBe('1.5');
   expect(style.getPropertyValue('--content-width')).toBe('640px');
@@ -571,6 +573,60 @@ it('load 下发设置后应用主题、侧栏与排版', () => {
   // Aa 面板控件同步为下发的设置
   expect(root.querySelector('[data-setting="fontSize"]').value).toBe('20');
   expect(root.querySelector('[data-setting="contentWidth"]').value).toBe('640');
+  expect(root.querySelector('[data-setting="palette"]').value).toBe('default');
+});
+
+it('配色设置：默认鲸鱼蓝、非法值回退 blue，applySettings 写 data-palette', () => {
+  const html = document.documentElement;
+  JJ.applySettings({});
+  expect(html.dataset.palette).toBe('blue');
+
+  JJ.applySettings({ palette: 'default' });
+  expect(html.dataset.palette).toBe('default');
+
+  JJ.applySettings({ palette: 'ocean' }); // 非法值 → blue
+  expect(html.dataset.palette).toBe('blue');
+
+  JJ.applySettings({ palette: 'default', fontSize: 18 });
+  expect(html.dataset.palette).toBe('default');
+  expect(html.style.getPropertyValue('--font-size')).toBe('18px');
+
+  // palette 与 theme 正交：主题变化不重置配色，反之亦然
+  JJ.applySettings({ palette: 'default' });
+  JJ.applyTheme('dark');
+  expect(html.getAttribute('data-theme')).toBe('dark');
+  expect(html.dataset.palette).toBe('default');
+  JJ.applySettings({ palette: 'blue' });
+  expect(html.getAttribute('data-theme')).toBe('dark');
+  expect(html.dataset.palette).toBe('blue');
+
+  expect(JJ.settingsPatch({ palette: 'blue' }, { palette: 'default' })).toEqual({ palette: 'default' });
+});
+
+it('Aa 面板「配色」下拉：默认鲸鱼蓝，切换即时生效并只落盘 {palette}', () => {
+  const { root, shell, posted } = mount();
+  load(shell);
+  const panel = root.querySelector('#aa-panel');
+  const select = panel.querySelector('[data-setting="palette"]');
+  expect(select).toBeTruthy();
+  expect(select.tagName).toBe('SELECT');
+  expect([...select.options].map((option) => option.value)).toEqual(['default', 'blue']);
+  expect([...select.options].map((option) => option.textContent)).toEqual(['默认', '鲸鱼蓝']);
+  expect(select.value).toBe('blue');
+  expect(document.documentElement.dataset.palette).toBe('blue');
+
+  root.querySelector('#aa-toggle').click();
+  const before = saveSettingsMessages(posted).length;
+  select.value = 'default';
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(document.documentElement.dataset.palette).toBe('default');
+  expect(saveSettingsMessages(posted).length).toBe(before + 1);
+  expect(lastPatch(posted)).toEqual({ palette: 'default' });
+
+  select.value = 'blue';
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(document.documentElement.dataset.palette).toBe('blue');
+  expect(lastPatch(posted)).toEqual({ palette: 'blue' });
 });
 
 it('Ctrl+B 切换侧栏显隐并持久化 patch', () => {

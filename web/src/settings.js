@@ -1,5 +1,6 @@
 // 排版设置（Task 10）：字号 14–24（默认 16）、行距 1.4–2.0（默认 1.7）、行宽 640/780/960/全宽（默认 780，0 表示全宽）、
-// 中文字体与代码字体。applySettings 把设置夹紧后写 CSS 变量（base.css/layout.css/code.css 读取），
+// 中文字体与代码字体；配色维度 palette（default 中性灰蓝 / blue 鲸鱼蓝，默认 blue）。
+// applySettings 把设置夹紧后写 CSS 变量（base.css/layout.css/code.css 读取）并写 html[data-palette]，
 // settingsPatch 只返回变化字段（saveSettings{patch} 契约：前端只报变化，宿主合并后写 settings.json）。
 
 import { normalizeTheme } from './theme.js';
@@ -21,6 +22,17 @@ export const TOC_WIDTH_MIN = 180;
 export const TOC_WIDTH_MAX = 360;
 export const TOC_WIDTH_DEFAULT = 240;
 
+/** 配色维度（palette）合法值：default = 中性灰蓝，blue = 鲸鱼蓝（默认）。 */
+export const PALETTES = ['default', 'blue'];
+
+/** 默认配色：鲸鱼蓝（用户需求；「默认」为中性灰蓝备选）。 */
+export const PALETTE_DEFAULT = 'blue';
+
+/** 配色偏好：非法/缺省一律回落 blue（与宿主 AppSettings.Palette 默认值一致）。 */
+export function normalizePalette(palette) {
+  return palette === 'default' ? 'default' : PALETTE_DEFAULT;
+}
+
 /** 系统默认中文字体栈（spec §5.5：Segoe UI + 微软雅黑）。 */
 export const SYSTEM_CJK_STACK = "'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif";
 
@@ -37,6 +49,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   monoFont: 'consolas',
   tocVisible: true,
   tocWidth: TOC_WIDTH_DEFAULT,
+  palette: PALETTE_DEFAULT,
 });
 
 /** 转有限数字；非数字/NaN/Infinity/空串返回 null。 */
@@ -125,6 +138,7 @@ export function normalizeSettings(settings) {
     monoFont: normalizeFontPreference(source.monoFont, DEFAULT_SETTINGS.monoFont),
     tocVisible: source.tocVisible !== false,
     tocWidth: normalizeTocWidth(source.tocWidth),
+    palette: normalizePalette(source.palette),
   };
 }
 
@@ -149,7 +163,8 @@ function monoFontValue(font) {
 /**
  * 把设置夹紧后写入根元素 CSS 变量：
  * --font-size（px）、--line-height（无单位）、--content-width（px 或 100%）、--font-cjk、--font-mono、
- * --toc-width（px，TOC 侧栏宽；normalizeSettings 已夹紧 180–360，拖拽调宽实时走这里）。
+ * --toc-width（px，TOC 侧栏宽；normalizeSettings 已夹紧 180–360，拖拽调宽实时走这里）；
+ * 以及 html[data-palette]（配色维度，与 data-theme 正交）。
  * 非浏览器环境（无 document）直接跳过，绝不抛异常。
  */
 export function applySettings(settings) {
@@ -168,6 +183,8 @@ export function applySettings(settings) {
   style.setProperty('--font-cjk', cjkFontValue(normalized.cjkFont));
   style.setProperty('--font-mono', monoFontValue(normalized.monoFont));
   style.setProperty('--toc-width', `${normalized.tocWidth}px`);
+  // 配色维度与 data-theme（light/dark）正交：CSS 用 html[data-palette='default'] 覆盖 chrome 变量。
+  doc.documentElement.dataset.palette = normalized.palette;
 }
 
 /**

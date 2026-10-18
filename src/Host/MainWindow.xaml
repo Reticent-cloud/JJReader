@@ -7,12 +7,154 @@
         Height="760"
         MinWidth="640"
         MinHeight="480"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        Background="#F3F8FF"
         AllowDrop="True"
         DragOver="OnDragOver"
         Drop="OnDrop">
-    <Grid>
+    <!-- Windows 10（19045）不支持 DWMWA_CAPTION_COLOR（Win11 才有），因此自绘标题栏：
+         WindowStyle=None + WindowChrome 保留 Aero Snap/系统菜单/缩放；CaptionHeight 与下方行高一致（32 DIP），
+         GlassFrameThickness=0、CornerRadius=0。标题栏颜色随 palette + 系统明暗在 MainWindow.xaml.cs 里更新。 -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="32"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- 初始为浅色鲸鱼蓝；ApplyTitleBarTheme() 在构造/主题变化/palette 变化时替换这些画刷。 -->
+        <SolidColorBrush x:Key="TitleBarForegroundBrush" Color="#1F2328" />
+        <SolidColorBrush x:Key="TitleBarHoverBrush" Color="#D9E6FF" />
+        <SolidColorBrush x:Key="TitleBarActiveBrush" Color="#D4E3FF" />
+
+        <Style x:Key="CaptionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource TitleBarForegroundBrush}" />
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonChrome" Background="{TemplateBinding Background}" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="{DynamicResource TitleBarHoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="{DynamicResource TitleBarActiveBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 关闭按钮：hover 红色（Windows 惯例），按下更深一档；颜色与明暗主题无关。 -->
+        <Style x:Key="CaptionCloseButtonStyle" TargetType="Button" BasedOn="{StaticResource CaptionButtonStyle}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonChrome" Background="{TemplateBinding Background}" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#E81123" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#C50F1F" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 自绘标题栏：图标 + 标题 + 最小化/最大化(还原)/关闭；底部 1px 分隔线（与前端 chrome-border 同色）。 -->
+        <Border x:Name="TitleBar"
+                Grid.Row="0"
+                Background="#E6EFFF"
+                BorderBrush="#C9D9F7"
+                BorderThickness="0,0,0,1"
+                MouseRightButtonUp="OnTitleBarRightClick">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Image x:Name="TitleBarIcon"
+                       Grid.Column="0"
+                       Width="16"
+                       Height="16"
+                       Margin="10,0,8,0"
+                       VerticalAlignment="Center"
+                       Source="pack://application:,,,/app.ico"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
+
+                <TextBlock x:Name="TitleText"
+                           Grid.Column="1"
+                           Margin="0,0,8,0"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           Foreground="#1F2328"
+                           Text="鲸鲸阅读器"
+                           TextTrimming="CharacterEllipsis" />
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="MinimizeButton"
+                            Content="&#xE921;"
+                            Style="{StaticResource CaptionButtonStyle}"
+                            ToolTip="最小化"
+                            AutomationProperties.Name="最小化"
+                            WindowChrome.IsHitTestVisibleInChrome="True"
+                            Click="OnMinimizeClick" />
+                    <Button x:Name="MaximizeButton"
+                            Content="&#xE922;"
+                            Style="{StaticResource CaptionButtonStyle}"
+                            ToolTip="最大化"
+                            AutomationProperties.Name="最大化"
+                            WindowChrome.IsHitTestVisibleInChrome="True"
+                            Click="OnMaximizeClick" />
+                    <Button x:Name="CloseButton"
+                            Content="&#xE8BB;"
+                            Style="{StaticResource CaptionCloseButtonStyle}"
+                            ToolTip="关闭"
+                            AutomationProperties.Name="关闭"
+                            WindowChrome.IsHitTestVisibleInChrome="True"
+                            Click="OnCloseClick" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <!-- 极薄宿主：所有解析/排版/UI 都在 WebView2 里的前端完成。
-             AllowExternalDrop=False：把文件拖放交还给 WPF 窗口（否则 WebView2 自己吃掉拖放，Window.Drop 不触发）。 -->
-        <wv2:WebView2 x:Name="WebView" AllowExternalDrop="False" />
+             AllowExternalDrop=False：把文件拖放交还给 WPF 窗口（否则 WebView2 自己吃掉拖放，Window.Drop 不触发）。
+             左右/底部留出 6 DIP（与 WindowChrome.ResizeBorderThickness 一致）：WebView2 是独立子 HWND，
+             不铺满窗口边缘，WindowChrome 才能在四周命中缩放；露出的底色与正文同色，视觉上不可见。 -->
+        <Grid Grid.Row="1" Margin="6,0,6,6">
+            <wv2:WebView2 x:Name="WebView" AllowExternalDrop="False" />
+        </Grid>
     </Grid>
 </Window>

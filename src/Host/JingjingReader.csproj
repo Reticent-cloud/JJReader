@@ -31,6 +31,8 @@
   <ItemGroup>
     <!-- 界面美化波：关于面板的原创鲸鱼女仆娘 mascot（scripts/gen-icon.py 生成的 256×256 透明 PNG，WPF 资源）。 -->
     <Resource Include="AboutMascot.png" />
+    <!-- 自绘标题栏左上角图标（16px 取自 app.ico 的多尺寸帧；ApplicationIcon 只写 Win32 资源，不生成 WPF 资源）。 -->
+    <Resource Include="app.ico" />
   </ItemGroup>
 
 </Project>

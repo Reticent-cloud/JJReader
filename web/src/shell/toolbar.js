@@ -1,6 +1,6 @@
 // 工具条与 Aa 排版面板（Task 12 从 main.js 拆出，行为不变）：
 // 工具条按钮与面板控件全部用 DOM API 创建（不拼 HTML），统一的 class/title 便于 CSS 与可访问性。
-// 单一界面风格：不再有界面风格切换按钮或下拉，也不在工具条放装饰性吉祥物。
+// 单一界面风格：不再有界面风格切换按钮；Aa 面板提供排版与配色（palette）下拉，工具条不放装饰性吉祥物。
 
 /** 工具条按钮工厂：label 文案 + id + title 提示（无 title 时省略属性）。 */
 export function createToolbarButton(label, id, title) {
@@ -32,6 +32,12 @@ const CJK_FONT_OPTIONS = [
 const MONO_FONT_OPTIONS = [
   { value: 'consolas', label: 'Consolas' },
   { value: 'Cascadia Mono', label: 'Cascadia Mono' },
+];
+
+// 配色维度（palette）：blue = 鲸鱼蓝（默认），default = 中性灰蓝。与浅色/深色主题正交组合。
+const PALETTE_OPTIONS = [
+  { value: 'default', label: '默认' },
+  { value: 'blue', label: '鲸鱼蓝' },
 ];
 
 // 界面风格入口已随 whale 主题删除（单一圆润阅读器风）。
@@ -79,7 +85,7 @@ function createSelectRow(labelText, setting, options, value) {
   return row;
 }
 
-/** 轻量排版 popover（字号/行距/行宽/中文字体/代码字体），默认隐藏。 */
+/** 轻量排版 popover（字号/行距/行宽/中文字体/代码字体/配色），默认隐藏。 */
 export function buildAaPanel() {
   const panel = document.createElement('div');
   panel.id = 'aa-panel';
@@ -93,6 +99,7 @@ export function buildAaPanel() {
     createSelectRow('行宽', 'contentWidth', WIDTH_OPTIONS, '780'),
     createSelectRow('中文字体', 'cjkFont', CJK_FONT_OPTIONS, 'system'),
     createSelectRow('代码字体', 'monoFont', MONO_FONT_OPTIONS, 'consolas'),
+    createSelectRow('配色', 'palette', PALETTE_OPTIONS, 'blue'),
   );
   return panel;
 }

@@ -15,7 +15,7 @@ public class SettingsPatchTests
 
         var merged = SettingsPatch.Apply(
             current,
-            """{"theme":"dark","fontSize":20,"lineHeight":1.9,"contentWidth":640,"cjkFont":"Microsoft YaHei","monoFont":"Cascadia Mono","tocVisible":false,"tocWidth":300}""");
+            """{"theme":"dark","fontSize":20,"lineHeight":1.9,"contentWidth":640,"cjkFont":"Microsoft YaHei","monoFont":"Cascadia Mono","tocVisible":false,"tocWidth":300,"palette":"default"}""");
 
         Assert.Equal("dark", merged.Theme);
         Assert.Equal(20, merged.FontSize);
@@ -25,6 +25,7 @@ public class SettingsPatchTests
         Assert.Equal("Cascadia Mono", merged.MonoFont);
         Assert.False(merged.TocVisible);
         Assert.Equal(300, merged.TocWidth);
+        Assert.Equal("default", merged.Palette);
     }
 
     [Fact]
@@ -38,7 +39,8 @@ public class SettingsPatchTests
             CjkFont: "Source Han Sans SC",
             TocVisible: false,
             TocWidth: 320,
-            MonoFont: "Cascadia Mono");
+            MonoFont: "Cascadia Mono",
+            Palette: "default");
 
         var merged = SettingsPatch.Apply(current, """{"fontSize":18}""");
 
@@ -50,6 +52,31 @@ public class SettingsPatchTests
         Assert.False(merged.TocVisible);
         Assert.Equal(320, merged.TocWidth);
         Assert.Equal("Cascadia Mono", merged.MonoFont);
+        Assert.Equal("default", merged.Palette);
+    }
+
+    [Fact]
+    public void Apply_accepts_palette_blue()
+    {
+        var current = new AppSettings(Palette: "default");
+
+        var merged = SettingsPatch.Apply(current, """{"palette":"blue"}""");
+
+        Assert.Equal("blue", merged.Palette);
+    }
+
+    [Theory]
+    [InlineData("""{"palette":"ocean"}""")]
+    [InlineData("""{"palette":"Blue"}""")]
+    [InlineData("""{"palette":""}""")]
+    public void Apply_ignores_invalid_palette_value_and_keeps_default_blue(string patchJson)
+    {
+        // 非法配色不写坏设置：默认设置保持 blue（前端 normalizePalette 对非法值同样回落 blue）。
+        var current = new AppSettings();
+
+        var merged = SettingsPatch.Apply(current, patchJson);
+
+        Assert.Equal("blue", merged.Palette);
     }
 
     [Fact]
@@ -83,6 +110,8 @@ public class SettingsPatchTests
     [InlineData("""{"theme":null}""")]
     [InlineData("""{"cjkFont":[]}""")]
     [InlineData("""{"monoFont":{}}""")]
+    [InlineData("""{"palette":5}""")]
+    [InlineData("""{"palette":null}""")]
     [InlineData("""{"tocWidth":"240"}""")]
     [InlineData("""{"contentWidth":1.5}""")]
     public void Apply_ignores_type_mismatched_fields(string patchJson)

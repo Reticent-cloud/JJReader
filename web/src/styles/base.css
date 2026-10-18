@@ -15,6 +15,15 @@
   --toc-width: 240px;
   --toolbar-height: 40px;
   --radius: 8px;
+
+  /* 界面 chrome 与正文区底色：默认「鲸鱼蓝」配色的浅色值（首屏 data-theme 尚未写入时的兜底）。
+     light.css / dark.css 按主题给出正式值，overrides.css 用 html[data-palette='default'] 覆盖中性配色。
+     顶栏/目录栏读 --chrome-bg + --chrome-border，正文区读 --content-bg（浅蓝白，不是纯白）。 */
+  --chrome-bg: #e6efff;
+  --chrome-border: #c9d9f7;
+  --chrome-hover-bg: #d9e6ff;
+  --chrome-active-bg: #d4e3ff;
+  --content-bg: #f3f8ff;
 }
 
 * {

@@ -106,7 +106,7 @@
 | 模块 | 职责 |
 |---|---|
 | `App` | 解析命令行（支持多个 `.md` 参数取第一个；支持 `--selftest`）；单实例（Mutex + 命名管道转交路径）；全局异常兜底 |
-| `MainWindow` | 标准窗口（非无边框）、保存/恢复窗口几何、WebView2 初始化、拖放事件、悬浮工具条宿主行为 |
+| `MainWindow` | 自绘标题栏窗口（`WindowStyle=None` + `WindowChrome`；Win10 无法给系统标题栏上色）、保存/恢复窗口几何、WebView2 初始化、拖放事件、悬浮工具条宿主行为 |
 | `FileHost` | 路径规范化（相对→绝对、UNC、长路径 `\\?\`）；文本读取与编码探测；为文档所在目录建立 `https://md.local/` 虚拟主机映射 |
 | `Store` | 三个 JSON 文件的原子读写与损坏恢复 |
 | `PdfExport` | 调用 `PrintToPdfAsync`，输出到用户选择路径 |
@@ -199,10 +199,12 @@ MDReader/
 
 ### 5.1 窗口与布局
 
-- 标准 Windows 窗口，标题 `文件名 — 鲸鲸阅读器`；最小尺寸 640×480；默认 1000×760。
+- **自绘标题栏**（Windows 10 19045 不支持 DWM `DWMWA_CAPTION_COLOR`，Win11 才有）：`WindowStyle="None"` + `WindowChrome`（`CaptionHeight=32`、`ResizeBorderThickness=6`、`GlassFrameThickness=0`、`CornerRadius=0`）自绘 32 DIP 标题栏——应用图标 + `文件名 — 鲸鲸阅读器` + 最小化/最大化(还原)/关闭，底部 1 px 分隔线；窗口 `Title` 仍同步设置，供任务栏/无障碍。
+- 标题栏颜色由 `palette`（blue/default）+ 前端主题明暗决定：`light`/`dark` 直接跟随（保证标题栏与页面 chrome 一致），`system`/非法值读系统 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme`，并监听 `WM_SETTINGCHANGE`/`WM_THEMECHANGED` 即时刷新，与前端 chrome 色值一致：浅色 blue `#E6EFFF`/`#C9D9F7`、default `#F3F4F6`/`#E2E4E8`；深色 blue `#101A2E`/`#22304A`、default `#16181D`/`#2A2D34`。关闭按钮红色 hover；最大化时按钮切「还原」图标。
+- 标题栏支持拖动移动、双击最大化/还原、右键系统菜单、Aero Snap、`Alt+F4`；最小尺寸 640×480、默认 1000×760，窗口几何与最大化 `RestoreBounds` 行为不变；高 DPI 下按 DIP 缩放。
 - 记住窗口位置、大小、最大化状态。
 - 关闭窗口即退出进程，**不驻留托盘、不保留后台进程**。
-- 布局：左侧 TOC 侧栏（默认 240 px，可拖动 180–360 px，可折叠）＋ 中央正文列（默认最大行宽 780 px 居中）＋ 顶部悬浮工具条（鼠标移入顶部 40 px 区域或按 `Alt` 显示，移出 800 ms 后隐藏）。正文列在窗口最大化时保持居中（对称 padding 居中，标题自带 margin 不会破坏居中）。
+- 布局：标题栏下方是左侧 TOC 侧栏（默认 240 px，可拖动 180–360 px，可折叠）＋ 中央正文列（默认最大行宽 780 px 居中）＋ 顶部悬浮工具条（鼠标移入窗口顶部 40 px 区域或按 `Alt` 显示，移出 800 ms 后隐藏）。正文列在窗口最大化时保持居中（对称 padding 居中，标题自带 margin 不会破坏居中）。
 - 滚离顶部 > 400 px 后，右下角出现「回到顶部」按钮。
 
 ### 5.2 工具条与快捷键
@@ -237,6 +239,11 @@ MDReader/
   - 参考常见 Markdown 阅读器的克制排版——标题层级、引用浅底、表格斑马纹、行内代码、代码块顶栏、TOC 当前项强调条、卡片 hover；面板/目录/卡片/代码块/表格/按钮统一略大的圆角；正文区不加背景装饰或水印。
   - 应用图标、关于面板与空状态使用用户提供的「鲸鱼女仆娘看书」插画（`assets/mascot-source.jpg`，由 `scripts/gen-icon.py` 圆裁去水印）；空状态为圆形小尺寸点缀，`src/Host/Resources/index.html` 不预置界面风格属性，`settings.json` 不写入 `uiStyle`（旧文件中的该字段作为未知字段忽略）。
   - 与 `light` / `dark` / `system` 组合生效；打印模式（PDF 导出）一律纯白背景并隐藏装饰与插画。
+- 界面 chrome 与正文分离（参考 WorkBuddy 的「chrome 有底色、正文白」）：顶栏为**直角**（`border-radius: 0`）、实色不透明，背景 `--chrome-bg` + 底部 1px `--chrome-border`；目录栏同一 chrome 底色并带右侧 1px 分隔线；正文区 `--content-bg` **浅蓝白（不是纯白，护眼）**，深色下为更深的蓝黑。窗口顶部的自绘标题栏与顶栏同色（见 §5.1）。通知条/浮层/toast 不受影响，打印模式仍纯白。
+- 配色维度（`palette`）：`blue` 鲸鱼蓝（**默认**）/ `default` 中性灰蓝；与 `light`/`dark`/`system` 正交组合，由 Aa 面板「配色」下拉切换并持久化为 `settings.json` 的 `palette` 字段（缺省/非法值回落 `blue`）。
+  - 浅色 blue：chrome `#e6efff`/边框 `#c9d9f7`、正文 `#f3f8ff`、TOC active `#d8e6ff`、hover `#d9e6ff`；浅色 default：chrome `#f3f4f6`/`#e2e4e8`、正文 `#fafbfc`、active `#eef0f4`。
+  - 深色 blue：chrome `#101a2e`/`#22304a`、正文 `#0c1424`、active `#1b2a4a`、hover `#18243c`；深色 default：chrome `#16181d`/`#2a2d34`、正文 `#0d0f13`。
+  - 顶栏按钮的 hover/active 使用独立的 `--chrome-hover-bg`/`--chrome-active-bg`；目录当前项与工具条 active 文本对比度保持 ≥ 4.5:1（AA），正文文字对正文底 ≥ 7:1，代码块/表格底与正文底保持可见差异。
 - 代码块、行内代码、表格、引用块、任务清单各有专属配色，深色下对比度不低于 WCAG AA（正文对比 ≥ 4.5:1）。
 - 切换无白闪（先改 CSS 变量再重绘）。
 

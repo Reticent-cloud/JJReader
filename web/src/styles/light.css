@@ -17,9 +17,9 @@ html[data-theme='light'] {
   --accent: #0969da;
   --selection-bg: #b6ddff;
 
-  --code-bg: #f6f8fa;
+  --code-bg: #e8f0fd;
   --code-fg: #1f2328;
-  --code-border: #d1d9e0;
+  --code-border: #d5e2f7;
   --inline-code-bg: rgba(27, 31, 36, 0.07);
 
   --blockquote-border: #d1d9e0;
@@ -35,10 +35,19 @@ html[data-theme='light'] {
 
   --toc-fg: #59636e;
   --toc-active-fg: #0969da;
-  --toc-active-bg: rgba(9, 105, 218, 0.08);
+  --toc-active-bg: #d8e6ff;
 
-  --toolbar-bg: rgba(255, 255, 255, 0.86);
-  --toolbar-border: #d1d9e0;
+  /* 界面 chrome 与正文区底色（默认「鲸鱼蓝」配色）：顶栏/目录栏明显浅蓝底，正文浅蓝白（护眼，不纯白）。
+     中性「默认」配色由 overrides.css 的 html[data-palette='default'] 覆盖。 */
+  --chrome-bg: #e6efff;
+  --chrome-border: #c9d9f7;
+  --chrome-hover-bg: #d9e6ff;
+  --chrome-active-bg: #d4e3ff;
+  --content-bg: #f3f8ff;
+
+  /* 兼容别名：工具条不再直接读取 --toolbar-bg，保留并指向 chrome 值（打印样式不引用这些变量）。 */
+  --toolbar-bg: var(--chrome-bg);
+  --toolbar-border: var(--chrome-border);
   --panel-bg: #ffffff;
   --panel-shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
   --toast-bg: #1f2328;

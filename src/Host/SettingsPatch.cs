@@ -69,6 +69,13 @@ public static class SettingsPatch
                 merged = merged with { MonoFont = monoFont };
             }
 
+            // palette 只接受白名单值（default/blue）：非法值不写坏设置，保持当前值（默认即 blue）；
+            // 前端 normalizePalette 对任何非法值同样回落 blue。
+            if (TryPalette(root, "palette", out var palette))
+            {
+                merged = merged with { Palette = palette };
+            }
+
             if (TryBool(root, "tocVisible", out var tocVisible))
             {
                 merged = merged with { TocVisible = tocVisible };
@@ -92,6 +99,19 @@ public static class SettingsPatch
         }
 
         value = element.GetString() ?? string.Empty;
+        return true;
+    }
+
+    /// <summary>配色白名单：只接受 <c>default</c> / <c>blue</c>（大小写敏感，与前端取值一致）。</summary>
+    private static bool TryPalette(JsonElement root, string name, out string value)
+    {
+        value = string.Empty;
+        if (!TryString(root, name, out var text) || text is not ("default" or "blue"))
+        {
+            return false;
+        }
+
+        value = text;
         return true;
     }
 

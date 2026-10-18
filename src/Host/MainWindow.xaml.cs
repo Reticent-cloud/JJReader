@@ -2,12 +2,17 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Win32;
 
 namespace JingjingReader;
 
@@ -81,6 +86,274 @@ public partial class MainWindow : Window
         ApplySavedWindowGeometry();
         Closing += OnWindowClosing;
         Loaded += OnLoaded;
+        // 自绘标题栏（Win10 无法给系统标题栏上色）：最大化/还原时切换按钮图标，配色随 palette + 系统明暗即时更新。
+        StateChanged += OnWindowStateChanged;
+        ApplyTitleBarTheme();
+        UpdateMaximizeButton();
+    }
+
+    /// <summary>系统设置变化消息：系统明暗主题切换时重算标题栏配色（lParam 不必解析，直接重读注册表）。</summary>
+    private const int WmSettingChange = 0x001A;
+
+    /// <summary>主题/高对比度切换消息（与 WM_SETTINGCHANGE 一起处理，保证系统主题变化即时生效）。</summary>
+    private const int WmThemeChanged = 0x031A;
+
+    /// <summary>取窗口所在显示器：最大化尺寸修正用。</summary>
+    private const uint MonitorDefaultToNearest = 2;
+
+    /// <summary>WM_GETMINMAXINFO：窗口最大化时把尺寸限制到显示器工作区（避开任务栏，不裁标题栏）。</summary>
+    private const int WmGetMinMaxInfo = 0x0024;
+
+    /// <summary>非客户区左键双击：自绘标题栏的 caption 命中区双击最大化/还原。</summary>
+    private const int WmNcLButtonDblClk = 0x00A3;
+
+    /// <summary>命中测试返回值：标题栏（Caption）。</summary>
+    private const int HtCaption = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public NativePoint Reserved;
+        public NativePoint MaxSize;
+        public NativePoint MaxPosition;
+        public NativePoint MinTrackSize;
+        public NativePoint MaxTrackSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public NativeRect Monitor;
+        public NativeRect Work;
+        public uint Flags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+    private HwndSource? _hwndSource;
+
+    /// <summary>
+    /// 自绘标题栏的窗口消息钩子：
+    /// <list type="bullet">
+    /// <item>WM_SETTINGCHANGE / WM_THEMECHANGED：系统明暗主题切换后重算标题栏颜色。</item>
+    /// <item>WM_GETMINMAXINFO：WindowChrome 最大化时会按 resize border 向外溢出（标题栏/边缘被屏幕裁掉、
+    /// 盖住任务栏）；这里把最大化尺寸/位置夹到当前显示器工作区，保留 6 DIP resize 边框。</item>
+    /// <item>WM_NCLBUTTONDBLCLK(HTCAPTION)：双击自绘标题栏最大化/还原（WindowChrome 的 caption 区
+    /// 是 non-client，WPF 收不到 MouseDoubleClick，显式处理保证与系统标题栏一致的交互）。</item>
+    /// </list>
+    /// 同时登记 HWND 源，关闭时解绑，避免窗口对象被消息钩子延长生命周期。
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            _hwndSource = source;
+            source.AddHook(OnWindowProc);
+        }
+
+        ApplyTitleBarTheme();
+    }
+
+    private IntPtr OnWindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg is WmSettingChange or WmThemeChanged)
+        {
+            ApplyTitleBarTheme();
+        }
+        else if (msg == WmGetMinMaxInfo)
+        {
+            ApplyMaximizedWorkArea(hwnd, lParam);
+        }
+        else if (msg == WmNcLButtonDblClk && wParam == (IntPtr)HtCaption)
+        {
+            WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// 修正 WindowChrome 最大化溢出：把 ptMaxSize/ptMaxPosition 设为当前显示器工作区。
+    /// 坐标为物理像素（本进程 PerMonitorV2）；不设 handled，让 WPF 继续完成其余处理。
+    /// </summary>
+    private static void ApplyMaximizedWorkArea(IntPtr hwnd, IntPtr lParam)
+    {
+        try
+        {
+            var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+            if (monitor == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var monitorInfo = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (!GetMonitorInfo(monitor, ref monitorInfo))
+            {
+                return;
+            }
+
+            var info = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+            info.MaxPosition.X = Math.Abs(monitorInfo.Work.Left - monitorInfo.Monitor.Left);
+            info.MaxPosition.Y = Math.Abs(monitorInfo.Work.Top - monitorInfo.Monitor.Top);
+            info.MaxSize.X = monitorInfo.Work.Right - monitorInfo.Work.Left;
+            info.MaxSize.Y = monitorInfo.Work.Bottom - monitorInfo.Work.Top;
+            Marshal.StructureToPtr(info, lParam, fDeleteOld: false);
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"修正最大化窗口尺寸失败：{exception.Message}");
+        }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        if (_hwndSource is not null)
+        {
+            _hwndSource.RemoveHook(OnWindowProc);
+            _hwndSource = null;
+        }
+
+        base.OnClosed(e);
+    }
+
+    /// <summary>
+    /// 自绘标题栏配色：palette 来自 settings.json（blue 鲸鱼蓝 / default 中性），明暗按前端主题设置
+    /// （light/dark 直接跟随；system 读系统 <c>AppsUseLightTheme</c>），色值与前端
+    /// --chrome-bg/--chrome-border/--content-bg 完全一致。读取失败只记日志并保留上一次颜色（标题栏不能阻断阅读）。
+    /// </summary>
+    private void ApplyTitleBarTheme()
+    {
+        try
+        {
+            var settings = _store.LoadSettings();
+            var lightTheme = TitleBarTheme.ResolveLightTheme(settings.Theme, ReadAppsUseLightTheme());
+            var colors = TitleBarTheme.Resolve(settings.Palette, lightTheme);
+            var foreground = CreateBrush(colors.Foreground);
+            TitleBar.Background = CreateBrush(colors.Background);
+            TitleBar.BorderBrush = CreateBrush(colors.Border);
+            TitleText.Foreground = foreground;
+            RootGrid.Background = CreateBrush(colors.Content);
+            Background = CreateBrush(colors.Content);
+            // 按钮模板用 DynamicResource 读取：替换资源即同步 hover/active/文字色（含关闭按钮外的普通按钮）。
+            Resources["TitleBarForegroundBrush"] = foreground;
+            Resources["TitleBarHoverBrush"] = CreateBrush(colors.Hover);
+            Resources["TitleBarActiveBrush"] = CreateBrush(colors.Active);
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"应用标题栏配色失败：{exception}");
+        }
+    }
+
+    /// <summary>读取系统「应用使用浅色主题」（注册表缺失/不可读时按浅色，与 Windows 默认一致）。</summary>
+    private static bool ReadAppsUseLightTheme()
+    {
+        try
+        {
+            var value = Registry.GetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                "AppsUseLightTheme",
+                1);
+            return TitleBarTheme.IsLightAppsTheme(value);
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"读取系统明暗主题失败：{exception.Message}");
+            return true;
+        }
+    }
+
+    /// <summary>把 #RRGGBB 转成冻结的 SolidColorBrush（可安全跨线程复用，减少每次主题切换的分配）。</summary>
+    private static SolidColorBrush CreateBrush(string hex)
+    {
+        var color = (Color)ColorConverter.ConvertFromString(hex);
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>窗口状态变化：最大化/还原时把按钮字形与 tooltip 同步为「还原/最大化」。</summary>
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+    {
+        UpdateMaximizeButton();
+    }
+
+    /// <summary>最大化按钮状态（纯逻辑见 TitleBarTheme.MaximizeButtonGlyph/Tooltip）。</summary>
+    private void UpdateMaximizeButton()
+    {
+        var maximized = WindowState == WindowState.Maximized;
+        var tooltip = TitleBarTheme.MaximizeButtonTooltip(maximized);
+        MaximizeButton.Content = TitleBarTheme.MaximizeButtonGlyph(maximized);
+        MaximizeButton.ToolTip = tooltip;
+        AutomationProperties.SetName(MaximizeButton, tooltip);
+    }
+
+    /// <summary>标题栏按钮：最小化。</summary>
+    private void OnMinimizeClick(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState.Minimized;
+    }
+
+    /// <summary>标题栏按钮：最大化/还原（双击标题栏由 WindowChrome 的 caption 命中区按系统行为处理）。</summary>
+    private void OnMaximizeClick(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    }
+
+    /// <summary>标题栏按钮：关闭（与标题栏菜单的「关闭」、Alt+F4 同一条路径）。</summary>
+    private void OnCloseClick(object sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+
+    /// <summary>
+    /// 标题栏右键系统菜单（还原/移动/大小/最小化/最大化/关闭）：WindowChrome 保留标题栏的系统行为，
+    /// 右键用 WPF 的 SystemCommands.ShowSystemMenu 在屏幕坐标弹出；失败只记日志。
+    /// </summary>
+    private void OnTitleBarRightClick(object sender, MouseButtonEventArgs e)
+    {
+        try
+        {
+            SystemCommands.ShowSystemMenu(this, PointToScreen(e.GetPosition(this)));
+            e.Handled = true;
+        }
+        catch (Exception exception)
+        {
+            DebugLog.Write($"显示标题栏系统菜单失败：{exception.Message}");
+        }
+    }
+
+    /// <summary>窗口标题写入 Title（任务栏/无障碍）并同步到自绘标题栏 TextBlock。</summary>
+    private void SetTitle(string title)
+    {
+        Title = title;
+        if (TitleText is not null)
+        {
+            TitleText.Text = title;
+        }
     }
 
     /// <summary>
@@ -457,7 +730,7 @@ public partial class MainWindow : Window
             });
             box.Child = panel;
             root.Children.Add(box);
-            Title = "无法启动 — 鲸鲸阅读器";
+            SetTitle("无法启动 — 鲸鲸阅读器");
         }
         catch (Exception exception)
         {
@@ -570,7 +843,7 @@ public partial class MainWindow : Window
             // 文件不存在/无权限/路径非法：保持窗口可用；toast 之外再发持久 notice，
             // 前端显示可关闭的顶部错误条（spec §5.11「错误条（持续显示，可关闭）」）。
             DebugLog.Write($"打开文档失败 path={normalizedPath} error={exception}");
-            Title = $"{Path.GetFileName(normalizedPath)} — 鲸鲸阅读器";
+            SetTitle($"{Path.GetFileName(normalizedPath)} — 鲸鲸阅读器");
             Post(Protocol.Toast($"无法打开文件：{Path.GetFileName(normalizedPath)}", "error"));
             Post(Protocol.Notice(
                 $"无法打开文件：{Path.GetFileName(normalizedPath)}（{exception.Message}）",
@@ -580,7 +853,7 @@ public partial class MainWindow : Window
         }
 
         _currentDocument = document;
-        Title = $"{Path.GetFileName(document.Path)} — 鲸鲸阅读器";
+        SetTitle($"{Path.GetFileName(document.Path)} — 鲸鲸阅读器");
         UpdateVirtualHostMapping(document.Path);
 
         var settings = _store.LoadSettings();
@@ -919,6 +1192,8 @@ public partial class MainWindow : Window
         var current = _store.LoadSettings();
         var merged = SettingsPatch.Apply(current, message.PatchJson);
         _store.SaveSettings(merged);
+        // 配色（palette）会影响自绘标题栏：设置落盘后立即重算（其它字段无副作用）。
+        ApplyTitleBarTheme();
         DebugLog.Write($"saveSettings patch={message.PatchJson}");
     }
 
