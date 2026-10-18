@@ -378,3 +378,48 @@ html[data-ui-style='reader'] #ui-decor {
     transform: none;
   }
 }
+
+/* ── v2：更圆润的阅读器风（克制、圆角略大，不改变排版与交互） ── */
+html[data-ui-style='reader'] #recent-menu,
+html[data-ui-style='reader'] .aa-panel {
+  border-radius: 14px;
+}
+
+html[data-ui-style='reader'] .recent-panel .recent-item {
+  border-radius: 12px;
+}
+
+html[data-ui-style='reader'] #toc nav.toc a {
+  border-radius: 8px;
+}
+
+html[data-ui-style='reader'] #content pre {
+  border-radius: 12px;
+}
+
+html[data-ui-style='reader'] #content img {
+  border-radius: 10px;
+}
+
+html[data-ui-style='reader'] #content table {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+html[data-ui-style='reader'] #content blockquote {
+  border-radius: 2px 10px 10px 2px;
+}
+
+html[data-ui-style='reader'] #content .recent-mascot {
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+html[data-ui-style='reader'] #recent-menu .recent-mascot {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+}

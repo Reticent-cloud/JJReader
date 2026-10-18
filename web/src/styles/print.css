@@ -168,3 +168,11 @@ body.print-mode #content .frontmatter td {
   background: transparent !important;
   box-shadow: none !important;
 }
+
+/* v2：打印时隐藏二次元背景装饰与插画水印（纸面纯白） */
+body.print-mode #ui-decor,
+body.print-mode #ui-decor::before,
+body.print-mode .ui-watermark,
+body.print-mode .ui-watermark img {
+  display: none !important;
+}

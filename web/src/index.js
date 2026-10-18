@@ -35,6 +35,7 @@ import { applyTheme } from './theme.js';
 import { buildToc, createScrollSpy } from './toc.js';
 import { applyUiStyle, nextUiStyle, normalizeUiStyle, UI_STYLES, uiStyleLabel } from './ui-style.js';
 import { bubbleDecor, MASCOT_LARGE_SVG, MASCOT_SVG } from './mascot.js';
+import { MASCOT_PHOTO } from './mascot-photo.js';
 
 const STYLE_ATTR = 'data-jj';
 
@@ -85,6 +86,7 @@ export function install(target = {}) {
     UI_STYLES,
     MASCOT_SVG,
     MASCOT_LARGE_SVG,
+    MASCOT_PHOTO,
     bubbleDecor,
     // Task 11：大文档分块渲染与大文件模式
     CHUNK_THRESHOLD,

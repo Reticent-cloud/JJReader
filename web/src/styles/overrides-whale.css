@@ -482,3 +482,135 @@ html[data-ui-style='whale'] #content > ul:not(.contains-task-list) > li::before 
     transform: none;
   }
 }
+
+/* ── v2：二次元插画主题（用户提供的「鲸鱼女仆娘看书」插画）── */
+
+/* 背景柔光：星海蓝 + 紫粉水光，铺在 #ui-decor（aria-hidden、pointer-events:none）上 */
+html[data-ui-style='whale'] #ui-decor {
+  background:
+    radial-gradient(60% 45% at 14% 6%, rgba(143, 211, 255, 0.34), transparent 62%),
+    radial-gradient(55% 40% at 87% 3%, rgba(177, 156, 255, 0.24), transparent 60%),
+    radial-gradient(52% 46% at 80% 90%, rgba(77, 107, 254, 0.18), transparent 66%),
+    radial-gradient(46% 40% at 10% 84%, rgba(255, 182, 213, 0.16), transparent 66%);
+}
+
+html[data-ui-style='whale'] #ui-decor::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(2.2px 2.2px at 12% 18%, rgba(255, 255, 255, 0.92), transparent 60%),
+    radial-gradient(1.8px 1.8px at 26% 9%, rgba(255, 255, 255, 0.7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 44% 15%, rgba(255, 255, 255, 0.75), transparent 60%),
+    radial-gradient(2.6px 2.6px at 63% 7%, rgba(255, 255, 255, 0.88), transparent 60%),
+    radial-gradient(1.6px 1.6px at 78% 19%, rgba(255, 255, 255, 0.7), transparent 60%),
+    radial-gradient(2.2px 2.2px at 91% 12%, rgba(255, 255, 255, 0.82), transparent 60%),
+    radial-gradient(1.4px 1.4px at 8% 46%, rgba(255, 255, 255, 0.58), transparent 60%),
+    radial-gradient(1.9px 1.9px at 88% 42%, rgba(255, 255, 255, 0.62), transparent 60%),
+    radial-gradient(1.4px 1.4px at 34% 66%, rgba(255, 255, 255, 0.5), transparent 60%),
+    radial-gradient(1.8px 1.8px at 70% 74%, rgba(255, 255, 255, 0.55), transparent 60%),
+    radial-gradient(1.4px 1.4px at 52% 88%, rgba(255, 255, 255, 0.45), transparent 60%),
+    radial-gradient(1.2px 1.2px at 18% 70%, rgba(255, 255, 255, 0.42), transparent 60%);
+  opacity: 0.6;
+}
+
+html[data-theme='dark'][data-ui-style='whale'] #ui-decor::before {
+  opacity: 0.85;
+}
+
+/* 右下角插画水印：整幅圆形插画，低透明度，位于正文之下，不拦截鼠标 */
+html[data-ui-style='whale'] .ui-watermark {
+  right: -48px;
+  bottom: -68px;
+  width: clamp(300px, 30vw, 520px);
+  height: auto;
+  aspect-ratio: 1;
+  opacity: 0.16;
+  filter: saturate(1.08) blur(0.3px);
+  border-radius: 50%;
+}
+
+html[data-theme='dark'][data-ui-style='whale'] .ui-watermark {
+  opacity: 0.2;
+}
+
+html[data-ui-style='whale'] .ui-watermark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* 空状态插画：圆形主角 + 柔光边 */
+html[data-ui-style='whale'] #content .recent-mascot {
+  width: 232px;
+  height: 232px;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 18px 44px rgba(27, 42, 107, 0.3), 0 0 0 6px rgba(255, 255, 255, 0.32) inset;
+}
+
+html[data-ui-style='whale'] #recent-menu .recent-mascot {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin: 0 auto 6px;
+}
+
+/* 更圆润：工具条 / 弹层 / 目录 / 卡片 / 代码 / 表格 / 引用 / 按钮 */
+html[data-ui-style='whale'] #toolbar {
+  border-radius: 0 0 20px 20px;
+}
+
+html[data-ui-style='whale'] #toolbar .tool {
+  border-radius: 999px;
+}
+
+html[data-ui-style='whale'] #recent-menu,
+html[data-ui-style='whale'] .aa-panel {
+  border-radius: 24px;
+}
+
+html[data-ui-style='whale'] #toc nav.toc a {
+  border-radius: 999px;
+}
+
+html[data-ui-style='whale'] .recent-panel .recent-item {
+  border-radius: 20px;
+}
+
+html[data-ui-style='whale'] .recent-panel .recent-open {
+  border-radius: 999px;
+}
+
+html[data-ui-style='whale'] #content pre {
+  border-radius: 18px;
+}
+
+html[data-ui-style='whale'] #content :not(pre) > code {
+  border-radius: 8px;
+}
+
+html[data-ui-style='whale'] #content img {
+  border-radius: 16px;
+}
+
+html[data-ui-style='whale'] #content blockquote {
+  border-radius: 4px 18px 18px 4px;
+}
+
+html[data-ui-style='whale'] #content table {
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+html[data-ui-style='whale'] #toast .toast {
+  border-radius: 999px;
+}
+
+html[data-ui-style='whale'] #back-to-top {
+  border-radius: 50%;
+}

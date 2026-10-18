@@ -2,7 +2,7 @@
 // 安全约束：路径/文件名/目录都是不可信文本——只用 textContent / dataset 写入，绝不拼 HTML 字符串。
 // 界面美化波：空状态插入自绘的鲸鱼女仆娘插画（常量 SVG，装饰性 aria-hidden；非用户内容）。
 
-import { MASCOT_LARGE_SVG } from '../mascot.js';
+import { MASCOT_PHOTO } from '../mascot-photo.js';
 
 /** 最近文件条数上限（Global Constraints：20 条）。 */
 export const MAX_RECENT = 20;
@@ -219,11 +219,13 @@ export function renderRecent(items, { onOpen, onClose, onPickFile } = {}) {
   }
 
   if (buttons.length === 0) {
-    // 空状态：鲸鱼女仆娘插画（reader 风小尺寸、whale 风 220px 主角，尺寸由 CSS 决定）。
-    const mascot = document.createElement('div');
+    // 空状态：鲸鱼女仆娘看书插画（reader 风小尺寸、whale 风主角，尺寸由 CSS 决定）。
+    const mascot = document.createElement('img');
     mascot.className = 'recent-mascot';
+    mascot.alt = '';
     mascot.setAttribute('aria-hidden', 'true');
-    mascot.innerHTML = MASCOT_LARGE_SVG;
+    mascot.decoding = 'async';
+    mascot.src = MASCOT_PHOTO;
     panel.prepend(mascot);
     const empty = document.createElement('p');
     empty.className = 'recent-empty';

@@ -17,7 +17,7 @@
       宿主私有内存峰值 ≤ 200 MB（采样最大间隔 > 250 ms 判 FAIL）
   10. --verify-pdf：hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100
   11. 双开单实例：第 2 个进程 ExitCode == 0、JingjingReader 进程数 = 1
-  12. 前端产物 ≤ 500 KB，且 web/dist 与 src/Host/Resources 两份字节一致
+  12. 前端产物 ≤ 640 KB，且 web/dist 与 src/Host/Resources 两份字节一致
   13. 用户 %APPDATA%\JingjingReader\recent.json 未被改写（mtime/哈希前后一致）
   14. 写 out/verify-report.md，终端打印 VERIFY OK / VERIFY FAILED
 
@@ -2158,9 +2158,9 @@ try {
         $distHash = (Get-FileHash -LiteralPath $distArtifact -Algorithm SHA256).Hash
         $resourceHash = (Get-FileHash -LiteralPath $resourceArtifact -Algorithm SHA256).Hash
         $artifactOk = ($distSize -le $ArtifactLimitBytes) -and ($resourceSize -le $ArtifactLimitBytes) -and ($distHash -eq $resourceHash)
-        $artifactActual = "dist=$distSize B，Resources=$resourceSize B（均 ≤ 512000）；SHA256 $(if ($distHash -eq $resourceHash) { '一致' } else { '不一致' })"
+        $artifactActual = "dist=$distSize B，Resources=$resourceSize B（均 ≤ 655360）；SHA256 $(if ($distHash -eq $resourceHash) { '一致' } else { '不一致' })"
     }
-    Add-Result -Name '前端产物体积' -Expect 'web/dist 与 src/Host/Resources 的 md-engine.js 均 ≤ 500 KB 且字节一致' -Actual $artifactActual -Pass $artifactOk
+    Add-Result -Name '前端产物体积' -Expect 'web/dist 与 src/Host/Resources 的 md-engine.js 均 ≤ 640 KB 且字节一致' -Actual $artifactActual -Pass $artifactOk
 
     # ── ⑬ 用户数据目录未被改写（I2 隔离的独立证据）────────────────────────────
     Write-Host '[12/13] 用户数据目录未被改写…'

@@ -98,6 +98,14 @@ it('applySettings 也会应用 uiStyle（任何设置路径都保持风格一致
   expect(document.documentElement.getAttribute('data-ui-style')).toBe('reader');
 });
 
+it('mascot 插画是内联常量 data URI：不发起外部请求', () => {
+  const photo = JJ.MASCOT_PHOTO;
+  expect(typeof photo).toBe('string');
+  expect(photo.startsWith('data:image/')).toBe(true);
+  expect(photo).not.toMatch(/https?:\/\//i);
+  expect(photo).not.toContain('<script');
+});
+
 it('mascot SVG 是原创内联常量：no external resource / script / image', () => {
   const svgs = [JJ.MASCOT_SVG, JJ.MASCOT_LARGE_SVG];
   for (const svg of svgs) {
@@ -139,9 +147,11 @@ it('shell 装配装饰层：气泡 + 水印，aria-hidden 且不接收指针事�
   expect(decor).toBeTruthy();
   expect(decor.getAttribute('aria-hidden')).toBe('true');
   expect(decor.querySelectorAll('.jj-bubble')).toHaveLength(14);
-  expect(decor.querySelector('.ui-watermark svg')).toBeTruthy();
-  // 空白页默认是最近文件面板（含空状态 mascot）
-  expect(root.querySelector('#content .recent-mascot svg')).toBeTruthy();
+  expect(decor.querySelector('.ui-watermark img')).toBeTruthy();
+  expect(decor.querySelector('.ui-watermark img').getAttribute('src')).toMatch(/^data:image\//);
+  // 空白页默认是最近文件面板（含空状态 mascot：插画 data URI）
+  expect(root.querySelector('#content .recent-mascot')).toBeTruthy();
+  expect(root.querySelector('#content .recent-mascot').getAttribute('src')).toMatch(/^data:image\//);
   // 工具栏左侧小吉祥物 + Aa 面板的界面风格下拉
   expect(root.querySelector('#toolbar .toolbar-mascot svg')).toBeTruthy();
   const select = root.querySelector('#aa-panel [data-setting="uiStyle"]');

@@ -2,13 +2,13 @@
 // 口径（brief + Controller 决策）：
 //   - 5 万行 Markdown 是验收文档规模；splitBlocks 必须零丢失且耗时 < 300 ms（jsdom 宽阈值防抖动）；
 //   - extractHeadings（大文档首屏预扫描）< 300 ms；
-//   - 前端产物 web/dist/md-engine.js ≤ 500 KB，产物缺失时给出「先 npm run build」的明确失败信息。
+//   - 前端产物 web/dist/md-engine.js ≤ 640 KB，产物缺失时给出「先 npm run build」的明确失败信息。
 // 说明：这些是回归护栏，不是基准测试——阈值按 spec 的宽口径，不追求贴边。
 
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const PRODUCTION_LIMIT_BYTES = 500 * 1024;
+const PRODUCTION_LIMIT_BYTES = 640 * 1024;
 
 /**
  * 产物路径：vitest 的 root 是 web/，因此 cwd/dist 就是 web/dist；
@@ -62,7 +62,7 @@ describe('性能冒烟：5 万行文档', () => {
 });
 
 describe('性能冒烟：前端产物体积', () => {
-  it('前端产物体积不超过 500KB', () => {
+  it('前端产物体积不超过 640KB', () => {
     const artifact = artifactPath();
     if (!existsSync(artifact)) {
       throw new Error(

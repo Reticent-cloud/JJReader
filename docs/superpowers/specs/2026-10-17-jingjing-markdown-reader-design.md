@@ -233,7 +233,7 @@ MDReader/
 - 三态配色：`light` / `dark` / `system`（默认 `system`，监听 `prefers-color-scheme` 实时切换）。
 - 界面风格（`uiStyle`，与配色正交的第二个视觉维度）：`reader`（阅读器风，默认）/ `whale`（鲸鱼娘主题）。
   - `reader`：参考常见 Markdown 阅读器的克制排版——标题层级、引用浅底、表格斑马纹、行内代码、代码块顶栏、TOC 当前项强调条、卡片 hover；正文区不加装饰。
-  - `whale`：浅蓝→白（暗色下深蓝→近黑）渐变背景、低透明度气泡/浪花装饰层（`pointer-events:none`、`aria-hidden`）、卡片化组件、鲸尾列表符号、右下角水印；mascot 出现在空状态/工具栏/关于面板。
+  - `whale`：浅蓝→白（暗色下深蓝→近黑）渐变背景、低透明度气泡/浪花装饰层（`pointer-events:none`、`aria-hidden`）、卡片化组件、鲸尾列表符号、右下角水印；mascot 出现在空状态/工具栏/关于面板。v2 起使用用户提供的「鲸鱼女仆娘看书」插画（`assets/mascot-source.jpg`）作为右下角大尺寸圆形水印、空状态主角与关于面板图，另叠加星屑/水光渐变背景；面板、目录、卡片、代码块、表格、按钮统一大圆角（`reader` 风同步加圆角但更克制）。
   - 两套风格都与 `light` / `dark` / `system` 组合生效；切换即时应用并持久化到 `settings.json` 的 `uiStyle`，未知值回退 `reader`。
   - 打印模式（PDF 导出）下两套风格一律纯白背景并隐藏装饰层与 mascot。
 - 代码块、行内代码、表格、引用块、任务清单各有专属配色，深色下对比度不低于 WCAG AA（正文对比 ≥ 4.5:1）。
@@ -377,7 +377,7 @@ MDReader/
 - 默认发布形态：单文件 apphost exe（`JingjingReader.exe`）+ `WebView2Loader.dll` + `runtimes/`（WebView2 原生加载器
   不是单文件的一部分，分发时必须复制整个目录）；依赖系统 .NET 10 运行时。自包含形态在同样结构上再带 .NET 运行时 DLL。
 - 版本信息：产品名与文件说明（FileDescription）均为 `鲸鲸阅读器`，版本 `0.1.0`；关于面板显示版本、.NET、WebView2、
-  OS、数据目录与 `.md` 关联状态。图标使用 `scripts/gen-icon.py` 生成的原创鲸鱼女仆娘多尺寸图标（16/32/48/256），关于面板显示同一形象的 256×256 透明 PNG（`AboutMascot.png`）。
+  OS、数据目录与 `.md` 关联状态。图标与插画来自 `assets/mascot-source.jpg`（用户提供的「鲸鱼女仆娘看书」插画），`scripts/gen-icon.py` 圆裁/去水印后生成 16/32/48/256 图标（16/32 用脸部特写）与关于面板 512×512 透明 PNG（`AboutMascot.png`），并导出前端内联 data URI（`web/src/mascot-photo.js`）。
 - 分发内容：`out\`（或 `out-selfcontained\`）整个目录即分发包，含 exe、`install.ps1`、`uninstall.ps1`、`README.md`；
   install/uninstall 默认优先使用同目录的 exe（源码树中回退到 `..\out\JingjingReader.exe`）。`install.ps1` 默认把分发包内容
   复制到 `%LOCALAPPDATA%\Programs\JingjingReader` 再从该目录注册关联（`-Portable` 可保留「就地运行」模式）；
@@ -427,7 +427,7 @@ TDD：先写测试，再写实现。
 11. 宿主进程私有内存峰值 ≤ 200 MB，且采样最大间隔 ≤ 250 ms（WebView2 进程组仅记录、不参与判定）
 12. `--verify-pdf`：hello > 5 KB；5 万行文档 > 1 MB 且页数 > 100
 13. 双开单实例：第 2 个进程 ExitCode = 0 且退出，宿主进程数 = 1
-14. 前端产物 ≤ 500 KB 且两份字节一致
+14. 前端产物 ≤ 640 KB 且两份字节一致
 15. 用户 `%APPDATA%\JingjingReader\recent.json` 未被改写（隔离证据）
 16. 输出验收报告 `out/verify-report.md`（开始前删除旧报告）
 
@@ -446,7 +446,7 @@ TDD：先写测试，再写实现。
 | 首屏（5 万行文档，`elapsedMs`） | 1.0 s | 1.5 s |
 | 宿主进程私有内存峰值：目标 150 MB（优化目标）/ 上限 200 MB；最终验收实测 174.3 MB（50 ms 采样 19 个样本，最大间隔 64 ms）。WebView2 进程组（信息项，含全部后代）实测 `WorkingSet64` 峰值 235.7 MB（500 ms 采样 1 次），整树 349.8 MB（同一采样时刻） | 150 MB | 200 MB |
 | 进程数 | 不作为验收项：WebView2 进程组数量随运行时版本变化（最终验收 6 个） | — |
-| 前端包体积（未压缩） | 350 KB | 500 KB（最终验收 475324 B） |
+| 前端包体积（未压缩） | 350 KB | 640 KB（含二次元主题插画 data URI；最终验收 529875 B） |
 | 安装包/exe 体积（依赖运行时） | 4 MB | 8 MB |
 | 滚动帧预算 | 16 ms/帧 | **已 descope**：无自动化测量手段，改手测（见 2.3-4 与 verify-checklist §12） |
 

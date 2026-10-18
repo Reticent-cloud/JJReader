@@ -23,7 +23,8 @@ import {
 import { applyTheme, nextTheme } from '../theme.js';
 import { buildToc } from '../toc.js';
 import { applyUiStyle, nextUiStyle, uiStyleLabel } from '../ui-style.js';
-import { bubbleDecor, MASCOT_SVG } from '../mascot.js';
+import { bubbleDecor } from '../mascot.js';
+import { MASCOT_PHOTO } from '../mascot-photo.js';
 import { createBrowser } from './browse.js';
 import {
   clearToastContainer,
@@ -178,13 +179,13 @@ export function mountShell({ root, post } = {}) {
   hugeBanner.append(hugeBannerText, hugeBannerClose);
   noticeStack.append(errorBar, hugeBanner);
 
-  // 界面美化波：固定气泡/水印装饰层。只有 whale 风格由 CSS 显示（reader 下 display:none）。
-  // 内容全部来自 mascot.js 的常量 SVG 与数字样式（不含用户输入）；aria-hidden + pointer-events:none，
-  // 不参与正文布局与文本选择，也不拦截点击。
+  // 界面美化波 v2：固定气泡/水印装饰层。只有 whale 风格由 CSS 显示（reader 下 display:none）。
+  // 内容全部来自 mascot.js 常量 SVG、mascot-photo.js 的常量 data URI 与数字样式（不含用户输入）；
+  // aria-hidden + pointer-events:none，不参与正文布局与文本选择，也不拦截点击。
   const uiDecor = document.createElement('div');
   uiDecor.id = 'ui-decor';
   uiDecor.setAttribute('aria-hidden', 'true');
-  uiDecor.innerHTML = `${bubbleDecor(14)}<div class="ui-watermark" aria-hidden="true">${MASCOT_SVG}</div>`;
+  uiDecor.innerHTML = `${bubbleDecor(14)}<div class="ui-watermark" aria-hidden="true"><img src="${MASCOT_PHOTO}" alt="" decoding="async"></div>`;
 
   const { progress, progressEl, backToTopEl } = createChromeElements();
   root.append(
