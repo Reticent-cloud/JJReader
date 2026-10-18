@@ -253,19 +253,8 @@ html[data-theme='dark'] {
 
 #toc nav.toc a.active {
   background: var(--toc-active-bg);
-  /* 文本对比度同工具条 active：用 --ui-accent-strong，强调条仍用 --ui-accent。 */
+  /* 文本对比度同工具条 active：用 --ui-accent-strong（用户要求去掉左侧 3px 深蓝强调条，只保留胶囊底色）。 */
   color: var(--ui-accent-strong);
-}
-
-#toc nav.toc a.active::before {
-  content: '';
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  left: 0;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--ui-accent);
 }
 
 /* 最近文件卡片：hover 轻抬 + 强调色边框 */

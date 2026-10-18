@@ -263,3 +263,18 @@ describe('回到顶部图标按钮（v4）', () => {
     expect(css).toMatch(/#back-to-top \.back-to-top-icon\s*\{[^}]*display:\s*block;/s);
   });
 });
+
+describe('横向滚动条与目录高亮（v5）', () => {
+  it('正文列与页面不出现横向滚动条（代码块内部保留横向滚动）', () => {
+    const layoutCss = readRepoFile('web/src/styles/layout.css');
+    expect(layoutCss).toMatch(/#content\s*\{[^}]*overflow-x:\s*hidden;/s);
+    expect(layoutCss).toMatch(/html,\s*body\s*\{[^}]*overflow-x:\s*hidden;/s);
+    expect(layoutCss).toMatch(/\.code-wrap pre\s*\{[^}]*overflow-x:\s*auto;/s);
+  });
+
+  it('目录当前项只有胶囊底色，没有左侧深蓝强调条', () => {
+    const css = readRepoFile('web/src/styles/overrides.css');
+    expect(css).not.toContain('a.active::before');
+    expect(css).toMatch(/#toc nav\.toc a\.active\s*\{[^}]*background:\s*var\(--toc-active-bg\);/s);
+  });
+});

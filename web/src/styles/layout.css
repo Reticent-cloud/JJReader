@@ -221,6 +221,7 @@ body.jj-resizing * {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden; /* 正文列不出现横向滚动条（代码块内部自带横向滚动） */
   scroll-behavior: smooth;
   scroll-padding-top: calc(var(--toolbar-height) + 40px);
   /* 行宽居中：用对称 padding 让所有顶层块（含标题，标题自带 margin 会覆盖 auto）都居中 */
@@ -871,4 +872,10 @@ nav.toc-inline li[data-level='6'] {
 .recent-panel .recent-open:focus-visible {
   background: var(--toc-active-bg);
   outline: none;
+}
+
+/* 页面级不出现横向滚动条（正文列已 hidden；这里兜底 fixed 元素/极窄窗口的边缘溢出） */
+html,
+body {
+  overflow-x: hidden;
 }
