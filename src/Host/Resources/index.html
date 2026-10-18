@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-ui-style="reader">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>鲸鲸阅读器</title>
+</head>
+<body>
+  <!-- shell（header#toolbar / aside#toc / main#content / div#toast）由 md-engine.js 在 DOM ready 后挂到 #app 里 -->
+  <div id="app"></div>
+  <!--
+    宿主注入点：MainWindow 读取本文件后，把嵌入资源 md-engine.js 的文本内联进下面这个 <script>，
+    再 NavigateToString 加载（bundle 里的 </script 序列会被转义，避免提前闭合）。
+    前端装配完成后主动发 shellReady，宿主收到后才推送 load，保证监听器已就绪。
+  -->
+  <script id="md-engine"></script>
+</body>
+</html>

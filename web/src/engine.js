@@ -1,0 +1,243 @@
+// 鲸鲸阅读器渲染引擎：markdown-it 单例 + 标题 id + 图片相对路径改写 + GFM 扩展语法与代码高亮 + 出口清洗。
+// 单例让 renderMarkdown 与 extractHeadings 对同一文档产生完全一致的标题 id（共用 slugify 分配逻辑）。
+// Task 6 起装配脚注/任务清单/emoji 插件并自定义 fence 渲染器（代码高亮 + 复制按钮）；
+// Task 7 起 renderMarkdown 出口统一过 sanitizeHtml（DOMPurify 白名单），内嵌 HTML 不再原样透传；
+// Task 8 起装配笔记体扩展语法（front matter / wikilink / 附件 / ==高亮== / %%注释%%，见 src/ext/）；
+// Task 9 起装配 [TOC] 内联目录（预扫描标题 → env.tocHtml → 块级占位规则，见 src/ext/toc-placeholder.js）；
+// Task 11 起支持 env.disableHighlight（大文件模式关闭代码高亮）与 env.tocHeadings（分块渲染时 [TOC] 仍用全文标题）。
+
+import MarkdownIt from 'markdown-it';
+import footnote from 'markdown-it-footnote';
+import taskLists from 'markdown-it-task-lists';
+import { full as emoji } from 'markdown-it-emoji';
+import { install as attachment } from './ext/attachment.js';
+import { install as comment } from './ext/comment.js';
+import { extractFrontmatter, install as frontmatter } from './ext/frontmatter.js';
+import { install as highlightMark } from './ext/highlight-mark.js';
+import { buildTocHtml, hasTocPlaceholder, install as tocPlaceholder } from './ext/toc-placeholder.js';
+import { install as wikilink } from './ext/wikilink.js';
+import { highlight } from './highlight.js';
+import { sanitizeHtml } from './sanitize.js';
+
+// front matter 的解析出口挂在引擎模块上（index.js 直接暴露给 shell 与测试）。
+export { extractFrontmatter };
+
+/** env 中保存「本文档已占用标题 id」的键：每次渲染/提取用新 Set，保证同一文档的 id 稳定可复现。 */
+const USED_IDS_KEY = '__jjHeadingUsedIds';
+
+/** 绝对/特殊地址前缀：命中的图片 src 保持原样，其余相对路径才按 baseUrl 解析。 */
+const ABSOLUTE_SRC_RE = /^(?:https?:\/\/|data:|#|mailto:|tel:)/i;
+
+/** 保留字母（含中日韩）、数字与组合记号；其余标点/符号丢弃。 */
+const SLUG_KEEP_RE = /[\p{L}\p{N}\p{M}]/u;
+
+/** 空白（含全角空格）统一视为分隔符。 */
+const SLUG_SPACE_RE = /\s/u;
+
+/** 属性值转义映射（data-code 等属性必须整段转义，保证 dataset.code 能还原原始代码）。 */
+const ATTR_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const ATTR_ESCAPE_RE = /[&<>"']/g;
+
+/** HTML 属性级转义：& < > " ' 全转（引号内的语言串/代码原样还原）。 */
+function escapeAttr(text) {
+  return String(text ?? '').replace(ATTR_ESCAPE_RE, (ch) => ATTR_ESCAPE_MAP[ch]);
+}
+
+/** HTML 文本转义（关闭高亮的代码块按纯文本输出；文本里多转引号无副作用）。 */
+function escapeHtml(text) {
+  return String(text ?? '').replace(ATTR_ESCAPE_RE, (ch) => ATTR_ESCAPE_MAP[ch]);
+}
+
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  breaks: false,
+  typographer: false,
+});
+
+// GFM 扩展语法（Task 6）：脚注、任务清单（只读 checkbox，不回写）、emoji 全量短码。
+// 顺序放在核心规则/渲染器自定义之前，插件之间互不依赖；task-lists 只处理「列表项首字符 [ ]/[x]」。
+md.use(footnote);
+md.use(taskLists, { enabled: false, label: false });
+md.use(emoji);
+
+// 笔记体扩展语法（Task 8）：front matter 剥离 / wikilink / 附件 / ==高亮== / %%注释%%。
+// 各插件只注册 markdown-it 规则或渲染规则，不依赖彼此的装配顺序（front matter 在 core 链最前端）。
+md.use(frontmatter);
+md.use(wikilink);
+md.use(attachment);
+md.use(highlightMark);
+md.use(comment);
+md.use(tocPlaceholder);
+
+/**
+ * 把 inline 子 token 还原成纯文本：去掉强调/链接/HTML 等行内标记，保留文字、行内代码、emoji 与图片 alt。
+ * 注意标题 id 规则挂在 core 链末尾（text_join 之后），因此此时转义字符已合并回 text token。
+ */
+function inlinePlainText(children) {
+  let text = '';
+  for (const child of children || []) {
+    switch (child.type) {
+      case 'text':
+      case 'code_inline':
+        text += child.content;
+        break;
+      case 'emoji': // Task 6 起 emoji 是独立 token（content 就是 unicode 字符），标题文本不能丢字
+        text += child.content;
+        break;
+      case 'image': // 图片在标题里按 alt 文本参与 id 计算
+        text += inlinePlainText(child.children);
+        break;
+      case 'softbreak':
+      case 'hardbreak':
+        text += ' ';
+        break;
+      default: // 强调/链接/HTML 等标记 token 不贡献文本
+        break;
+    }
+  }
+  return text;
+}
+
+/**
+ * 生成标题锚点 id：保留中日韩字符、字母与数字，空白转 '-'，标点与其它符号丢弃；
+ * 连续 '-' 折叠、去掉首尾 '-'。传入 usedIds（Set）时登记并保证唯一：重复 id 依次加 -2、-3。
+ */
+export function slugify(text, usedIds) {
+  let id = '';
+  for (const ch of String(text ?? '')) {
+    if (SLUG_KEEP_RE.test(ch)) {
+      id += ch;
+    } else if (SLUG_SPACE_RE.test(ch)) {
+      id += '-';
+    }
+  }
+  id = id.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+
+  if (!usedIds || typeof usedIds.has !== 'function' || typeof usedIds.add !== 'function') {
+    return id;
+  }
+
+  let unique = id;
+  let suffix = 2;
+  while (usedIds.has(unique)) {
+    unique = `${id}-${suffix}`;
+    suffix += 1;
+  }
+  usedIds.add(unique);
+  return unique;
+}
+
+// 标题 id：core 链末尾（inline/text_join 之后）给每个 heading_open 写 id。
+// 放在单例上而不是每次 render 注册，保证 renderMarkdown 与 extractHeadings 走同一套分配逻辑。
+md.core.ruler.push('jj_heading_id', (state) => {
+  let usedIds = state.env && state.env[USED_IDS_KEY];
+  if (!(usedIds instanceof Set)) {
+    usedIds = new Set();
+    if (state.env) {
+      state.env[USED_IDS_KEY] = usedIds;
+    }
+  }
+  const { tokens } = state;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token.type !== 'heading_open') {
+      continue;
+    }
+    const inline = tokens[i + 1];
+    if (!inline || inline.type !== 'inline') {
+      continue;
+    }
+    token.attrSet('id', slugify(inlinePlainText(inline.children), usedIds));
+  }
+});
+
+// 图片相对路径改写：仅当 env.baseUrl 存在且 src 不是绝对/特殊地址时，按虚拟主机 baseUrl 解析。
+// 包装默认 image renderer 而不是整段重写，保留 alt/title 等属性与转义行为。
+const defaultImageRenderer = md.renderer.rules.image;
+
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  const src = token.attrGet('src');
+  const baseUrl = env && typeof env.baseUrl === 'string' ? env.baseUrl : '';
+  if (baseUrl && src && !ABSOLUTE_SRC_RE.test(src)) {
+    try {
+      token.attrSet('src', new URL(src, baseUrl).href);
+    } catch {
+      // baseUrl 非法时保留原 src：图片显示不出来也不能让整篇渲染失败
+    }
+  }
+  return defaultImageRenderer(tokens, idx, options, env, self);
+};
+
+// 代码围栏渲染（Task 6）：高亮 + 复制按钮。
+// 固定结构：<div class="code-wrap"><pre><code class="hljs language-x">…</code></pre><button class="copy" data-code="…">复制</button></div>
+// data-code 存原始代码（属性级转义，enhance.js 用 btn.dataset.code 取回）；高亮失败/未知语言时 highlight() 已降级为转义纯文本。
+// Task 11：env.disableHighlight === true（大文件模式）时只输出转义纯文本——不调用 highlight.js（省首屏耗时）、
+// 不产生 hljs-* token span，但复制按钮结构与 class 保持不变（enhance 仍能绑定复制事件）。
+md.renderer.rules.fence = (tokens, idx, _options, env) => {
+  const token = tokens[idx];
+  // info 形如 "js" 或 "js title=..."：只取第一个词当语言（与 markdown-it 默认 renderer 口径一致）
+  const info = token.info ? token.info.trim() : '';
+  const lang = info.split(/\s+/)[0] || '';
+  const code = token.content;
+  const disableHighlight = Boolean(env && env.disableHighlight === true);
+  const body = disableHighlight ? escapeHtml(code) : highlight(code, lang);
+  const codeClass = lang ? `hljs language-${escapeAttr(lang)}` : 'hljs';
+  return (
+    `<div class="code-wrap"><pre><code class="${codeClass}">${body}</code></pre>` +
+    `<button class="copy" type="button" data-code="${escapeAttr(code)}">复制</button></div>\n`
+  );
+};
+
+/**
+ * 渲染 markdown 为 HTML 字符串。
+ * env 可选 { baseUrl, frontmatter, disableHighlight, tocHeadings }：
+ *   - baseUrl：相对图片 src 按 baseUrl 解析；未给 baseUrl 时保留原样；
+ *   - frontmatter：调用方未提供（undefined/null）时，把本文档的解析结果写回 env.frontmatter（T9 的「属性」折叠块读取）；
+ *     调用方显式提供时原样保留，不被文档内容覆盖；
+ *   - disableHighlight：true 时围栏代码块只输出转义纯文本（大文件模式，省高亮耗时）；
+ *   - tocHeadings：分块渲染时由调用方传入全文标题列表，[TOC] 内联目录据此生成（否则只扫当前块，会缺后续标题）。
+ * 含独占行 [TOC] 时先做一次标题预扫描（extractHeadings），把目录 HTML 放进本次渲染 env.tocHtml 供块级规则内联；
+ * 无 [TOC] 的文档不额外 parse（省掉一次全文解析开销）。
+ * 出口统一过 sanitizeHtml（Task 7）：Markdown 内嵌 HTML 与新语法产出的标签都必须先经 DOMPurify 白名单才能进 DOM。
+ */
+export function renderMarkdown(markdown, env = {}) {
+  const text = String(markdown ?? '');
+  const targetEnv = env && typeof env === 'object' ? env : {};
+  if (targetEnv.frontmatter == null) {
+    targetEnv.frontmatter = extractFrontmatter(text).data;
+  }
+  // 拷贝一份 env 再挂内部状态：不污染调用方对象（frontmatter 是上面按需写回的显式契约），
+  // 同时让核心规则拿到本文档的 usedIds 与内联目录 HTML。
+  const renderEnv = { ...targetEnv, [USED_IDS_KEY]: new Set() };
+  if (hasTocPlaceholder(text)) {
+    renderEnv.tocHtml = Array.isArray(renderEnv.tocHeadings)
+      ? buildTocHtml(renderEnv.tocHeadings)
+      : buildTocHtml(extractHeadings(text));
+  }
+  return sanitizeHtml(md.render(text, renderEnv));
+}
+
+/**
+ * 提取标题列表 [{ id, text, level }]。
+ * id 由同一套 slugify 分配逻辑生成，因此与 renderMarkdown 渲染出的 heading id 完全一致。
+ */
+export function extractHeadings(markdown) {
+  const env = { [USED_IDS_KEY]: new Set() };
+  const tokens = md.parse(String(markdown ?? ''), env);
+  const headings = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token.type !== 'heading_open') {
+      continue;
+    }
+    const inline = tokens[i + 1];
+    headings.push({
+      id: token.attrGet('id') || '',
+      text: inline && inline.type === 'inline' ? inlinePlainText(inline.children) : '',
+      level: Number(token.tag.slice(1)),
+    });
+  }
+  return headings;
+}

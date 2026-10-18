@@ -1,0 +1,881 @@
+/* 布局（Task 10）：三栏网格（TOC + 正文滚动列）、侧栏折叠、顶部悬浮工具条、
+   正文行宽居中、Aa 排版面板、内联 [TOC]、图片占位框、front matter 属性块、toast。
+   只负责结构与间距，颜色全部走变量（light.css / dark.css）。 */
+
+#app {
+  position: relative;
+  display: grid;
+  /* 两行：第一行是通知条（无通知时高度为 0），第二行铺满剩余视口高度。
+     minmax(0,1fr) + 子项 min-height:0 才能让 #toc / #content 各自内部滚动（修复波 E：通知条不再 fixed 覆盖正文）。 */
+  grid-template-columns: var(--toc-width) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 侧栏折叠（Ctrl+B / 工具条「目录」）：保持 DOM，切回不重建 TOC */
+#app[data-toc='hidden'] {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+#app[data-toc='hidden'] #toc {
+  display: none;
+}
+
+/* 顶部悬浮工具条：固定在视口顶部并浮在正文之上（显示/隐藏逻辑见 Task 12 的 shell，默认隐藏） */
+#toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--toolbar-height);
+  padding: 0 12px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--toolbar-border);
+  backdrop-filter: blur(8px);
+}
+
+#toolbar .toolbar-spacer {
+  flex: 1;
+}
+
+#toolbar .tool {
+  appearance: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 26px;
+  cursor: pointer;
+}
+
+#toolbar .tool:hover {
+  background: var(--bg-muted);
+}
+
+/* Task 15：导出 PDF 在未打开文档时禁用（禁用态不响应 hover，视觉上也变灰） */
+#toolbar .tool:disabled {
+  color: var(--fg-muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
+#toolbar .tool:disabled:hover {
+  background: transparent;
+}
+
+#toolbar .tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+#toolbar .tool[aria-pressed='false'] {
+  color: var(--fg-muted);
+}
+
+#toolbar .tool.active {
+  color: var(--accent);
+}
+
+/* 左侧大纲侧栏（独立滚动，不抢正文滚动）：跨通知行与正文行，通知条只在内容列挤占空间 */
+#toc {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--toolbar-height) + 12px) 12px 32px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+#toc nav.toc {
+  margin: 0;
+}
+
+#toc nav.toc ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#toc nav.toc li {
+  margin: 1px 0;
+}
+
+#toc nav.toc a {
+  display: block;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--toc-fg);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#toc nav.toc a:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+#toc nav.toc a.active {
+  background: var(--toc-active-bg);
+  color: var(--toc-active-fg);
+  font-weight: 600;
+}
+
+/* 层级缩进：h1 不缩进，h2–h6 每级 +12px */
+#toc nav.toc li[data-level='2'] a {
+  padding-left: 20px;
+}
+
+#toc nav.toc li[data-level='3'] a {
+  padding-left: 32px;
+}
+
+#toc nav.toc li[data-level='4'] a {
+  padding-left: 44px;
+}
+
+#toc nav.toc li[data-level='5'] a {
+  padding-left: 56px;
+}
+
+#toc nav.toc li[data-level='6'] a {
+  padding-left: 68px;
+}
+
+#toc .toc-empty {
+  margin: 4px 0;
+  padding: 4px 8px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+/* TOC 侧栏拖拽调宽（Task 10 补漏：spec §5.1 要求默认 240 px、可拖 180–360 px）。
+   绝对定位在侧栏右缘、不占网格列：#app 仍是两列网格，--toc-width 由 applySettings 写入，
+   拖动时实时变化，分隔条用 left: calc(var(--toc-width) - 3px) 跟着走。
+   6px 命中区跨在 #toc 的右边框上；::before 是 2px 视觉线（悬停/拖拽时亮 accent）。 */
+#app .toc-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--toc-width) - 3px);
+  z-index: 25; /* 低于工具条（30）、高于正文列，压住 #toc 的 1px 边框 */
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+#app .toc-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+#app .toc-resizer:hover::before,
+#app .toc-resizer.dragging::before,
+#app .toc-resizer:focus-visible::before {
+  background: var(--accent);
+}
+
+#app .toc-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 折叠时隐藏（hidden 属性由 shell 同步，CSS 再兜一层；两者都要压过上面的定位块） */
+#app[data-toc='hidden'] .toc-resizer,
+#app .toc-resizer[hidden] {
+  display: none;
+}
+
+/* 拖拽期间：全局禁选中 + 保持列宽光标（resizer.js 在 pointerdown/pointerup 切换 .jj-resizing） */
+body.jj-resizing,
+body.jj-resizing * {
+  user-select: none !important;
+  cursor: col-resize !important;
+}
+
+/* 正文滚动列：标题锚点跳转预留工具条高度（scroll-padding-top），子元素统一居中到行宽 */
+#content {
+  grid-column: 2;
+  grid-row: 2; /* 通知条占第一行；无通知时第一行高度为 0 */
+  position: relative; /* 让标题元素的 offsetTop 相对正文滚动列（TOC 滚动联动采集 top 用） */
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--toolbar-height) + 40px);
+  padding: calc(var(--toolbar-height) + 16px) 28px 96px;
+}
+
+#content > * {
+  max-width: var(--content-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* 代码块横向滚动：超长行不撑破正文列（具体配色/复制按钮在 code.css） */
+.code-wrap {
+  position: relative;
+}
+
+.code-wrap pre {
+  overflow-x: auto;
+}
+
+/* 内联 [TOC]（T9 结构：nav.toc-inline > ol > li[data-level] > a） */
+nav.toc-inline {
+  margin: 16px auto;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+  font-size: 0.92em;
+}
+
+nav.toc-inline ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+nav.toc-inline a {
+  color: var(--fg-muted);
+}
+
+nav.toc-inline a:hover {
+  color: var(--accent);
+}
+
+nav.toc-inline li[data-level='2'] {
+  padding-left: 1.1em;
+}
+
+nav.toc-inline li[data-level='3'] {
+  padding-left: 2.2em;
+}
+
+nav.toc-inline li[data-level='4'] {
+  padding-left: 3.3em;
+}
+
+nav.toc-inline li[data-level='5'] {
+  padding-left: 4.4em;
+}
+
+nav.toc-inline li[data-level='6'] {
+  padding-left: 5.5em;
+}
+
+/* 图片占位（T9 结构：span.img-placeholder；加载失败/离线时不破版） */
+.img-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin: 16px auto;
+  padding: 8px;
+  border: 1px dashed var(--img-placeholder-border);
+  border-radius: var(--radius);
+  background: var(--img-placeholder-bg);
+  color: var(--fg-muted);
+  font-size: 13px;
+  text-align: center;
+  overflow: hidden;
+}
+
+/* front matter 属性块（T9 结构：details.frontmatter > summary + table） */
+#content .frontmatter {
+  margin: 16px auto;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+  font-size: 0.92em;
+}
+
+#content .frontmatter summary {
+  color: var(--fg-muted);
+}
+
+#content .frontmatter table {
+  display: table;
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: collapse;
+}
+
+#content .frontmatter th,
+#content .frontmatter td {
+  padding: 2px 0;
+  border: 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+#content .frontmatter th {
+  width: 9em;
+  padding-right: 12px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+/* Aa 排版面板（浮层） */
+.aa-panel {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 6px);
+  right: 12px;
+  z-index: 40;
+  display: grid;
+  gap: 10px;
+  width: 264px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  box-shadow: var(--panel-shadow);
+}
+
+/* [hidden] 必须显式压过上面的 display: grid（UA 样式表优先级不够） */
+.aa-panel[hidden] {
+  display: none;
+}
+
+.aa-row {
+  display: grid;
+  grid-template-columns: 4.5em 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.aa-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.aa-row select {
+  grid-column: 2 / 4;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.aa-value {
+  width: 2.6em;
+  color: var(--fg-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* toast 容器（T4 结构：div#toast > div.toast[data-level]） */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+}
+
+#toast[hidden] {
+  display: none;
+}
+
+#toast .toast {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--toast-bg);
+  color: var(--toast-fg);
+  font-size: 13px;
+  box-shadow: var(--panel-shadow);
+}
+
+#toast .toast[data-level='warn'] {
+  background: #9a6700;
+  color: #ffffff;
+}
+
+#toast .toast[data-level='error'] {
+  background: #cf222e;
+  color: #ffffff;
+}
+
+/* T11 分块渲染懒加载哨兵：只占 1px，交给 IntersectionObserver 触发下一块；不参与排版 */
+#content .chunk-sentinel {
+  height: 1px;
+  overflow: hidden;
+}
+
+/* ── Task 12：悬浮工具条显隐、阅读进度条、回到顶部、最近文件面板、toast action ── */
+
+/* 工具条默认隐藏：鼠标进入窗口顶部 40px 或按 Alt 显示（shell 写 #app[data-toolbar]） */
+#app[data-toolbar='hidden'] #toolbar {
+  display: none;
+}
+
+/* 阅读进度条（spec §5.1）：右侧 3px 竖向条，内层 #progress-bar 的 height 由 updateChrome 按滚动比例写入 */
+#progress {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 35; /* 高于工具条（30），隐藏时也提示进度 */
+  width: 3px;
+  background: transparent;
+  pointer-events: none;
+}
+
+#progress-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 0;
+  background: var(--accent);
+}
+
+/* 回到顶部：滚离顶部 > 400px 时由 shell 去掉 hidden */
+#back-to-top {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  box-shadow: var(--panel-shadow);
+  cursor: pointer;
+}
+
+#back-to-top:hover,
+#back-to-top:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+/* [hidden] 必须显式压过上面的 display（UA 样式表优先级不够时属性会失效） */
+#back-to-top[hidden] {
+  display: none;
+}
+
+/* 空白启动页的最近文件面板（与工具条菜单共用 renderRecent 的 .recent-* 结构） */
+#content .recent-panel {
+  max-width: 640px;
+  margin: 8vh auto 0;
+  padding: 0 4px;
+}
+
+/* 工具条「最近」菜单（spec §5.6）：固定浮层，点击外部/Esc 由 shell 收起 */
+#recent-menu {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 6px);
+  right: 12px;
+  z-index: 29; /* 在工具条（30）之下、正文之上 */
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  box-shadow: var(--panel-shadow);
+}
+
+#recent-menu[hidden] {
+  display: none;
+}
+
+#recent-menu .recent-panel {
+  margin: 0;
+  padding: 0;
+}
+
+.recent-panel .recent-title {
+  margin: 0 0 12px;
+  font-size: 1.4em;
+  font-weight: 650;
+}
+
+.recent-panel .recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-panel .recent-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-auto-rows: auto;
+  gap: 2px 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-panel .recent-item:hover,
+.recent-panel .recent-item:focus-visible {
+  border-color: var(--accent);
+  background: var(--bg-muted);
+  outline: none;
+}
+
+.recent-panel .recent-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-panel .recent-dir {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-panel .recent-time {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--fg-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.recent-panel .recent-empty {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.recent-panel .recent-hint {
+  margin: 16px 0 0;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+/* toast 可点击 action（「已回到上次位置 · 回到顶部」） */
+#toast .toast {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+#toast .toast-action {
+  appearance: none;
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#toast .toast-action:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* ── Task 14：文件夹浏览（文件树侧栏，复用 --toc-width 与 #toc 的独立滚动） ── */
+
+/* 侧栏两种内容：大纲（#toc-nav）或文件树（#file-tree）。树模式隐藏大纲，反之隐藏树。
+   两者都是 aside 的直接子元素：headings 的 renderToc 只替换 #toc-nav，不会冲掉文件树。 */
+#toc-nav {
+  min-width: 0;
+}
+
+#toc-nav[hidden] {
+  display: none;
+}
+
+#toc[data-sidebar='tree'] #toc-nav {
+  display: none;
+}
+
+#toc[data-sidebar='toc'] #file-tree {
+  display: none;
+}
+
+#file-tree[hidden] {
+  display: none;
+}
+
+#file-tree {
+  min-width: 0;
+}
+
+/* 工具条：文件树根目录名与「大纲」返回按钮（未打开文件夹/未在树模式时由 hidden 隐藏） */
+#toolbar .tool.browse-root {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#toolbar .tool.browse-root.active {
+  color: var(--accent);
+}
+
+#toolbar .tool[hidden] {
+  display: none;
+}
+
+/* 树节点：三角按钮 + 名称按钮；子列表换行到下一行并缩进 */
+.file-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.file-tree li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 1px 0;
+}
+
+.file-tree .tree-toggle,
+.file-tree .tree-toggle-spacer {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 24px;
+}
+
+.file-tree .tree-toggle {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 24px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.file-tree .tree-toggle:hover,
+.file-tree .tree-toggle:focus-visible {
+  background: var(--bg-muted);
+  color: var(--fg);
+  outline: none;
+}
+
+.file-tree .tree-name {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--toc-fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.file-tree .tree-name:hover,
+.file-tree .tree-name:focus-visible {
+  background: var(--bg-muted);
+  color: var(--fg);
+  outline: none;
+}
+
+.file-tree li.active > .tree-name {
+  background: var(--toc-active-bg);
+  color: var(--toc-active-fg);
+  font-weight: 600;
+}
+
+.file-tree ul.tree-children {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 14px;
+  list-style: none;
+}
+
+.file-tree ul.tree-children[hidden] {
+  display: none;
+}
+
+#file-tree p.tree-empty,
+.file-tree li.tree-empty {
+  display: block;
+  margin: 4px 0;
+  padding: 4px 8px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+/* ── 修复波 B-§5.11 / 波 E：内容顶部通知栈（错误条 + 大文件横幅）与渲染兜底 ──
+   不再用 fixed 覆盖层压住正文与 TOC 顶部：作为 #app 内容列第一行的网格项，
+   有通知时占据高度把正文整体下移（可见时挤占空间而非覆盖），无通知时 [hidden] 让整行高度为 0。
+   TOC 跨两行，不被通知挤占也不被遮挡；顶部留白与工具条同高（工具条是 fixed 悬浮层，不压住通知）。
+   不自动消失；右侧「关闭」按钮由 shell 绑定。 */
+#notice-stack {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 28;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: calc(var(--toolbar-height) + 8px) 28px 0;
+  /* 容器不拦截滚动/框选，只有通知条本体（含关闭按钮）可交互 */
+  pointer-events: none;
+}
+
+#notice-stack > * {
+  pointer-events: auto;
+}
+
+/* [hidden] 必须显式压过上面的 display: flex（UA 样式表优先级不够） */
+#notice-stack[hidden] {
+  display: none;
+}
+
+#error-bar,
+#huge-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid var(--notice-border);
+  border-radius: 8px;
+  background: var(--notice-bg);
+  color: var(--notice-fg);
+  font-size: 13px;
+  box-shadow: var(--panel-shadow);
+}
+
+#error-bar {
+  border-color: var(--notice-error-border);
+  background: var(--notice-error-bg);
+  color: var(--notice-error-fg);
+}
+
+#error-bar[data-level='warn'] {
+  border-color: var(--notice-border);
+  background: var(--notice-bg);
+  color: var(--notice-fg);
+}
+
+#huge-banner {
+  border-color: var(--notice-banner-border);
+  background: var(--notice-banner-bg);
+  color: var(--notice-banner-fg);
+}
+
+/* [hidden] 必须显式压过上面的 display: flex（UA 样式表优先级不够） */
+#error-bar[hidden],
+#huge-banner[hidden] {
+  display: none;
+}
+
+#notice-stack .notice-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#notice-stack .notice-close {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#notice-stack .notice-close:hover,
+#notice-stack .notice-close:focus-visible {
+  background: rgba(127, 127, 127, 0.18);
+  outline: none;
+}
+
+/* 渲染异常兜底：原始 markdown 按纯文本显示（保留换行、可滚动，不撑破布局） */
+#content pre.jj-fallback {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 空白启动页「打开文件」按钮（修复波 B-§5.11） */
+.recent-panel .recent-open {
+  display: inline-block;
+  margin: 0 0 14px;
+  padding: 8px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.recent-panel .recent-open:hover,
+.recent-panel .recent-open:focus-visible {
+  background: var(--toc-active-bg);
+  outline: none;
+}

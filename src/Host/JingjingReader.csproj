@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>JingjingReader</RootNamespace>
+    <AssemblyName>JingjingReader</AssemblyName>
+    <Product>鲸鲸阅读器</Product>
+    <!-- Win32 版本资源的「文件说明」由 Roslyn 从 AssemblyTitle 生成（FileDescription 属性本身不参与），
+         因此两处都写产品名，保证资源管理器/任务管理器显示「鲸鲸阅读器」。 -->
+    <AssemblyTitle>鲸鲸阅读器</AssemblyTitle>
+    <Description>鲸鲸阅读器 Markdown 阅读器</Description>
+    <FileDescription>鲸鲸阅读器</FileDescription>
+    <Version>0.1.0</Version>
+    <!-- Task 17：资源管理器/任务栏图标（16/32/48/256 多尺寸）与 PerMonitorV2 DPI/长路径清单。 -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 界面美化波：关于面板的原创鲸鱼女仆娘 mascot（scripts/gen-icon.py 生成的 256×256 透明 PNG，WPF 资源）。 -->
+    <Resource Include="AboutMascot.png" />
+  </ItemGroup>
+
+</Project>
