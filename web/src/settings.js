@@ -3,7 +3,6 @@
 // settingsPatch 只返回变化字段（saveSettings{patch} 契约：前端只报变化，宿主合并后写 settings.json）。
 
 import { normalizeTheme } from './theme.js';
-import { applyUiStyle, normalizeUiStyle, UI_STYLE_DEFAULT } from './ui-style.js';
 
 export const FONT_SIZE_MIN = 14;
 export const FONT_SIZE_MAX = 24;
@@ -38,8 +37,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
   monoFont: 'consolas',
   tocVisible: true,
   tocWidth: TOC_WIDTH_DEFAULT,
-  // 界面美化波：视觉风格（reader 阅读器风 / whale 鲸鱼娘主题），与宿主 AppSettings.UiStyle 同默认值。
-  uiStyle: UI_STYLE_DEFAULT,
 });
 
 /** 转有限数字；非数字/NaN/Infinity/空串返回 null。 */
@@ -128,7 +125,6 @@ export function normalizeSettings(settings) {
     monoFont: normalizeFontPreference(source.monoFont, DEFAULT_SETTINGS.monoFont),
     tocVisible: source.tocVisible !== false,
     tocWidth: normalizeTocWidth(source.tocWidth),
-    uiStyle: normalizeUiStyle(source.uiStyle),
   };
 }
 
@@ -154,12 +150,10 @@ function monoFontValue(font) {
  * 把设置夹紧后写入根元素 CSS 变量：
  * --font-size（px）、--line-height（无单位）、--content-width（px 或 100%）、--font-cjk、--font-mono、
  * --toc-width（px，TOC 侧栏宽；normalizeSettings 已夹紧 180–360，拖拽调宽实时走这里）。
- * 界面美化波：同时把 uiStyle 写到 html[data-ui-style]（任何设置应用路径都会得到一致的视觉风格）。
  * 非浏览器环境（无 document）直接跳过，绝不抛异常。
  */
 export function applySettings(settings) {
   const normalized = normalizeSettings(settings);
-  applyUiStyle(normalized.uiStyle);
   const doc = globalThis.document;
   const style = doc && doc.documentElement ? doc.documentElement.style : null;
   if (!style) {

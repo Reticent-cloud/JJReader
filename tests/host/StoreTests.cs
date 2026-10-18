@@ -176,7 +176,7 @@ public class StoreTests
         Assert.Contains("\"tocWidth\": 240", json);
         Assert.Contains("\"window\": null", json);
         Assert.Contains("\"monoFont\": \"consolas\"", json);
-        Assert.Contains("\"uiStyle\": \"reader\"", json); // 界面美化波：界面风格默认 reader
+        Assert.DoesNotContain("\"uiStyle\"", json); // whale 主题已删除：不再写界面风格字段
         Assert.False(File.Exists(target + ".tmp")); // 原子写完成后不留临时文件
     }
 
@@ -195,20 +195,29 @@ public class StoreTests
     }
 
     [Fact]
-    public void Settings_roundtrip_includes_ui_style()
+    public void LoadSettings_ignores_legacy_ui_style_field()
     {
+        // 兼容旧 settings.json：whale 主题删除后，文件里遗留的 uiStyle 是未知字段，必须被忽略且不影响读取。
         var dir = TestDir();
-        var store = new Store(dir);
-
-        // 界面美化波：默认 reader；whale 落盘后能读回，且不影响相邻字段。
-        Assert.Equal("reader", store.LoadSettings().UiStyle);
-
-        store.SaveSettings(new AppSettings(UiStyle: "whale", MonoFont: "Cascadia Mono"));
+        var target = Path.Combine(dir, "settings.json");
+        File.WriteAllText(
+            target,
+            """
+            {
+              "theme": "dark",
+              "fontSize": 18,
+              "uiStyle": "whale",
+              "monoFont": "Cascadia Mono"
+            }
+            """);
 
         var reloaded = new Store(dir).LoadSettings();
-        Assert.Equal("whale", reloaded.UiStyle);
+
+        Assert.Equal("dark", reloaded.Theme);
+        Assert.Equal(18, reloaded.FontSize);
         Assert.Equal("Cascadia Mono", reloaded.MonoFont);
-        Assert.Contains("\"uiStyle\": \"whale\"", File.ReadAllText(Path.Combine(dir, "settings.json")));
+        // 未知字段不触发损坏备份：原文件保留且没有被改名。
+        Assert.True(File.Exists(target));
     }
 
     [Fact]

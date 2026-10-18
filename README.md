@@ -8,7 +8,7 @@
 
 - **完整 GFM**：标题锚点、表格、任务清单、删除线、自动链接、脚注、emoji、代码高亮（highlight.js，含「复制」按钮）。
 - **笔记体与 AI README 常见语法**：YAML front matter（顶部「属性」折叠块）、`[[文件名]]` / `[[文件名|别名]]` 双链（当前文档目录及浅层子目录查找）、`![[文件名]]` 内嵌、`==高亮==`、`%%注释%%`、`[TOC]` 内联目录、`<details>` / `<kbd>` / `<sub>` / `<sup>`、居中 HTML、网络徽章图片离线占位。
-- **阅读体验**：可折叠/拖动调宽的大纲侧栏、滚动联动高亮、阅读进度条、回到顶部、三态主题（浅色/深色/跟随系统）、两套界面风格（阅读器风 / 鲸鱼娘主题，工具条「主题」按钮（鲸鱼图标）或 Aa 面板切换）、字号 14–24、行距 1.4–2.0、行宽 640/780/960/全宽、中文字体/代码字体。
+- **阅读体验**：可折叠/拖动调宽的大纲侧栏、滚动联动高亮、阅读进度条、回到顶部、三态主题（浅色/深色/跟随系统）、单一圆润阅读器风（鲸鱼女仆娘插画用于应用图标、关于面板与空状态）、字号 14–24、行距 1.4–2.0、行宽 640/780/960/全宽、中文字体/代码字体。
 - **最近文件与位置记忆**：空白启动页显示最近文件；退出重开后回到上次阅读位置；`F5` 重载并保持位置；`Alt+←/→` 在最近文件间切换。
 - **文件树**：选择一个文件夹作为浏览根，左栏切换到文件树，点击目录展开、点击文件直接打开；工具条可切回大纲。
 - **大文档**：超过 512 KB 自动分块渐进渲染（首屏 256 KB，剩余块滚动进入视口时渲染），超过 20 MB 进入大文件模式（关闭代码高亮与滚动联动并提示）。
@@ -56,6 +56,8 @@ pwsh -NoProfile -File scripts/install.ps1 -OpenSettings
 1. 把 `out\` 里的程序文件复制到 `%LOCALAPPDATA%\Programs\JingjingReader`（可用 `-InstallDir` 换位置；`-Portable` 则不复制、只注册当前所在的 exe）。
 2. 调用 `JingjingReader.exe --install`，只写当前用户的 `HKCU\Software\Classes`（不需要管理员权限）：注册 ProgID `JingjingReader.md` 并把它加入 `.md` 的「打开方式」。如果 `.md` 已有默认程序，Windows 不会允许程序静默抢占，需要到 **设置 → 应用 → 默认应用** 里为 `.md` 选择「鲸鲸阅读器」一次。
 
+安装/卸载成功时程序会调用 `SHChangeNotify` 通知资源管理器刷新关联，安装脚本还会 best-effort 执行 `ie4uinit.exe -show`（失败忽略）。若资源管理器里的 `.md` 图标仍未刷新，重启资源管理器（任务管理器 → Windows 资源管理器 → 重新启动）即可。
+
 > **为什么要复制到用户目录**：直接从源码树、沙箱/受限目录、OneDrive 或网络盘运行 `out\JingjingReader.exe` 时，Windows 的安全标签或同步机制可能导致 WebView2 初始化失败（`0x800700AA`，资源被占用）。安装到普通用户程序目录可避免这类问题。脚本默认优先用同目录的 exe，程序在别处时用 `-ExePath <路径>` 指定。
 
 ### 3. 运行
@@ -67,7 +69,7 @@ pwsh -NoProfile -File scripts/install.ps1 -OpenSettings
 ## 使用
 
 - 双击 `.md`（完成关联后）或把文件拖进窗口即可阅读；也可以从空白启动页的最近文件列表打开。
-- 鼠标移到窗口顶部 40 px 内或按 `Alt` 显示工具条；工具条依次是：打开文件、打开文件夹、返回大纲/当前浏览根、目录、最近、导出 PDF、主题（浅色/深色/跟随系统）、主题（界面风格，鲸鱼图标）、Aa（排版）、关于。
+- 鼠标移到窗口顶部 40 px 内或按 `Alt` 显示工具条；工具条依次是：打开文件、打开文件夹、返回大纲/当前浏览根、目录、最近、导出 PDF、主题（浅色/深色/跟随系统）、Aa（排版）、关于。
 - 左侧大纲由 `h1–h6` 生成，点击平滑跳转；滚动时当前标题高亮。大纲宽度可拖动（180–360 px），`Ctrl+B` 折叠/展开。
 - 点击正文中的 `[[双链]]` 会在当前文档目录及浅层子目录查找同名 `.md`；找不到时顶部提示。
 - 深色主题下导出 PDF 会自动使用浅色打印样式，避免黑底打印。
@@ -75,17 +77,10 @@ pwsh -NoProfile -File scripts/install.ps1 -OpenSettings
 
 ### 界面风格
 
-工具条右侧的「主题」按钮（鲸鱼图标，界面风格）或 Aa（排版）面板顶部的「界面风格」下拉，可在两套视觉风格之间即时切换，两处状态保持同步：
+鲸鲸阅读器只保留一套「圆润阅读器风」：参考 Typora / Obsidian 的克制排版，标题层级、引用浅底、表格斑马纹、行内代码、代码块顶栏、TOC 当前项强调条、卡片 hover 与略大的圆角；正文区不加背景装饰或水印。
 
-| 风格 | 视觉 | 说明 |
-| --- | --- | --- |
-| 阅读器风（默认，`reader`） | 白/深色纯色底、克制的标题层级与卡片 | 参考常见 Markdown 阅读器的排版；正文区不加装饰 |
-| 鲸鱼娘（`whale`） | 浅蓝→白渐变（深色为深蓝→近黑）、低透明度气泡/浪花、卡片化组件、鲸尾列表符号、右下角水印 | mascot 出现在空状态（阅读器风 96 px 点缀 / 鲸鱼娘 220 px 主角）、工具栏左侧（鲸鱼娘 28 px）与关于面板（96 px） |
-
-- 两套风格都与浅色/深色/跟随系统组合生效；切换即时应用并写入 `settings.json` 的 `uiStyle`，重启保持，未知值回退 `reader`。
-- 鲸鱼娘主题进一步二次元化：整页星屑/水光渐变背景、右下角大型圆形插画水印（低透明度、不拦截交互），面板/目录/卡片/代码块/表格/按钮统一大圆角；阅读器风同步加圆角但保持克制。
-- 首屏默认：`src/Host/Resources/index.html` 预置 `data-ui-style="reader"`（无本地存储策略，前端首屏读不到 `settings.json`）；鲸鱼娘用户在空白启动时会先以阅读器风渲染、收到宿主 `settings` 后切换一次（已知取舍）。界面风格入口保留工具条按钮 + Aa 面板单选下拉，不新增其它控件。
-- 形象说明：应用图标、关于面板与空状态使用用户提供的「鲸鱼女仆娘看书」插画（`assets/mascot-source.jpg`，1536×1536，豆包 AI 生成）；`scripts/gen-icon.py` 只做确定性后处理——按中心十字线检测圆形边界、裁成正方形并掩掉圆外区域（右下角水印因此不会进入资产），输出 `src/Host/app.ico`（16/32/48/256，小尺寸用脸部特写）、`src/Host/AboutMascot.png`（512×512 透明）与前端内联 data URI `web/src/mascot-photo.js`（384 px WebP）。工具条小图标与主题按钮仍用 `web/src/mascot.js` 的自绘内联 SVG（20 px 下更清晰）。调整形象：替换 `assets/mascot-source.jpg` 后重跑 `python scripts/gen-icon.py`。
+- 界面风格与浅色/深色/跟随系统组合生效；不再提供风格切换按钮或 Aa 面板下拉，`settings.json` 也不再写入 `uiStyle`（旧文件里的该字段会被忽略）。
+- 形象说明：应用图标、关于面板与空状态使用用户提供的「鲸鱼女仆娘看书」插画（`assets/mascot-source.jpg`，1536×1536，豆包 AI 生成）；`scripts/gen-icon.py` 只做确定性后处理——按中心十字线检测圆形边界、裁成正方形并掩掉圆外区域（右下角水印因此不会进入资产），输出 `src/Host/app.ico`（16/32/48/256，小尺寸用脸部特写）、`src/Host/AboutMascot.png`（512×512 透明）与前端内联 data URI `web/src/mascot-photo.js`（384 px WebP，仅用于空状态圆形插画）。调整形象：替换 `assets/mascot-source.jpg` 后重跑 `python scripts/gen-icon.py`。
 - 外观截图：本仓库**不提交界面截图**——自动验收不产出视觉基线，截图会随主题/字体/DPI 变化而过期；完整外观请按 [docs/verify-checklist.md](docs/verify-checklist.md) 的「界面风格」一节手测，或按该节步骤在本地截图存档。
 
 ### 快捷键
@@ -103,7 +98,6 @@ pwsh -NoProfile -File scripts/install.ps1 -OpenSettings
 | 重载 | `F5` | 重新读文件并保持滚动位置 |
 | 上一份 / 下一份 | `Alt+←` / `Alt+→` | 按最近文件顺序切换 |
 | 主题循环 | `Alt+T` | 浅色 → 深色 → 跟随系统 |
-| 界面风格 | — | 工具条「主题」（鲸鱼图标）或 Aa 面板「界面风格」：阅读器风 ↔ 鲸鱼娘 |
 | 关于 | `Alt+A` | 打开关于面板（含 .md 默认应用设置入口） |
 | 定位到文件 | `Ctrl+Shift+C` | 在资源管理器中选中当前文件 |
 | 显示工具条 | `Alt` | 鼠标移入顶部也会显示；移出后自动隐藏 |
@@ -161,20 +155,21 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -KeepFiles # 只移除打开方式�
 pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 ```
 
-卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态（无需确认提示：脚本直接执行并按结果返回退出码）。**Classes 与「打开方式」可完整恢复；Windows `UserChoice` 由系统保护、程序无法改写**——若 `.md` 的默认应用仍指向鲸鲸阅读器，卸载会明确提示到「设置 → 应用 → 默认应用」重新选择（`ms-settings:defaultapps`），不视为卸载失败。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。默认会删除安装目录里的程序文件（`-KeepFiles` 保留）；不会删除阅读偏好、最近文件与 WebView2 缓存，如需彻底清理，手动删除 `%APPDATA%\JingjingReader`（偏好/最近/位置/日志）与 `%LOCALAPPDATA%\JingjingReader\WebView2`（WebView2 缓存）；若曾设置 `JJ_DATA_DIR`（仅验收隔离），删除对应目录即可。
+卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态（无需确认提示：脚本直接执行并按结果返回退出码）。**Classes 与「打开方式」可完整恢复；Windows `UserChoice` 由系统保护、程序无法改写**——若 `.md` 的默认应用仍指向鲸鲸阅读器，卸载会明确提示到「设置 → 应用 → 默认应用」重新选择（`ms-settings:defaultapps`），不视为卸载失败。卸载成功同样会调用 `SHChangeNotify` 刷新资源管理器；图标未刷新时重启资源管理器。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。默认会删除安装目录里的程序文件（`-KeepFiles` 保留）；不会删除阅读偏好、最近文件与 WebView2 缓存，如需彻底清理，手动删除 `%APPDATA%\JingjingReader`（偏好/最近/位置/日志）与 `%LOCALAPPDATA%\JingjingReader\WebView2`（WebView2 缓存）；若曾设置 `JJ_DATA_DIR`（仅验收隔离），删除对应目录即可。
 
 ## 目录结构
 
 ```text
 .
 ├─ assets/
-│  └─ mascot-source.jpg      用户提供的鲸鱼女仆娘看书插画（图标/主题素材源，1536×1536）
+│  └─ mascot-source.jpg      用户提供的鲸鱼女仆娘看书插画（图标/关于/空状态素材源，1536×1536）
 ├─ src/Host/                 WPF + WebView2 宿主（C#）
 │  ├─ App.xaml(.cs)          启动、单实例、--selftest/--verify-*/--install/--uninstall
 │  ├─ MainWindow.xaml(.cs)   窗口、WebView2 初始化、md.local 映射、消息通道、拖放
 │  ├─ FileHost.cs            编码探测与文本读取（UTF-8/BOM/GB18030/二进制拒绝）
 │  ├─ PdfExport.cs           A4/12mm PrintToPdf 导出
 │  ├─ Assoc.cs               注册表关联安装/卸载与备份恢复
+│  ├─ ShellNotify.cs         关联变更后通知资源管理器刷新（SHChangeNotify）
 │  ├─ app.manifest           PerMonitorV2 DPI、长路径、Win10/11 supportedOS
 │  ├─ app.ico                应用图标（16/32/48/256；由 assets/mascot-source.jpg 生成）
 │  ├─ AboutMascot.png        关于面板 512×512 透明插画（scripts/gen-icon.py 生成）
@@ -183,13 +178,11 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 │  ├─ src/engine.js          Markdown 渲染、标题提取、front matter
 │  ├─ src/ext/               双链、高亮、注释、[TOC] 等扩展
 │  ├─ src/shell/             工具条、大纲、文件树、最近文件、chrome、快捷键
-│  ├─ src/mascot.js          工具条小图标的内联 SVG 与气泡装饰
-│  ├─ src/mascot-photo.js    插画压缩 data URI（由 scripts/gen-icon.py 生成，主题背景/空状态）
-│  ├─ src/ui-style.js        界面风格（reader / whale）归一、切换与应用
-│  ├─ src/styles/            屏幕样式、两套界面风格（overrides-*.css）与打印样式
+│  ├─ src/mascot-photo.js    插画压缩 data URI（由 scripts/gen-icon.py 生成，空状态圆形插画）
+│  ├─ src/styles/            屏幕样式（含单一界面风格 overrides.css）与打印样式
 │  ├─ build.mjs              esbuild 打包 + 640KB 体积门禁
 │  └─ dist/                  本地构建产物（git 忽略）
-├─ tests/web/                vitest 用例（含 perf.test.js 性能冒烟、ui-style.test.js）
+├─ tests/web/                vitest 用例（含 perf.test.js 性能冒烟、copy-button.test.js）
 ├─ tests/host/               xUnit 用例
 ├─ samples/                  验收样例：hello.md / full-syntax.md / huge-50k-lines.md
 ├─ scripts/
@@ -215,7 +208,7 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 - **内存主要在 WebView2 内核（Chromium 基线）**：程序会常驻 WebView2 的浏览器/渲染/GPU/工具等进程。最终验收（@0af4231，`out/verify-report.md`：Windows 10.0.19045，WebView2 155.0.4283.60；PowerShell 7.6.6 单次权威运行；宿主 50 ms / WebView2 500 ms 采样）实测：宿主私有内存（`PrivateMemorySize64`）峰值 **174.3 MB**（19 个样本，最大间隔 64 ms）、WebView2 进程组（直接子进程与全部后代）`WorkingSet64` 峰值 **235.7 MB**（6 个进程，1 个样本）、整树 `WorkingSet64` 峰值 **349.8 MB**（同一采样时刻）。验收口径为「宿主进程私有内存峰值 ≤ 200 MB」（150 MB 为后续优化目标），WebView2 进程组单列为信息项、不计入该预算；进程数不作为验收项（WebView2 进程组数量随运行时版本变化，最终验收 6 个）。数值受 WebView2 Runtime 版本、GPU、系统环境与采样窗口影响，详见 `out/verify-report.md`。
 - **首屏与帧预算**：`elapsedMs`（渲染器口径）最终验收 full-syntax 113 ms、5 万行 185 ms；端到端（`Process.Start` → stdout READY，含 WebView2 初始化）最终验收 1029 ms，按 WARN 记录（spec 的 1.0 s 是 `elapsedMs` 口径设计目标）。16 ms 滚动帧预算已 descope，未自动验证；手测方法见 `docs/verify-checklist.md` §16。
 - **协议与路径限制**：`openFile` 只接受相对当前文档目录的路径（绝对/UNC/越界/重解析点拒绝）；最近文件走 `openRecent`（只允许 recent.json 命中的路径）、文件树走 `openTreeFile`（只允许浏览根内 Markdown/文本文件）；编码异常/二进制拒绝用 `notice` 持久错误条，空白启动偏好用 `settings` 消息下发。完整消息表见 spec §4.4。
-- **图标与吉祥物来源**：应用图标（16/32/48/256）、关于面板插画与前端主题背景均来自用户提供的 `assets/mascot-source.jpg`（豆包 AI 生成的「鲸鱼女仆娘看书」插画），由 `scripts/gen-icon.py` 圆裁、去水印并导出；16/32 px 用脸部特写保证可辨。工具条小图标仍是仓库自绘的内联 SVG（`web/src/mascot.js`）。调整形象：替换插画后重跑 `python scripts/gen-icon.py`。
+- **图标与吉祥物来源**：应用图标（16/32/48/256）、关于面板插画与空状态插画均来自用户提供的 `assets/mascot-source.jpg`（豆包 AI 生成的「鲸鱼女仆娘看书」插画），由 `scripts/gen-icon.py` 圆裁、去水印并导出；16/32 px 用脸部特写保证可辨。单一界面风格不含工具条吉祥物或背景装饰。调整形象：替换插画后重跑 `python scripts/gen-icon.py`。
 - **不支持**：数学公式 `$...$` / `$$...$$`、Mermaid、定义列表；内嵌 `<script>`/`<style>`/`<iframe>` 会被清洗移除；只读、无编辑、无多标签页、无全文搜索；不做笔记库级双链解析，`[[...]]` 只在当前文档目录及浅层子目录查找。
 - **长路径**：清单已声明 `longPathAware`，文件读取对超长路径做 `\\?\` 规范化；网络共享/权限受限目录仍受系统策略约束。
 - **运行位置与 `0x800700AA`**：把程序放在源码树、沙箱/受限目录、OneDrive 或网络盘上直接运行时，Windows 的安全标签或同步机制可能使 WebView2 初始化失败（`0x800700AA`，资源被占用）。推荐用 `scripts/install.ps1` 安装到 `%LOCALAPPDATA%\Programs\JingjingReader` 后从那里运行。失败对话框提供「重试」「清除缓存并重试」（只把 WebView2 缓存目录改名备份，不影响文档与设置）以及「下载 WebView2 运行时」「打开数据目录」。

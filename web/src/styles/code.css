@@ -56,7 +56,10 @@ pre code {
   line-height: 24px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .code-wrap:hover .copy,
@@ -64,6 +67,8 @@ pre code {
   opacity: 1;
 }
 
+/* 复制结果只闪一下：enhance.js 在成功/失败后写 data-copied / data-failed，260ms 后移除属性，
+   颜色再经 0.12s 过渡回落，避免按钮长期停留在高亮态。 */
 .code-wrap .copy[data-copied='1'] {
   color: var(--accent);
   border-color: var(--accent);

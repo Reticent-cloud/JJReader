@@ -22,9 +22,6 @@ import {
 } from '../settings.js';
 import { applyTheme, nextTheme } from '../theme.js';
 import { buildToc } from '../toc.js';
-import { applyUiStyle, nextUiStyle, uiStyleLabel } from '../ui-style.js';
-import { bubbleDecor } from '../mascot.js';
-import { MASCOT_PHOTO } from '../mascot-photo.js';
 import { createBrowser } from './browse.js';
 import {
   clearToastContainer,
@@ -103,7 +100,6 @@ export function mountShell({ root, post } = {}) {
     recentToggle,
     exportPdf: exportPdfButton,
     themeToggle,
-    uiStyleToggle,
     aaToggle,
     about: aboutButton,
   } = toolbarParts;
@@ -179,14 +175,6 @@ export function mountShell({ root, post } = {}) {
   hugeBanner.append(hugeBannerText, hugeBannerClose);
   noticeStack.append(errorBar, hugeBanner);
 
-  // 界面美化波 v2：固定气泡/水印装饰层。只有 whale 风格由 CSS 显示（reader 下 display:none）。
-  // 内容全部来自 mascot.js 常量 SVG、mascot-photo.js 的常量 data URI 与数字样式（不含用户输入）；
-  // aria-hidden + pointer-events:none，不参与正文布局与文本选择，也不拦截点击。
-  const uiDecor = document.createElement('div');
-  uiDecor.id = 'ui-decor';
-  uiDecor.setAttribute('aria-hidden', 'true');
-  uiDecor.innerHTML = `${bubbleDecor(14)}<div class="ui-watermark" aria-hidden="true"><img src="${MASCOT_PHOTO}" alt="" decoding="async"></div>`;
-
   const { progress, progressEl, backToTopEl } = createChromeElements();
   root.append(
     toolbar,
@@ -199,7 +187,6 @@ export function mountShell({ root, post } = {}) {
     recentMenu,
     toast,
     noticeStack,
-    uiDecor,
   );
   setToastContainer(toast);
   // 悬浮工具条默认隐藏：鼠标进顶部 40px 或按 Alt 才显示（隐藏时键盘快捷键照常可用）。
@@ -317,20 +304,8 @@ export function mountShell({ root, post } = {}) {
   }
 
   /**
-   * 界面风格（界面美化波）：写 html[data-ui-style]（applySettings 也会写，这里再同步按钮文案/状态）。
-   * 只改视觉，不改变布局结构与交互；未知值由 applyUiStyle 回退 reader。
+   * 侧栏显隐：CSS 用 #app[data-toc="hidden"] 折叠（保持 DOM，切回不重建 TOC）；折叠时分隔条同步隐藏。
    */
-  function applyUiStyleState() {
-    const style = applyUiStyle(state.settings.uiStyle);
-    const label = uiStyleLabel(style);
-    const nextLabel = style === 'whale' ? '阅读器风' : '鲸鱼娘主题';
-    uiStyleToggle.title = `界面风格：${label}（点击切换为${nextLabel}）`;
-    uiStyleToggle.setAttribute('aria-label', `界面风格：${label}（点击切换）`);
-    uiStyleToggle.setAttribute('aria-pressed', String(style === 'whale'));
-    return style;
-  }
-
-  /** 侧栏显隐：CSS 用 #app[data-toc="hidden"] 折叠（保持 DOM，切回不重建 TOC）；折叠时分隔条同步隐藏。 */
   function applyTocVisibility() {
     const visible = state.settings.tocVisible;
     root.setAttribute('data-toc', visible ? 'visible' : 'hidden');
@@ -400,9 +375,6 @@ export function mountShell({ root, post } = {}) {
     state.settings = merged;
     if (Object.prototype.hasOwnProperty.call(patch, 'theme')) {
       applyThemeState();
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'uiStyle')) {
-      applyUiStyleState();
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'tocVisible')) {
       applyTocVisibility();
@@ -770,6 +742,17 @@ export function mountShell({ root, post } = {}) {
     send('exportPdf', { suggestedName: pdfSuggestedFileName(state.path) });
   }
 
+  /**
+   * 代码块复制结果（enhance.js 在写入 data-copied / data-failed 后派发 jj:copy）：
+   * 按钮的短暂闪烁由按钮自身属性 + CSS 完成，shell 只弹一条 toast（成功 info / 失败 warn）。
+   * 事件 detail 按外部数据处理，缺字段/类型不符时按失败提示，绝不抛异常。
+   */
+  function onCopyResult(event) {
+    const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+    const ok = detail.ok === true;
+    showToast(ok ? '已复制' : '复制失败', ok ? 'info' : 'warn');
+  }
+
   // ── 最近文件（Task 12） ──
   /** 打开最近文件项：走 openRecent（宿主只接受 recent.json 里命中的路径，C1）。 */
   function openRecentFile(path) {
@@ -994,7 +977,6 @@ export function mountShell({ root, post } = {}) {
     state.settings = normalizeSettings({ ...DEFAULT_SETTINGS, ...settings });
     applySettings(state.settings);
     applyThemeState();
-    applyUiStyleState();
     applyTocVisibility();
     syncAaControls();
     syncTocResizerWidth();
@@ -1054,7 +1036,6 @@ export function mountShell({ root, post } = {}) {
     state.settings = normalizeSettings({ ...state.settings, ...incoming });
     applySettings(state.settings);
     applyThemeState();
-    applyUiStyleState();
     applyTocVisibility();
     syncAaControls();
     syncTocResizerWidth();
@@ -1121,7 +1102,6 @@ export function mountShell({ root, post } = {}) {
   // 首屏（load 之前）就用默认偏好：主题/排版/侧栏状态先落地，宿主推 load 时只做增量。
   applySettings(state.settings);
   applyThemeState();
-  applyUiStyleState();
   applyTocVisibility();
   syncAaControls();
   syncTocResizerWidth();
@@ -1146,10 +1126,6 @@ export function mountShell({ root, post } = {}) {
   themeToggle.addEventListener('click', () => {
     updateSettings({ theme: nextTheme(state.settings.theme) });
   });
-  // 界面美化波：工具条「主题」（鲸鱼图标）在 reader ↔ whale 间切换（与 Aa 面板下拉共用 uiStyle 字段）
-  uiStyleToggle.addEventListener('click', () => {
-    updateSettings({ uiStyle: nextUiStyle(state.settings.uiStyle) });
-  });
   tocToggle.addEventListener('click', () => {
     updateSettings({ tocVisible: !state.settings.tocVisible });
   });
@@ -1162,6 +1138,8 @@ export function mountShell({ root, post } = {}) {
   toc.addEventListener('click', onTocClick);
   // 评审 #1：内联 [TOC] 在 #content 里，点击委托到这里（与侧栏共用 scrollToHeading 的定位逻辑）
   content.addEventListener('click', onContentClick);
+  // 代码块复制结果（enhance.js 派发）：成功/失败都弹一次 toast，按钮闪烁由 enhance/CSS 负责
+  document.addEventListener('jj:copy', onCopyResult);
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('click', onDocumentClick);
   // 修复波 B-§5.11：错误条/大文件横幅可手动关闭（持久显示，不自动消失）。
@@ -1221,6 +1199,7 @@ export function mountShell({ root, post } = {}) {
     document.removeEventListener('click', onDocumentClick);
     toc.removeEventListener('click', onTocClick);
     content.removeEventListener('click', onContentClick);
+    document.removeEventListener('jj:copy', onCopyResult);
     content.removeEventListener('scroll', onContentScroll);
     document.removeEventListener('mousemove', onMouseMove);
     toolbar.removeEventListener('mouseenter', onToolbarEnter);

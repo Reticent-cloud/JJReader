@@ -219,7 +219,7 @@ export function renderRecent(items, { onOpen, onClose, onPickFile } = {}) {
   }
 
   if (buttons.length === 0) {
-    // 空状态：鲸鱼女仆娘看书插画（reader 风小尺寸、whale 风主角，尺寸由 CSS 决定）。
+    // 空状态：鲸鱼女仆娘看书插画（单一界面风格：圆形小尺寸点缀，尺寸由 CSS 决定）。
     const mascot = document.createElement('img');
     mascot.className = 'recent-mascot';
     mascot.alt = '';

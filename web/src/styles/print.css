@@ -1,6 +1,6 @@
 /* PDF 导出打印样式（Task 15）：A4 / 12mm 边距；打印模式隐藏界面 chrome、正文全宽白底，
    代码块折行不截断、表格与行尽量不跨页断裂、图片不超出版心、链接带下划线。
-   构建按文件名字母序拼接，本文件排在最后，可覆盖 layout/code/light/dark 的屏幕样式。 */
+   构建按文件名字母序拼接，本文件排在最后，可覆盖 layout/code/light/dark/overrides 的屏幕样式。 */
 
 @page {
   size: A4;
@@ -82,37 +82,27 @@ body.print-mode img {
   max-width: 100%;
 }
 
-/* 纸面无法悬停：链接保留下划线，颜色继承正文 */
-body.print-mode a {
+/* 纸面无法悬停：链接保留下划线，颜色继承正文（屏幕的界面风格链接规则限定在 @media screen，
+   这里再给打印模式一条明确规则作为双保险；评审 Important 1）。 */
+body.print-mode a,
+body.print-mode #content a {
   color: inherit;
   text-decoration: underline;
 }
 
-/* 界面风格的屏幕链接规则（#content a）已限定 @media screen；这里再给打印模式一条明确的正文链接规则，
-   并用 html[data-ui-style] 提升特异性作为双保险：即使媒体类型判断异常也保证 PDF 链接为正文色 + 下划线
-   （评审 Important 1）。 */
-body.print-mode #content a,
-html[data-ui-style] body.print-mode #content a {
-  color: inherit;
-  text-decoration: underline;
-}
-
-/* ── 界面美化波：打印 / PDF 导出时两套界面风格一律回落为纸面样式 ──
-   装饰层、吉祥物、水印、代码块顶栏全部隐藏；背景纯白；斑马纹/引用底/卡片阴影不进入纸面。 */
-body.print-mode #ui-decor,
-body.print-mode .toolbar-mascot,
-body.print-mode .ui-watermark,
+/* ── 打印 / PDF 导出时一律回落为纸面样式 ──
+   代码块顶栏、空状态插画等装饰隐藏；背景纯白；斑马纹/引用底/卡片阴影不进入纸面。 */
 body.print-mode .recent-mascot,
 body.print-mode .code-wrap::before {
   display: none !important;
 }
 
-html[data-ui-style] body.print-mode {
+body.print-mode {
   background: #ffffff !important;
   background-image: none !important;
 }
 
-html[data-ui-style] body.print-mode #app,
+body.print-mode #app,
 body.print-mode #toc,
 body.print-mode #content {
   background: #ffffff !important;
@@ -140,26 +130,6 @@ body.print-mode #content .code-wrap {
   box-shadow: none;
 }
 
-/* ── 评审修复（Minor 3/4）：界面风格的列表与 front matter 装饰一律不进纸面 ── */
-/* 鲸尾列表符号：恢复普通圆点（任务清单仍无符号），并确保伪元素不打印 */
-body.print-mode #content ul {
-  list-style: revert;
-}
-
-body.print-mode #content ul.contains-task-list {
-  list-style: none;
-}
-
-body.print-mode #content ul:not(.contains-task-list) > li {
-  list-style: revert !important;
-}
-
-body.print-mode #content ul > li::before {
-  content: none !important;
-  display: none !important;
-  background: none !important;
-}
-
 /* front matter 属性表：纸面保持两列键值排版，不继承界面风格的表格边框/表头底/斑马纹 */
 body.print-mode #content .frontmatter table,
 body.print-mode #content .frontmatter th,
@@ -167,12 +137,4 @@ body.print-mode #content .frontmatter td {
   border: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-}
-
-/* v2：打印时隐藏二次元背景装饰与插画水印（纸面纯白） */
-body.print-mode #ui-decor,
-body.print-mode #ui-decor::before,
-body.print-mode .ui-watermark,
-body.print-mode .ui-watermark img {
-  display: none !important;
 }

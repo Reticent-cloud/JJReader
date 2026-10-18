@@ -57,6 +57,41 @@ async function copyText(text) {
   return copyWithExecCommand(text);
 }
 
+/** 复制反馈（data-copied / data-failed）的停留时长：只闪一下，随后自动清除，按钮不会长期高亮。 */
+export const COPY_FEEDBACK_MS = 260;
+
+/** 每个按钮的清除定时器：同一按钮连续点击时先取消上一个计时器，再重新计时。 */
+const copyTimers = new WeakMap();
+
+/**
+ * 写入复制结果并安排清除：成功写 data-copied、失败写 data-failed（互斥），
+ * COPY_FEEDBACK_MS 后移除属性（只留 CSS 的 0.12s 颜色过渡作为「闪一下」观感）。
+ * 无论成功失败都派发 document 级 jj:copy{ok}，由 shell 统一弹 toast。
+ */
+function showCopyFeedback(btn, ok) {
+  const pending = copyTimers.get(btn);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+  }
+  if (ok) {
+    btn.dataset.copied = '1';
+    delete btn.dataset.failed;
+  } else {
+    btn.dataset.failed = '1';
+    delete btn.dataset.copied;
+  }
+  const doc = globalThis.document;
+  if (doc && typeof doc.dispatchEvent === 'function' && typeof globalThis.CustomEvent === 'function') {
+    doc.dispatchEvent(new globalThis.CustomEvent('jj:copy', { detail: { ok } }));
+  }
+  const timer = setTimeout(() => {
+    copyTimers.delete(btn);
+    delete btn.dataset.copied;
+    delete btn.dataset.failed;
+  }, COPY_FEEDBACK_MS);
+  copyTimers.set(btn, timer);
+}
+
 /** 给单个复制按钮绑点击事件；已绑过（data-jj-enhanced="1"）直接跳过，保证幂等。 */
 function bindCopyButton(btn) {
   if (btn.getAttribute(ENHANCED_ATTR) === '1') {
@@ -66,13 +101,7 @@ function bindCopyButton(btn) {
   btn.addEventListener('click', () => {
     const code = typeof btn.dataset.code === 'string' ? btn.dataset.code : '';
     copyText(code).then((ok) => {
-      if (ok) {
-        btn.dataset.copied = '1';
-        delete btn.dataset.failed;
-      } else {
-        btn.dataset.failed = '1';
-        delete btn.dataset.copied;
-      }
+      showCopyFeedback(btn, ok);
     });
   });
 }

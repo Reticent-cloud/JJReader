@@ -193,6 +193,7 @@ public partial class App : Application
                     ? "鲸鲸阅读器已是默认 .md 程序。"
                     : "若 .md 已有默认程序，请到 设置→默认应用 选择鲸鲸阅读器。");
                 DebugLog.Write("install 完成");
+                NotifyAssociationsChanged();
                 Shutdown(0);
                 return;
             }
@@ -241,6 +242,7 @@ public partial class App : Application
                 DebugLog.Write("uninstall 完成");
             }
 
+            NotifyAssociationsChanged();
             Shutdown(0);
         }
         catch (Exception exception)
@@ -248,6 +250,18 @@ public partial class App : Application
             DebugLog.Write($"{(install ? "install" : "uninstall")} 失败：{exception}");
             ConsoleHelper.WriteLine($"{(install ? "安装" : "卸载")}文件关联失败：{exception.Message}");
             Shutdown(1);
+        }
+    }
+
+    /// <summary>
+    /// 关联命令成功后通知资源管理器刷新图标/打开方式缓存（SHChangeNotify）。
+    /// 通知失败只写调试日志：安装/卸载本身已经成功，不能因此改变退出码。
+    /// </summary>
+    private static void NotifyAssociationsChanged()
+    {
+        if (!ShellNotify.AssociationsChanged())
+        {
+            DebugLog.Write("SHChangeNotify 刷新资源管理器失败（已忽略，关联命令仍成功）");
         }
     }
 

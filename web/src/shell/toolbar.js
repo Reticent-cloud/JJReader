@@ -1,9 +1,6 @@
 // 工具条与 Aa 排版面板（Task 12 从 main.js 拆出，行为不变）：
 // 工具条按钮与面板控件全部用 DOM API 创建（不拼 HTML），统一的 class/title 便于 CSS 与可访问性。
-// 界面美化波：新增「主题」（界面风格）按钮与 Aa 面板「界面风格」下拉；按钮里的吉祥物是自绘 SVG（装饰性）。
-
-import { MASCOT_SVG } from '../mascot.js';
-import { UI_STYLE_OPTIONS } from '../ui-style.js';
+// 单一界面风格：不再有界面风格切换按钮或下拉，也不在工具条放装饰性吉祥物。
 
 /** 工具条按钮工厂：label 文案 + id + title 提示（无 title 时省略属性）。 */
 export function createToolbarButton(label, id, title) {
@@ -37,7 +34,7 @@ const MONO_FONT_OPTIONS = [
   { value: 'Cascadia Mono', label: 'Cascadia Mono' },
 ];
 
-// 界面风格（reader 阅读器风 / whale 鲸鱼娘主题）：选项常量在 ui-style.js，与工具条「主题」按钮共用同一字段 uiStyle。
+// 界面风格入口已随 whale 主题删除（单一圆润阅读器风）。
 
 /** 带数值回显的滑杆行（字号/行距）。滑杆的 aria 当前值由 main.js 的 syncAaControls 同步。 */
 function createRangeRow(labelText, setting, min, max, step, value) {
@@ -91,8 +88,6 @@ export function buildAaPanel() {
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', '排版');
   panel.append(
-    // 界面美化波：界面风格（reader / whale）放在排版面板最上方，切换即时生效并持久化。
-    createSelectRow('界面风格', 'uiStyle', UI_STYLE_OPTIONS, 'reader'),
     createRangeRow('字号', 'fontSize', 14, 24, 1, 16),
     createRangeRow('行距', 'lineHeight', 1.4, 2.0, 0.1, 1.7),
     createSelectRow('行宽', 'contentWidth', WIDTH_OPTIONS, '780'),
@@ -103,24 +98,18 @@ export function buildAaPanel() {
 }
 
 /**
- * 构建工具条骨架：鲸鱼吉祥物 / 打开文件 / 打开文件夹 / 浏览根（文件树，Task 14）/ 回到大纲 / 目录 / 最近 /
- * 导出 PDF（Task 15）/ 弹性空隙 / 主题 / 界面风格（主题 + 鲸鱼图标）/ Aa / 关于（Task 16）
+ * 构建工具条骨架：打开文件 / 打开文件夹 / 浏览根（文件树，Task 14）/ 回到大纲 / 目录 / 最近 /
+ * 导出 PDF（Task 15）/ 弹性空隙 / 主题 / Aa / 关于（Task 16）
  * （既有按钮顺序与 Task 10 一致，既有测试按 id 取按钮；Task 13 新增两个打开入口，与 Ctrl+O / Ctrl+Shift+O 同口径）。
  * 「最近」菜单的内容由 main.js 用 renderRecent 渲染到 #recent-menu。
  * 导出按钮在未打开文档时禁用（main.js 在 load 后启用），与 Ctrl+E 共用同一导出入口；
  * 「关于」的 title 会由 main.js 随宿主下发的 assocState 更新（默认 .md 程序 / 尚未设为默认）。
- * 「主题」按钮切换 reader ↔ whale（界面美化波），文案与 aria 状态由 main.js 的 applyUiStyleState 同步。
- * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, browseRoot: HTMLButtonElement, treeBack: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, exportPdf: HTMLButtonElement, themeToggle: HTMLButtonElement, uiStyleToggle: HTMLButtonElement, aaToggle: HTMLButtonElement, about: HTMLButtonElement }}
+ * 界面只有一套风格，工具条不含界面风格切换按钮与装饰性吉祥物。
+ * @returns {{ element: HTMLElement, openFile: HTMLButtonElement, openFolder: HTMLButtonElement, browseRoot: HTMLButtonElement, treeBack: HTMLButtonElement, tocToggle: HTMLButtonElement, recentToggle: HTMLButtonElement, exportPdf: HTMLButtonElement, themeToggle: HTMLButtonElement, aaToggle: HTMLButtonElement, about: HTMLButtonElement }}
  */
 export function createToolbar() {
   const toolbar = document.createElement('header');
   toolbar.id = 'toolbar';
-
-  // 工具栏左侧小吉祥物：只做装饰（aria-hidden），whale 风格下由 CSS 显示。
-  const mascot = document.createElement('span');
-  mascot.className = 'toolbar-mascot';
-  mascot.setAttribute('aria-hidden', 'true');
-  mascot.innerHTML = MASCOT_SVG;
 
   const openFile = createToolbarButton('打开文件', 'open-file', '打开 Markdown 文件（Ctrl+O）');
   const openFolder = createToolbarButton('打开文件夹', 'open-folder', '选择文件夹（Ctrl+Shift+O）');
@@ -138,14 +127,6 @@ export function createToolbar() {
   const exportPdf = createToolbarButton('导出 PDF', 'export-pdf', '导出 PDF（Ctrl+E）');
   exportPdf.disabled = true;
   const themeToggle = createToolbarButton('跟随系统', 'theme-toggle', '主题：浅色 → 深色 → 跟随系统');
-  // 界面美化波：界面风格切换（reader ↔ whale）。左侧小吉祥物是自绘 SVG，文案保持「主题」。
-  const uiStyleToggle = createToolbarButton('主题', 'ui-style-toggle', '界面风格：阅读器风（点击切换为鲸鱼娘主题）');
-  uiStyleToggle.classList.add('ui-style-toggle');
-  const uiStyleIcon = document.createElement('span');
-  uiStyleIcon.className = 'tool-mascot';
-  uiStyleIcon.setAttribute('aria-hidden', 'true');
-  uiStyleIcon.innerHTML = MASCOT_SVG;
-  uiStyleToggle.replaceChildren(uiStyleIcon, document.createTextNode('主题'));
   const aaToggle = createToolbarButton('Aa', 'aa-toggle', '排版设置（Ctrl+,）');
   aaToggle.setAttribute('aria-expanded', 'false');
   aaToggle.setAttribute('aria-controls', 'aa-panel');
@@ -154,7 +135,6 @@ export function createToolbar() {
   const spacer = document.createElement('div');
   spacer.className = 'toolbar-spacer';
   toolbar.append(
-    mascot,
     openFile,
     openFolder,
     browseRoot,
@@ -164,7 +144,6 @@ export function createToolbar() {
     exportPdf,
     spacer,
     themeToggle,
-    uiStyleToggle,
     aaToggle,
     about,
   );
@@ -179,7 +158,6 @@ export function createToolbar() {
     recentToggle,
     exportPdf,
     themeToggle,
-    uiStyleToggle,
     aaToggle,
     about,
   };

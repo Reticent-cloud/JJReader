@@ -1,8 +1,8 @@
-// 界面美化波评审修复：样式表文本级断言（不渲染、不解析为 CSSOM）。
-// 只读取 web/src/styles/*.css 与宿主资源文件，锁定打印/PDF 回落、active 文本用色、front matter reset、
-// 两套风格选择器与图标资产；像素级视觉仍按 docs/verify-checklist.md §18 手测。
+// 单一界面风格与打印回落的样式表文本级断言（不渲染、不解析为 CSSOM）。
+// 只读取 web/src/styles/*.css、复制按钮脚本与宿主资源文件，锁定打印/PDF 回落、active 文本用色、
+// front matter reset、通知条布局、复制按钮短暂闪烁与图标资产；像素级视觉仍按 docs/verify-checklist.md 手测。
 
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,11 +22,12 @@ function repoFileSize(relativePath) {
   return statSync(repoPath(relativePath)).size;
 }
 
-const readerCss = readRepoFile('web/src/styles/overrides-reader.css');
-const whaleCss = readRepoFile('web/src/styles/overrides-whale.css');
+const overridesCss = readRepoFile('web/src/styles/overrides.css');
 const printCss = readRepoFile('web/src/styles/print.css');
+const codeCss = readRepoFile('web/src/styles/code.css');
 const layoutCss = readRepoFile('web/src/styles/layout.css');
 const indexHtml = readRepoFile('src/Host/Resources/index.html');
+const enhanceJs = readRepoFile('web/src/enhance.js');
 
 /** 取出选择器首次出现处的声明块（测试内只用于本文件里的简单单行选择器）。 */
 function ruleBody(css, selector) {
@@ -77,29 +78,35 @@ function stripRanges(css, ranges) {
   return out + css.slice(cursor);
 }
 
-const styleCases = [
-  ['reader', readerCss, "html[data-ui-style='reader']"],
-  ['whale', whaleCss, "html[data-ui-style='whale']"],
-];
+describe('whale 主题已彻底删除', () => {
+  it('不再有 whale 样式表 / 界面风格脚本 / 对应测试', () => {
+    expect(existsSync(repoPath('web/src/styles/overrides-whale.css'))).toBe(false);
+    expect(existsSync(repoPath('web/src/ui-style.js'))).toBe(false);
+    expect(existsSync(repoPath('tests/web/ui-style.test.js'))).toBe(false);
+    expect(existsSync(repoPath('web/src/mascot.js'))).toBe(false);
+  });
+
+  it('样式与首屏不再引用 data-ui-style', () => {
+    for (const css of [overridesCss, printCss, codeCss]) {
+      expect(css).not.toContain('data-ui-style');
+    }
+    expect(indexHtml).not.toContain('data-ui-style');
+  });
+
+  it('单一风格文件存在且使用全局选择器（不再有 whale 令牌/选择器）', () => {
+    expect(overridesCss.length).toBeGreaterThan(1000);
+    expect(overridesCss).not.toMatch(/--whale-/);
+    expect(overridesCss).not.toContain("[data-ui-style='whale']");
+    expect(overridesCss).toContain(':root {');
+    expect(overridesCss).toContain("html[data-theme='dark'] {");
+  });
+});
 
 describe('打印 / PDF 回落（评审 Important 1、Minor 3/4/9）', () => {
   it('链接回到正文色 + 下划线', () => {
     expect(printCss).toContain('body.print-mode #content a');
-    // 双保险选择器：特异性高于界面风格的 html[data-ui-style] #content a。
-    expect(printCss).toContain('html[data-ui-style] body.print-mode #content a');
     expect(printCss).toMatch(
       /body\.print-mode #content a[^{]*\{[^}]*color: inherit;[^}]*text-decoration: underline;/s,
-    );
-  });
-
-  it('鲸尾列表符号隐藏并恢复普通列表符号（任务清单仍无符号）', () => {
-    expect(printCss).toContain('body.print-mode #content ul');
-    expect(printCss).toMatch(/body\.print-mode #content ul[^{]*\{[^}]*list-style: revert;/s);
-    expect(printCss).toMatch(
-      /body\.print-mode #content ul[^{]*li::before[^{]*\{[^}]*content: none !important;[^}]*display: none !important;/s,
-    );
-    expect(printCss).toMatch(
-      /body\.print-mode #content ul\.contains-task-list\s*\{[^}]*list-style: none;/s,
     );
   });
 
@@ -140,60 +147,74 @@ describe('通知条不覆盖正文/TOC（修复波 E）', () => {
   });
 });
 
-describe('界面风格的屏幕链接规则（评审 Important 1）', () => {
-  it.each(styleCases)('%s：正文链接规则全部在 @media screen 内', (_name, css) => {
-    const ranges = mediaBlockRanges(css, '@media screen');
+describe('正文链接的屏幕规则（评审 Important 1）', () => {
+  it('全部在 @media screen 内，打印/PDF 不受蓝色无下划线影响', () => {
+    const ranges = mediaBlockRanges(overridesCss, '@media screen');
     expect(ranges.length).toBeGreaterThan(0);
-    const screenText = ranges.map(([start, end]) => css.slice(start, end)).join('\n');
+    const screenText = ranges.map(([start, end]) => overridesCss.slice(start, end)).join('\n');
     expect(screenText).toContain('#content a');
-    expect(stripRanges(css, ranges)).not.toContain('#content a');
+    expect(screenText).toContain('text-decoration: none;');
+    expect(stripRanges(overridesCss, ranges)).not.toContain('#content a');
   });
 });
 
 describe('active 文本对比度（评审 Important 2）', () => {
-  it.each(styleCases)('%s：active 文本使用 --ui-accent-strong，强调色只用于条/边框', (_name, css) => {
+  it('active 文本使用 --ui-accent-strong，强调色只用于条/边框', () => {
     for (const selector of ['#toolbar .tool.active', '#toc nav.toc a.active']) {
-      expect(ruleBody(css, selector)).toMatch(/color: var\(--ui-accent-strong\);/);
+      expect(ruleBody(overridesCss, selector)).toMatch(/color: var\(--ui-accent-strong\);/);
     }
     // --ui-accent 仍用于背景/边框/轮廓/图标，但不再作为文本 color（避免浅色 active 底上 < 4.5:1）。
-    expect(css).not.toMatch(/^\s*color:\s*var\(--ui-accent\);/m);
-  });
-
-  it('whale 的 TOC hover 文本同样使用 --ui-accent-strong', () => {
-    expect(ruleBody(whaleCss, '#toc nav.toc a:hover')).toMatch(/color: var\(--ui-accent-strong\);/);
+    expect(overridesCss).not.toMatch(/^\s*color:\s*var\(--ui-accent\);/m);
   });
 });
 
 describe('front matter 表格 reset（评审 Minor 4）', () => {
-  it.each(styleCases)('%s：属性表清掉通用表格外框/表头底/斑马纹', (_name, css) => {
-    const tableRule = ruleBody(css, '#content .frontmatter table');
+  it('属性表清掉通用表格外框/表头底/斑马纹', () => {
+    const tableRule = ruleBody(overridesCss, '#content .frontmatter table');
     expect(tableRule).toContain('border: 0;');
     expect(tableRule).toContain('border-radius: 0;');
 
-    const cellRule = ruleBody(css, '#content .frontmatter th');
+    const cellRule = ruleBody(overridesCss, '#content .frontmatter th');
     expect(cellRule).toContain('border: 0;');
     expect(cellRule).toContain('background: transparent;');
 
-    const zebraRule = ruleBody(css, '#content .frontmatter tbody tr:nth-child(even) > td');
+    const zebraRule = ruleBody(overridesCss, '#content .frontmatter tbody tr:nth-child(even) > td');
     expect(zebraRule).toContain('background: transparent;');
   });
 });
 
-describe('风格文件与首屏/图标资产', () => {
-  it.each(styleCases)('%s：风格文件存在且包含对应 [data-ui-style] 选择器', (_name, css, selector) => {
-    expect(css.length).toBeGreaterThan(1000);
-    expect(css).toContain(selector);
+describe('复制按钮：短暂闪烁而不是常驻高亮', () => {
+  it('成功后只保留 data-copied 260ms（脚本常量 + 清除属性）', () => {
+    expect(enhanceJs).toContain('COPY_FEEDBACK_MS = 260');
+    expect(enhanceJs).toMatch(/clearTimeout\(pending\)/);
+    expect(enhanceJs).toMatch(/delete btn\.dataset\.copied/);
+    expect(enhanceJs).toMatch(/delete btn\.dataset\.failed/);
   });
 
-  it('删除了未使用的 --whale-ink 令牌', () => {
-    expect(whaleCss).not.toContain('--whale-ink');
+  it('成功/失败都派发 jj:copy{ok} 供 shell 弹 toast', () => {
+    expect(enhanceJs).toContain("new globalThis.CustomEvent('jj:copy', { detail: { ok } })");
   });
 
-  it('index.html 首屏默认 reader（无本地存储策略下的已知取舍）', () => {
-    expect(indexHtml).toContain('data-ui-style="reader"');
+  it('闪烁样式只挂在 data-copied / data-failed 上并有短颜色过渡', () => {
+    expect(codeCss).toContain(".code-wrap .copy[data-copied='1']");
+    expect(codeCss).toContain(".code-wrap .copy[data-failed='1']");
+    expect(codeCss).toMatch(
+      /\.code-wrap \.copy\[data-copied='1'\]\s*\{[^}]*color: var\(--accent\);[^}]*border-color: var\(--accent\);/s,
+    );
+    expect(codeCss).toMatch(/transition:[^;]*color 0\.12s ease;/s);
+    expect(codeCss).toMatch(/transition:[^;]*border-color 0\.12s ease;/s);
   });
+});
 
-  it('原创鲸鱼女仆娘图标存在且大小合理（> 5 KB，不解析 ICO）', () => {
+describe('图标与插画资产保留', () => {
+  it('app.ico 与 AboutMascot.png 仍存在且大小合理（不解析 ICO/PNG）', () => {
     expect(repoFileSize('src/Host/app.ico')).toBeGreaterThan(5 * 1024);
+    expect(repoFileSize('src/Host/AboutMascot.png')).toBeGreaterThan(10 * 1024);
+    expect(repoFileSize('assets/mascot-source.jpg')).toBeGreaterThan(100 * 1024);
+  });
+
+  it('空状态插画 data URI 模块仍被 recent.js 使用', () => {
+    expect(existsSync(repoPath('web/src/mascot-photo.js'))).toBe(true);
+    expect(readRepoFile('web/src/shell/recent.js')).toContain('MASCOT_PHOTO');
   });
 });

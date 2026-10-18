@@ -91,6 +91,16 @@ if (-not $Portable) {
 Write-Host '提示：程序未做代码签名，首次运行可能出现「Windows 已保护你的电脑」/SmartScreen 提示；无网络时会显示「无法访问 SmartScreen」，点「运行」即可。'
 Write-Host '若 .md 已有默认程序，请到「设置 → 默认应用」选择鲸鲸阅读器。'
 
+# 关联图标缓存刷新：exe 侧已调用 SHChangeNotify；这里再 best-effort 执行 ie4uinit.exe -show（失败忽略）。
+try {
+    $ie4uinit = Join-Path $env:SystemRoot 'System32\ie4uinit.exe'
+    if (Test-Path -LiteralPath $ie4uinit -PathType Leaf) {
+        Start-Process -FilePath $ie4uinit -ArgumentList '-show' -WindowStyle Hidden -Wait -ErrorAction Stop
+    }
+} catch {
+    Write-Verbose 'ie4uinit.exe -show 执行失败，已忽略'
+}
+
 if ($OpenInstallDir) {
     Start-Process explorer.exe $InstallDir
 }

@@ -7,7 +7,7 @@
 // Task 12 起加最近文件面板（renderRecent）、位置追踪（createPositionTracker）、阅读 chrome（updateChrome）与 toast；
 // Task 14 起加文件树侧栏（renderTree/setSidebarMode/applyDirListing/setTreeActive）；
 // Task 15 起加打印模式（enterPrintMode / enterPrintModeForPdf / exitPrintModeForPdf，供 PDF 导出）。
-// 界面美化波起加界面风格（applyUiStyle / nextUiStyle / uiStyleLabel）与原创鲸鱼女仆娘资产（mascot.js）。
+// 界面美化波起加原创鲸鱼女仆娘插画资产（mascot-photo.js，用于空状态）。
 // 浏览器（WebView2）环境自动装配 shell 并建立双向消息通道。
 import {
   appendLinkDefinitions,
@@ -33,8 +33,6 @@ import { renderRecent } from './shell/recent.js';
 import { applyDirListing, renderTree, setSidebarMode, setTreeActive } from './shell/tree.js';
 import { applyTheme } from './theme.js';
 import { buildToc, createScrollSpy } from './toc.js';
-import { applyUiStyle, nextUiStyle, normalizeUiStyle, UI_STYLES, uiStyleLabel } from './ui-style.js';
-import { bubbleDecor, MASCOT_LARGE_SVG, MASCOT_SVG } from './mascot.js';
 import { MASCOT_PHOTO } from './mascot-photo.js';
 
 const STYLE_ATTR = 'data-jj';
@@ -78,16 +76,8 @@ export function install(target = {}) {
     applyTheme,
     applySettings,
     settingsPatch,
-    // 界面美化波：两套界面风格（reader / whale）与原创鲸鱼女仆娘形象
-    applyUiStyle,
-    nextUiStyle,
-    normalizeUiStyle,
-    uiStyleLabel,
-    UI_STYLES,
-    MASCOT_SVG,
-    MASCOT_LARGE_SVG,
+    // 单一界面风格：空状态使用原创鲸鱼女仆娘插画（data URI）
     MASCOT_PHOTO,
-    bubbleDecor,
     // Task 11：大文档分块渲染与大文件模式
     CHUNK_THRESHOLD,
     INITIAL_BYTES,

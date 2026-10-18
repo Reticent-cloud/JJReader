@@ -5,7 +5,7 @@
 本脚本只做确定性的后处理，不联网、不使用随机数：
   1. src/Host/app.ico        16/32/48/256 应用图标（16/32 用脸部特写保证可辨，48/256 用整幅圆形插画）；
   2. src/Host/AboutMascot.png 512×512 透明背景吉祥物（关于面板 / 空白页 WPF/前端显示）；
-  3. web/src/mascot-photo.js  384×384 WebP（base64 data URI，供前端二次元主题背景与空状态使用）。
+  3. web/src/mascot-photo.js  384×384 WebP（base64 data URI，供前端空状态插画使用）。
 圆形裁切时按「与中心同色的圆」掩掉圆外区域，因此右下角的水印（豆包AI生成）不会被带进图标。
 
 依赖：Python 3 + Pillow。用法：
@@ -172,7 +172,7 @@ def main() -> int:
     data_uri = web_data_uri(master, WEB_SIZE)
     web_path.parent.mkdir(parents=True, exist_ok=True)
     web_path.write_text(
-        "// 由 scripts/gen-icon.py 生成：鲸鱼女仆娘看书插画的压缩 data URI（二次元主题背景/空状态）。\n"
+        "// 由 scripts/gen-icon.py 生成：鲸鱼女仆娘看书插画的压缩 data URI（空状态圆形插画）。\n"
         f"export const MASCOT_PHOTO = \"{data_uri}\";\n",
         encoding="utf-8",
     )
