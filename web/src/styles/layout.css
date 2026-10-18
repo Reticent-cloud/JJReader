@@ -223,7 +223,8 @@ body.jj-resizing * {
   overflow-y: auto;
   scroll-behavior: smooth;
   scroll-padding-top: calc(var(--toolbar-height) + 40px);
-  padding: calc(var(--toolbar-height) + 16px) 28px 96px;
+  /* 行宽居中：用对称 padding 让所有顶层块（含标题，标题自带 margin 会覆盖 auto）都居中 */
+  padding: calc(var(--toolbar-height) + 16px) max(28px, calc((100% - var(--content-width)) / 2)) 96px;
 }
 
 #content > * {
@@ -391,10 +392,11 @@ nav.toc-inline li[data-level='6'] {
   font-variant-numeric: tabular-nums;
 }
 
-/* toast 容器（T4 结构：div#toast > div.toast[data-level]） */
+/* toast 容器（T4 结构：div#toast > div.toast[data-level]）：在正文列内居中（扣除左侧目录宽度），
+   目录折叠时回到窗口居中，避免“整窗居中”与正文列不对齐的视觉偏移。 */
 #toast {
   position: fixed;
-  left: 50%;
+  left: calc(50% + var(--toc-width, 0px) / 2);
   bottom: 24px;
   z-index: 50;
   display: flex;
@@ -406,6 +408,10 @@ nav.toc-inline li[data-level='6'] {
 
 #toast[hidden] {
   display: none;
+}
+
+#app[data-toc='hidden'] #toast {
+  left: 50%;
 }
 
 #toast .toast {
@@ -438,27 +444,6 @@ nav.toc-inline li[data-level='6'] {
 /* 工具条默认隐藏：鼠标进入窗口顶部 40px 或按 Alt 显示（shell 写 #app[data-toolbar]） */
 #app[data-toolbar='hidden'] #toolbar {
   display: none;
-}
-
-/* 阅读进度条（spec §5.1）：右侧 3px 竖向条，内层 #progress-bar 的 height 由 updateChrome 按滚动比例写入 */
-#progress {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 35; /* 高于工具条（30），隐藏时也提示进度 */
-  width: 3px;
-  background: transparent;
-  pointer-events: none;
-}
-
-#progress-bar {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 0;
-  background: var(--accent);
 }
 
 /* 回到顶部：滚离顶部 > 400px 时由 shell 去掉 hidden */

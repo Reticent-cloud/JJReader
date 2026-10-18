@@ -691,7 +691,9 @@ it('load 带 position 时恢复 scrollTop 并提示「已回到上次位置 · �
 
   load(shell, { position: 0.5 });
   expect(scroll.get()).toBe(500);
-  expect(parseFloat(root.querySelector('#progress-bar').style.height)).toBeCloseTo(50, 2);
+  // 用户要求移除右侧竖向进度条：外壳不再创建 #progress / #progress-bar
+  expect(root.querySelector('#progress')).toBeNull();
+  expect(root.querySelector('#progress-bar')).toBeNull();
 
   const toast = root.querySelector('#toast .toast');
   expect(toast).toBeTruthy();
@@ -854,7 +856,7 @@ it('切换文档前 flush 旧位置追踪器，旧 key 的最后位置不丢（I
 
 // ── 滚动驱动 chrome 与位置上报 ──
 
-it('滚动驱动进度条与回到顶部，并按 500ms 节流发 savePosition', () => {
+it('滚动驱动回到顶部，并按 500ms 节流发 savePosition（右侧进度条已移除）', () => {
   vi.useFakeTimers();
   const { root, shell, posted } = mount();
   const content = root.querySelector('#content');
@@ -864,11 +866,8 @@ it('滚动驱动进度条与回到顶部，并按 500ms 节流发 savePosition',
   scroll.set(900);
   content.dispatchEvent(new Event('scroll'));
   expect(root.querySelector('#back-to-top').hidden).toBe(false);
-  expect(parseFloat(root.querySelector('#progress-bar').style.height)).toBeCloseTo((900 / 2200) * 100, 2);
-  // aria-valuenow 同步（T12 原报告 §10.6 carry-forward）
-  expect(root.querySelector('#progress').getAttribute('aria-valuenow')).toBe(
-    String(Math.round((900 / 2200) * 100)),
-  );
+  expect(root.querySelector('#progress')).toBeNull();
+  expect(root.querySelector('#progress-bar')).toBeNull();
   expect(posted.filter((message) => message.type === 'savePosition')).toHaveLength(0);
 
   vi.advanceTimersByTime(500);
@@ -961,7 +960,7 @@ it('工具条默认隐藏：鼠标进入顶部 40px 或按 Alt 显示，离开 8
   const { root } = mount();
   expect(root.dataset.toolbar).toBe('hidden');
   expect(root.querySelector('#toolbar')).toBeTruthy();
-  expect(root.querySelector('#progress-bar')).toBeTruthy();
+  expect(root.querySelector('#progress')).toBeNull();
   expect(root.querySelector('#back-to-top')).toBeTruthy();
 
   // 顶部 40px 内显示

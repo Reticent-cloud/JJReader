@@ -275,20 +275,8 @@ export function updateChrome({ scroller, progressEl, backToTopEl, thresholdPx = 
   }
 }
 
-/** 阅读 chrome 的骨架元素：右侧 3px 竖向进度条（内层 #progress-bar 由 updateChrome 写高度）+ 回到顶部按钮。 */
+/** 阅读 chrome 的骨架元素：回到顶部按钮（用户要求移除右侧竖向进度条）。 */
 export function createChromeElements() {
-  const progress = document.createElement('div');
-  progress.id = 'progress';
-  progress.setAttribute('role', 'progressbar');
-  progress.setAttribute('aria-label', '阅读进度');
-  progress.setAttribute('aria-valuemin', '0');
-  progress.setAttribute('aria-valuemax', '100');
-  progress.setAttribute('aria-valuenow', '0');
-
-  const progressEl = document.createElement('div');
-  progressEl.id = 'progress-bar';
-  progress.append(progressEl);
-
   const backToTopEl = document.createElement('button');
   backToTopEl.type = 'button';
   backToTopEl.id = 'back-to-top';
@@ -296,7 +284,7 @@ export function createChromeElements() {
   backToTopEl.textContent = '回到顶部';
   backToTopEl.title = '回到顶部';
 
-  return { progress, progressEl, backToTopEl };
+  return { backToTopEl };
 }
 
 // toast 容器：mountShell 装配时登记；未装配（单测直接调 JJ.showToast）时回退到 document 里的 #toast 或自建。

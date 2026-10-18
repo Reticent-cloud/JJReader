@@ -121,7 +121,7 @@
 | `sanitize` | DOMPurify 白名单配置：允许语义标签与 `href/src/alt/title/align/width/height/colspan/rowspan/class/id/start`；移除 `script/style/iframe`、`on*` 事件、`javascript:` 协议 |
 | `highlight` | highlight.js 定制语言集：js/ts/python/java/go/rust/csharp/bash/json/yaml/html/css/sql/diff/xml/markdown |
 | `chunk` | 大文档分块渲染调度 |
-| `shell` | TOC 生成与滚动联动、主题、排版调节、进度条、最近文件面板、错误条、快捷键（浏览器内部分） |
+| `shell` | TOC 生成与滚动联动、主题、排版调节、回到顶部、最近文件面板、错误条、快捷键（浏览器内部分） |
 
 ### 4.4 前后端接口契约
 
@@ -199,7 +199,7 @@ MDReader/
 - 标准 Windows 窗口，标题 `文件名 — 鲸鲸阅读器`；最小尺寸 640×480；默认 1000×760。
 - 记住窗口位置、大小、最大化状态。
 - 关闭窗口即退出进程，**不驻留托盘、不保留后台进程**。
-- 布局：左侧 TOC 侧栏（默认 240 px，可拖动 180–360 px，可折叠）＋ 中央正文列（默认最大行宽 780 px 居中）＋ 顶部悬浮工具条（鼠标移入顶部 40 px 区域或按 `Alt` 显示，移出 800 ms 后隐藏）＋ 右侧 3 px 阅读进度条。
+- 布局：左侧 TOC 侧栏（默认 240 px，可拖动 180–360 px，可折叠）＋ 中央正文列（默认最大行宽 780 px 居中）＋ 顶部悬浮工具条（鼠标移入顶部 40 px 区域或按 `Alt` 显示，移出 800 ms 后隐藏）。正文列在窗口最大化时保持居中（对称 padding 居中，标题自带 margin 不会破坏居中）。
 - 滚离顶部 > 400 px 后，右下角出现「回到顶部」按钮。
 
 ### 5.2 工具条与快捷键

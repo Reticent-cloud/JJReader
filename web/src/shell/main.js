@@ -86,7 +86,7 @@ export function mountShell({ root, post } = {}) {
   }
 
   // 固定骨架：#app > header#toolbar、aside#toc、div.toc-resizer（拖拽调宽分隔条）、main#content（滚动容器）、
-  // div#progress（阅读进度条）、button#back-to-top、div#aa-panel、div#recent-menu（工具条最近菜单）、div#toast。
+  // button#back-to-top、div#aa-panel、div#recent-menu（工具条最近菜单）、div#toast。
   // 分隔条绝对定位在侧栏右缘（不占网格列），折叠时隐藏；进度条/回到顶部/工具条都是 fixed 悬浮层。
   root.replaceChildren();
   const toolbarParts = createToolbar();
@@ -175,13 +175,12 @@ export function mountShell({ root, post } = {}) {
   hugeBanner.append(hugeBannerText, hugeBannerClose);
   noticeStack.append(errorBar, hugeBanner);
 
-  const { progress, progressEl, backToTopEl } = createChromeElements();
+  const { backToTopEl } = createChromeElements();
   root.append(
     toolbar,
     toc,
     tocResizer,
     content,
-    progress,
     backToTopEl,
     aaPanel,
     recentMenu,
@@ -615,7 +614,7 @@ export function mountShell({ root, post } = {}) {
 
   /** 更新进度条宽度与回到顶部显隐（scroll 事件与 load 恢复位置后都调用）。 */
   function refreshChrome() {
-    updateChrome({ scroller: content, progressEl, backToTopEl });
+    updateChrome({ scroller: content, backToTopEl });
   }
 
   function onContentScroll() {

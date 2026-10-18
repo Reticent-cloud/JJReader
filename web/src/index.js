@@ -90,7 +90,7 @@ export function install(target = {}) {
     utf8Length,
     extractLinkDefinitions,
     appendLinkDefinitions,
-    // Task 12：最近文件面板、位置追踪、阅读 chrome（进度条/回到顶部）与可点击 toast
+    // Task 12：最近文件面板、位置追踪、阅读 chrome（回到顶部）与可点击 toast
     renderRecent,
     createPositionTracker,
     updateChrome,

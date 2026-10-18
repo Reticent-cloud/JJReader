@@ -218,3 +218,28 @@ describe('图标与插画资产保留', () => {
     expect(readRepoFile('web/src/shell/recent.js')).toContain('MASCOT_PHOTO');
   });
 });
+
+describe('正文居中、toast 对齐与进度条移除', () => {
+  it('#content 用对称 padding 居中（标题 margin 不再导致最大化后贴左）', () => {
+    const layoutCss = readRepoFile('web/src/styles/layout.css');
+    expect(layoutCss).toMatch(
+      /padding:\s*calc\(var\(--toolbar-height\) \+ 16px\)\s+max\(28px,\s*calc\(\(100% - var\(--content-width\)\) \/ 2\)\)\s+96px;/s,
+    );
+  });
+
+  it('#toast 在正文列内居中，目录折叠时回窗口居中', () => {
+    const layoutCss = readRepoFile('web/src/styles/layout.css');
+    expect(layoutCss).toMatch(/#toast\s*\{[^}]*left:\s*calc\(50% \+ var\(--toc-width, 0px\) \/ 2\);/s);
+    expect(layoutCss).toMatch(/#app\[data-toc='hidden'\] #toast\s*\{[^}]*left:\s*50%;/s);
+  });
+
+  it('右侧竖向进度条已移除：无 #progress / #progress-bar CSS，chrome 不再创建', () => {
+    const layoutCss = readRepoFile('web/src/styles/layout.css');
+    expect(layoutCss).not.toContain('#progress');
+    const chromeSrc = readRepoFile('web/src/shell/chrome.js');
+    expect(chromeSrc).not.toContain("'progress'");
+    expect(chromeSrc).not.toContain('#progress-bar');
+    expect(chromeSrc).toContain('backToTopEl');
+    expect(readRepoFile('web/src/styles/print.css')).not.toContain('#progress');
+  });
+});
