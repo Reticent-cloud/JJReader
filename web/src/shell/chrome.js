@@ -275,14 +275,42 @@ export function updateChrome({ scroller, progressEl, backToTopEl, thresholdPx = 
   }
 }
 
-/** 阅读 chrome 的骨架元素：回到顶部按钮（用户要求移除右侧竖向进度条）。 */
+/** 阅读 chrome 的骨架元素：回到顶部按钮（图标按钮：上箭头 + 顶部横线，无文字）。 */
 export function createChromeElements() {
   const backToTopEl = document.createElement('button');
   backToTopEl.type = 'button';
   backToTopEl.id = 'back-to-top';
   backToTopEl.hidden = true;
-  backToTopEl.textContent = '回到顶部';
   backToTopEl.title = '回到顶部';
+  backToTopEl.setAttribute('aria-label', '回到顶部');
+
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const icon = document.createElementNS(svgNs, 'svg');
+  icon.setAttribute('class', 'back-to-top-icon');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('width', '18');
+  icon.setAttribute('height', '18');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+
+  // 顶部横线 + 向上的箭头（stroke 用 currentColor，跟随主题前景色）
+  const bar = document.createElementNS(svgNs, 'path');
+  bar.setAttribute('d', 'M5 4h14');
+  bar.setAttribute('fill', 'none');
+  bar.setAttribute('stroke', 'currentColor');
+  bar.setAttribute('stroke-width', '2');
+  bar.setAttribute('stroke-linecap', 'round');
+
+  const arrow = document.createElementNS(svgNs, 'path');
+  arrow.setAttribute('d', 'M12 20V8M6 14l6-6 6 6');
+  arrow.setAttribute('fill', 'none');
+  arrow.setAttribute('stroke', 'currentColor');
+  arrow.setAttribute('stroke-width', '2');
+  arrow.setAttribute('stroke-linecap', 'round');
+  arrow.setAttribute('stroke-linejoin', 'round');
+
+  icon.append(bar, arrow);
+  backToTopEl.append(icon);
 
   return { backToTopEl };
 }

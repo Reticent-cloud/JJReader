@@ -446,21 +446,29 @@ nav.toc-inline li[data-level='6'] {
   display: none;
 }
 
-/* 回到顶部：滚离顶部 > 400px 时由 shell 去掉 hidden */
+/* 回到顶部：滚离顶部 > 400px 时由 shell 去掉 hidden；图标按钮（上箭头 + 顶部横线），无文字 */
 #back-to-top {
   position: fixed;
   right: 24px;
   bottom: 24px;
   z-index: 30;
-  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--panel-bg);
   color: var(--fg);
   font: inherit;
-  font-size: 13px;
   box-shadow: var(--panel-shadow);
   cursor: pointer;
+}
+
+#back-to-top .back-to-top-icon {
+  display: block;
 }
 
 #back-to-top:hover,

@@ -254,3 +254,12 @@ describe('圆角化（v3）', () => {
     expect(css).toMatch(/#content::-webkit-scrollbar-thumb\s*\{[^}]*border-radius:\s*999px;/s);
   });
 });
+
+describe('回到顶部图标按钮（v4）', () => {
+  it('按钮是 40×40 圆形、无文案字号，图标跟随前景色', () => {
+    const css = readRepoFile('web/src/styles/layout.css');
+    expect(css).toMatch(/#back-to-top\s*\{[^}]*width:\s*40px;[^}]*height:\s*40px;[^}]*padding:\s*0;/s);
+    expect(css).not.toMatch(/#back-to-top\s*\{[^}]*font-size:/s);
+    expect(css).toMatch(/#back-to-top \.back-to-top-icon\s*\{[^}]*display:\s*block;/s);
+  });
+});

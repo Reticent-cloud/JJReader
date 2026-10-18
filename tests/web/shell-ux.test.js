@@ -1122,3 +1122,18 @@ it('Aa 滑杆 aria-valuenow 随数值更新（Minor e）', () => {
   fontSize.dispatchEvent(new Event('input', { bubbles: true }));
   expect(fontSize.getAttribute('aria-valuenow')).toBe('20');
 });
+
+it('回到顶部按钮是图标按钮：无文字、含横线+箭头 SVG、可访问名称保留', () => {
+  const { root } = mount();
+  const button = root.querySelector('#back-to-top');
+  expect(button).toBeTruthy();
+  expect(button.textContent.trim()).toBe('');
+  expect(button.getAttribute('aria-label')).toBe('回到顶部');
+  expect(button.getAttribute('title')).toBe('回到顶部');
+  const icon = button.querySelector('svg.back-to-top-icon');
+  expect(icon).toBeTruthy();
+  const paths = icon.querySelectorAll('path');
+  expect(paths).toHaveLength(2);
+  expect(paths[0].getAttribute('d')).toContain('M5 4h14');
+  expect(paths[1].getAttribute('d')).toContain('M12 20V8');
+});
