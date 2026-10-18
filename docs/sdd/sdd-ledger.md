@@ -251,3 +251,7 @@ Workspace: D:\dsh-work\MD阅读器\.worktrees\feat\jingjing-reader\.superpowers\
   - 新 Minor：打印未隐藏 #notice-stack、通知条遮挡、表格分隔行正则过严、导出后 img.loading 未还原、settings 无 pagehide flush、details 展开不刷新 tops（波 E 一并修）
 - 波 D（013cbe1）：UDF 本地化、M10 只转义 </script 与 <!--、文档数字/A5/dirListing root/导航措辞/快照 descope、verify 超时读取 5s/清理/恢复环境/SelfTest 锁 21、NoteResolver 文件 reparse；host 382 / web 474；VERIFY OK 16 项（WARN 端到端 1150ms），关键数字：elapsedMs 121/190、宿主私有 162.8MB、artifact 472869B
 - 波 E（进行中）：recent Enter 修复、打印隐藏 #notice-stack、通知条不遮挡、表格分隔行正则、恢复 img.loading、settings pagehide flush、details toggle 刷新、spec §9.1 措辞
+- 波 E（0af4231，完成）：recent Enter 修复、打印隐藏 #notice-stack、通知条改为内容列首行不遮挡、表格分隔行正则对齐 markdown-it、导出后恢复 img.loading、settings pagehide flush、details toggle 刷新 TOC、spec §9.1 措辞；host 382 / web 488；VERIFY OK 16 项（WARN 端到端 1029ms）
+- 最终微复核（c01e113..0af4231）：功能侧零 Critical/Important；唯一残留为文档数字，已由 5e05e83 同步
+- 收尾：本地合并 feat/jingjing-reader → master（merge commit 054f379），归档台账与报告（6f9ec4a）；分支与 worktree 已删除，工作区干净
+- 合并结果验证：同一提交在干净导出副本中 host 382/382 通过；主仓库内 `dotnet test` 因本会话沙箱无法打开父进程句柄（Win32 5）失败，属环境限制
