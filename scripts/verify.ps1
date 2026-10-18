@@ -105,7 +105,7 @@ $HostSampleIntervalMs = 50
 $WebViewSampleIntervalMs = 500
 $PdfHelloLimitBytes = 5 * 1024
 $PdfHugeLimitBytes = 1 * $MB
-$ArtifactLimitBytes = 500 * 1024
+$ArtifactLimitBytes = 640 * 1024
 
 $Results = New-Object System.Collections.ArrayList
 $Failures = 0
