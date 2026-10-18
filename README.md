@@ -26,6 +26,46 @@
 
 ## 安装
 
+### 安装包（推荐给普通用户）
+
+```powershell
+pwsh -NoProfile -File scripts/build-installer.ps1
+# 产物：dist\JingjingReaderSetup.exe
+```
+
+安装器是 WPF（.NET 10）的**框架依赖单文件** exe，内嵌由 `out\` 打包成的 `payload.zip`（构建脚本生成，git 忽略）。双击后选择安装目录（默认 `%LOCALAPPDATA%\Programs\JingjingReader`），勾选：
+
+- 「将 .md 打开方式设为鲸鲸阅读器」（默认勾选）；
+- 「创建桌面快捷方式」（默认勾选）；开始菜单快捷方式始终创建。
+
+安装步骤（幂等，可重复运行覆盖旧版本）：
+
+1. 把 payload 解压到安装目录（先写同级临时目录再整体替换；程序正在运行时提示「请先关闭鲸鲸阅读器」，失败尽量不留半成品）；
+2. 运行 `<安装目录>\JingjingReader.exe --install` 注册当前用户的 `.md` 打开方式；
+3. 创建开始菜单 `鲸鲸阅读器.lnk`（桌面快捷方式可选）；
+4. 写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\JingjingReader` 卸载项（`设置 → 应用` 可卸载）；
+5. 检查 `.md` 的有效默认程序（`UserChoice` 优先、`HKCU\Software\Classes\.md` 回退）。若仍不是鲸鲸阅读器，结果页会明确提示并提供「打开「默认应用」设置」按钮；在 Windows 里选择一次即可永久生效，安装器不会、也无法静默改写 `UserChoice`。
+
+静默安装：
+
+```powershell
+dist\JingjingReaderSetup.exe --silent --install-dir "D:\apps\JingjingReader" --no-shortcuts --no-launch
+```
+
+- `--install-dir <目录>`：安装目录（默认 `%LOCALAPPDATA%\Programs\JingjingReader`）；
+- `--no-shortcuts`：不创建开始菜单/桌面快捷方式；
+- `--no-launch`：安装完成后不自动启动程序；
+- `--help`：查看用法。静默退出码：`0` 成功、`1` 安装失败、`2` 参数错误。
+
+卸载：**设置 → 应用 → 已安装的应用 → 鲸鲸阅读器 → 卸载**，或运行安装目录里的 `uninstall.ps1`（`-KeepFiles` 只保留程序文件）。卸载会注销 `.md` 打开方式、删除安装器写入的卸载项与开始菜单/桌面快捷方式；用户数据（`%APPDATA%\JingjingReader`）保留。
+
+限制与说明：
+
+- 未做代码签名，首次运行会触发 SmartScreen：「Windows 已保护你的电脑」→「更多信息」→「仍要运行」。无网络时显示「无法访问 SmartScreen」属正常。
+- 安装器与程序都是**框架依赖**，目标机需要 .NET 10 Desktop Runtime；缺失时 .NET 宿主会提示下载，安装器界面也会检测标准安装位置并提示下载链接（不会崩溃）。
+- 默认应用受 Windows `UserChoice` 哈希保护，程序不能静默设置；安装后需在「默认应用」里确认一次。
+- 与绿色版 `out\` 的关系：安装包内容就是 `out\` 的完整副本（exe + WebView2 加载器 + `install.ps1`/`uninstall.ps1` + README）；安装后等价于运行 `install.ps1`，再额外创建快捷方式、写卸载项并检查默认应用。绿色版仍可继续用 `scripts/install.ps1` 手动安装。
+
 ### 1. 获取程序
 
 从源码构建：
@@ -43,7 +83,7 @@ pwsh -NoProfile -File scripts/build.ps1 -SelfContained
 # 产物：out-selfcontained\（同样复制整个目录）
 ```
 
-### 2. 安装（推荐）
+### 2. 安装（绿色版脚本）
 
 ```powershell
 pwsh -NoProfile -File scripts/install.ps1
@@ -112,9 +152,12 @@ pwsh -NoProfile -File scripts/install.ps1 -OpenSettings
 ```powershell
 pwsh -NoProfile -File scripts/build.ps1                # 依赖系统 .NET 运行时 → out\
 pwsh -NoProfile -File scripts/build.ps1 -SelfContained # 内置运行时 → out-selfcontained\
+pwsh -NoProfile -File scripts/build-installer.ps1      # 安装包 → dist\JingjingReaderSetup.exe
 ```
 
 构建脚本依次执行：`web/` 下 `npm ci` 与 `npm run build`（esbuild → `web/dist/md-engine.js`，体积门禁 640 KB）→ 拷贝到 `src/Host/Resources/md-engine.js` → 清空目标目录 → `dotnet publish`（Release、win-x64、PublishSingleFile）→ 拷入 `install.ps1` / `uninstall.ps1` / `README.md`。自包含构建体积实测约 130–140 MB（首次需要 NuGet 运行时包缓存）。
+
+安装包构建脚本会先运行 `scripts/build.ps1` 生成最新 `out\`，再把 `out\*` 压缩成 `installer/JingjingReaderSetup/payload.zip`，最后以**框架依赖单文件**发布 WPF 安装器到 `dist\JingjingReaderSetup.exe`（当前约 2.25 MB；payload 约 1.61 MB）。`build.ps1` 不会自动构建安装包，需要时单独运行 `build-installer.ps1`。
 
 > PowerShell 版本：构建/验收/安装脚本在 **Windows PowerShell 5.1 与 PowerShell 7 下均可运行**。PowerShell 7 用 `pwsh -NoProfile -File scripts/xxx.ps1`；Windows PowerShell 5.1 用 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/xxx.ps1`。推荐 PowerShell 7。
 
@@ -123,6 +166,7 @@ pwsh -NoProfile -File scripts/build.ps1 -SelfContained # 内置运行时 → out
 ```powershell
 cd web; npm test                                      # vitest + jsdom（含 5 万行性能冒烟与产物体积）
 dotnet test tests/host/JingjingReader.Tests.csproj    # xUnit
+dotnet test tests/installer/JingjingReaderSetup.Tests.csproj  # 安装器纯逻辑 xUnit
 ```
 
 数据目录隔离：默认数据目录是 `%APPDATA%\JingjingReader`（settings/recent/positions/debug.log）。WebView2 用户数据目录（UDF）默认固定在本地的 `%LOCALAPPDATA%\JingjingReader\WebView2`，不随数据目录进漫游 `%APPDATA%`（域环境/文件夹重定向下它可能是 UNC 网络盘，WebView2 官方不建议作为 UDF）。设置 `JJ_DATA_DIR` 环境变量（仅用于测试隔离）可把数据目录与 WebView2 profile 一起改到指定路径（profile 在其下的 `WebView2\`；生产默认路径不变）。`scripts/verify.ps1` 验收时自动把 `JJ_DATA_DIR` 指向 ASCII 临时目录下的 `appdata\`，并校验用户 `%APPDATA%\JingjingReader\recent.json` 未被改写。
@@ -157,6 +201,8 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 
 卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态（无需确认提示：脚本直接执行并按结果返回退出码）。**Classes 与「打开方式」可完整恢复；Windows `UserChoice` 由系统保护、程序无法改写**——若 `.md` 的默认应用仍指向鲸鲸阅读器，卸载会明确提示到「设置 → 应用 → 默认应用」重新选择（`ms-settings:defaultapps`），不视为卸载失败。卸载成功同样会调用 `SHChangeNotify` 刷新资源管理器；图标未刷新时重启资源管理器。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。默认会删除安装目录里的程序文件（`-KeepFiles` 保留）；不会删除阅读偏好、最近文件与 WebView2 缓存，如需彻底清理，手动删除 `%APPDATA%\JingjingReader`（偏好/最近/位置/日志）与 `%LOCALAPPDATA%\JingjingReader\WebView2`（WebView2 缓存）；若曾设置 `JJ_DATA_DIR`（仅验收隔离），删除对应目录即可。
 
+安装包用户也可以从 **设置 → 应用 → 已安装的应用 → 鲸鲸阅读器** 卸载：安装器写入的卸载项会调用安装目录里的同一份 `uninstall.ps1`。卸载成功后会删除该卸载项以及开始菜单/桌面快捷方式（`-KeepFiles` 只保留程序文件），关联恢复与用户数据保留策略与上面一致。
+
 ## 目录结构
 
 ```text
@@ -184,18 +230,22 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 │  └─ dist/                  本地构建产物（git 忽略）
 ├─ tests/web/                vitest 用例（含 perf.test.js 性能冒烟、copy-button.test.js）
 ├─ tests/host/               xUnit 用例
+├─ tests/installer/          安装器纯逻辑 xUnit 用例
+├─ installer/JingjingReaderSetup/  WPF 安装器（框架依赖单文件；payload.zip 由构建脚本生成，git 忽略）
 ├─ samples/                  验收样例：hello.md / full-syntax.md / huge-50k-lines.md
 ├─ scripts/
 │  ├─ build.ps1              构建（-SelfContained 可选；发布前清理并拷入分发文件）
+│  ├─ build-installer.ps1    构建 dist\JingjingReaderSetup.exe（out\ → payload.zip → 单文件发布）
 │  ├─ verify.ps1             自动验收 + out/verify-report.md（-SelfTest 只跑脚本自测）
 │  ├─ gen-huge-sample.ps1    生成 5 万行样例（UTF-8 BOM 源码，PS 5.1 可解析）
 │  ├─ gen-icon.py            从 mascot-source.jpg 生成 app.ico / AboutMascot.png / mascot-photo.js
 │  ├─ install.ps1            注册 .md 关联
-│  └─ uninstall.ps1          注销并恢复
+│  └─ uninstall.ps1          注销并恢复（含卸载项与快捷方式清理）
 ├─ docs/verify-checklist.md  手测清单
 ├─ docs/acceptance-traceability.md  spec §2.3/§9.3 与自动化证据/人工项对照
 ├─ docs/verify-record.md     修复波 C 验收记录（historical；最终数字以 @0af4231 报告为准）
 ├─ out/                      构建产物与分发包（git 忽略；含 verify-report.md）
+├─ dist/                     安装包产物（git 忽略）
 ├─ docs/superpowers/         spec 与实施计划（记录，不参与运行）
 └─ README.md
 ```
@@ -205,6 +255,7 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 - **分块渲染与跨块脚注**：超过 512 KB 的文档按块独立解析，定义在文末的脚注引用在较早的块里会显示为字面文本（`[^1]`）。引用式链接定义已做全文预抽取并补齐，脚注不在补齐范围（脚注区重复会改变既有输出）。这是已知取舍，不是渲染错误。
 - **超大文档导出 PDF 会先全量渲染**：导出前会把分块懒渲染的剩余块一次性渲染出来（保证内容完整），因此 5 万行文档导出要约 5 秒、1000+ 页；导出完成后以 toast 提示成功/失败。交互导出的超时保护为「等待 readyToPrint 10 秒 + PrintToPdf 60 秒」（合计最长 70 秒）；`--verify-pdf` 验收命令的外层导出超时为 75 秒。
 - **默认关联受 Windows 限制**：安装只写当前用户的「打开方式」，不能静默抢占已有默认程序；`HKCU` 之外的机器级关联不修改，也不需要管理员权限。卸载可完整恢复 `Software\Classes` 与「打开方式」；Windows 的 `UserChoice` 由系统保护，需用户在「默认应用」中重新选择（界面/CLI 会提示 `ms-settings:defaultapps`）。
+- **安装包限制**：`dist\JingjingReaderSetup.exe` 未做代码签名（首次运行触发 SmartScreen）；安装器与程序都是框架依赖（需 .NET 10 Desktop Runtime）；只写 HKCU 与用户目录，不提供「为所有用户安装」；`UserChoice` 仍需在「默认应用」确认一次。
 - **内存主要在 WebView2 内核（Chromium 基线）**：程序会常驻 WebView2 的浏览器/渲染/GPU/工具等进程。最终验收（@0af4231，`out/verify-report.md`：Windows 10.0.19045，WebView2 155.0.4283.60；PowerShell 7.6.6 单次权威运行；宿主 50 ms / WebView2 500 ms 采样）实测：宿主私有内存（`PrivateMemorySize64`）峰值 **174.3 MB**（19 个样本，最大间隔 64 ms）、WebView2 进程组（直接子进程与全部后代）`WorkingSet64` 峰值 **235.7 MB**（6 个进程，1 个样本）、整树 `WorkingSet64` 峰值 **349.8 MB**（同一采样时刻）。验收口径为「宿主进程私有内存峰值 ≤ 200 MB」（150 MB 为后续优化目标），WebView2 进程组单列为信息项、不计入该预算；进程数不作为验收项（WebView2 进程组数量随运行时版本变化，最终验收 6 个）。数值受 WebView2 Runtime 版本、GPU、系统环境与采样窗口影响，详见 `out/verify-report.md`。
 - **首屏与帧预算**：`elapsedMs`（渲染器口径）最终验收 full-syntax 113 ms、5 万行 185 ms；端到端（`Process.Start` → stdout READY，含 WebView2 初始化）最终验收 1029 ms，按 WARN 记录（spec 的 1.0 s 是 `elapsedMs` 口径设计目标）。16 ms 滚动帧预算已 descope，未自动验证；手测方法见 `docs/verify-checklist.md` §16。
 - **协议与路径限制**：`openFile` 只接受相对当前文档目录的路径（绝对/UNC/越界/重解析点拒绝）；最近文件走 `openRecent`（只允许 recent.json 命中的路径）、文件树走 `openTreeFile`（只允许浏览根内 Markdown/文本文件）；编码异常/二进制拒绝用 `notice` 持久错误条，空白启动偏好用 `settings` 消息下发。完整消息表见 spec §4.4。

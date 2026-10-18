@@ -1,0 +1,306 @@
+<Window x:Class="JingjingReader.Setup.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="鲸鲸阅读器 安装程序"
+        Width="720"
+        Height="660"
+        ResizeMode="NoResize"
+        WindowStartupLocation="Manual"
+        Left="32"
+        Top="24"
+        Background="#F3F5F9"
+        Icon="app.ico"
+        FontFamily="Microsoft YaHei UI, Microsoft YaHei, Segoe UI"
+        FontSize="13"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <Window.Resources>
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Background" Value="#2F6FEB" />
+            <Setter Property="Padding" Value="20,10" />
+            <Setter Property="MinWidth" Value="86" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="9"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#2459C4" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#1D4AA8" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="#1F2937" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="Padding" Value="16,9" />
+            <Setter Property="MinWidth" Value="80" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="#D6DDE8"
+                                BorderThickness="1"
+                                CornerRadius="9"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#F2F5FA" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#E8EDF5" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="28,22,28,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 标题区 -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <Border Width="60"
+                    Height="60"
+                    Background="White"
+                    BorderBrush="#E4E9F2"
+                    BorderThickness="1"
+                    CornerRadius="16">
+                <Image Source="app.ico" Width="44" Height="44" />
+            </Border>
+            <StackPanel Margin="16,3,0,0">
+                <TextBlock Text="鲸鲸阅读器"
+                           FontSize="24"
+                           FontWeight="SemiBold"
+                           Foreground="#16202E" />
+                <TextBlock x:Name="VersionText"
+                           Text="版本 0.1.0 · 安装程序"
+                           Foreground="#6B7688"
+                           Margin="0,5,0,0" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- 运行时提示（正常情况下折叠） -->
+        <Border x:Name="RuntimeWarningPanel"
+                Grid.Row="1"
+                Visibility="Collapsed"
+                Background="#FFF8E8"
+                BorderBrush="#F0C36D"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="14,11"
+                Margin="0,16,0,0">
+            <StackPanel>
+                <TextBlock x:Name="RuntimeWarningText"
+                           Foreground="#7A4B00"
+                           FontSize="12"
+                           TextWrapping="Wrap" />
+                <Button Content="下载 .NET 10 Desktop Runtime"
+                        Style="{StaticResource SecondaryButtonStyle}"
+                        HorizontalAlignment="Left"
+                        Margin="0,8,0,0"
+                        Click="OnOpenRuntimeDownloadClick" />
+            </StackPanel>
+        </Border>
+
+        <!-- 安装选项卡片 -->
+        <Border Grid.Row="2"
+                Background="White"
+                BorderBrush="#E4E9F2"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="22"
+                Margin="0,18,0,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <TextBlock Text="安装目录" FontWeight="SemiBold" Foreground="#16202E" />
+                <Grid Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Background="#FBFCFE"
+                            BorderBrush="#D6DDE8"
+                            BorderThickness="1"
+                            CornerRadius="9"
+                            Padding="10,0">
+                        <TextBox x:Name="InstallDirBox"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Height="38"
+                                 VerticalContentAlignment="Center" />
+                    </Border>
+                    <Button x:Name="BrowseButton"
+                            Grid.Column="1"
+                            Content="浏览…"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Margin="10,0,0,0"
+                            Click="OnBrowseClick" />
+                </Grid>
+                <TextBlock Text="默认安装到当前用户目录（%LOCALAPPDATA%\Programs\JingjingReader），不需要管理员权限。"
+                           Foreground="#6B7688"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Margin="0,7,0,0" />
+
+                <Border Height="1" Background="#ECF0F6" Margin="0,18,0,14" />
+
+                <CheckBox x:Name="AssocCheck"
+                          Content="将 .md 打开方式设为鲸鲸阅读器"
+                          IsChecked="True"
+                          FontSize="14"
+                          Foreground="#1F2937" />
+                <TextBlock Text="写入当前用户的「打开方式」。Windows 10/11 的默认应用受系统保护，安装后需在「默认应用」里确认一次。"
+                           Foreground="#6B7688"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Margin="26,4,0,0" />
+
+                <CheckBox x:Name="DesktopCheck"
+                          Content="创建桌面快捷方式"
+                          IsChecked="True"
+                          FontSize="14"
+                          Foreground="#1F2937"
+                          Margin="0,14,0,0" />
+                <TextBlock Text="同时会在开始菜单创建「鲸鲸阅读器」，并写入「设置 → 应用」里的卸载项。"
+                           Foreground="#6B7688"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Margin="26,4,0,0" />
+
+                <TextBlock x:Name="InlineErrorText"
+                           Visibility="Collapsed"
+                           Foreground="#B42318"
+                           TextWrapping="Wrap"
+                           Margin="0,14,0,0" />
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- 进度 / 结果 -->
+        <Grid Grid.Row="3" Margin="0,16,0,0">
+            <Border x:Name="ProgressPanel"
+                    Visibility="Collapsed"
+                    Background="White"
+                    BorderBrush="#E4E9F2"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="18,14">
+                <StackPanel>
+                    <TextBlock x:Name="StatusText" Text="正在安装…" Foreground="#1F2937" />
+                    <ProgressBar IsIndeterminate="True"
+                                 Height="6"
+                                 Margin="0,10,0,0"
+                                 Background="#E8EDF5"
+                                 Foreground="#2F6FEB" />
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="ResultPanel"
+                    Visibility="Collapsed"
+                    Background="White"
+                    BorderBrush="#E4E9F2"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="18,14">
+                <StackPanel>
+                    <TextBlock x:Name="ResultTitle"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Foreground="#16794C" />
+                    <ScrollViewer MaxHeight="104"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Margin="0,6,0,0">
+                        <TextBlock x:Name="ResultDetail"
+                                   TextWrapping="Wrap"
+                                   Foreground="#4A5568"
+                                   LineHeight="20" />
+                    </ScrollViewer>
+                    <Border x:Name="DefaultPromptPanel"
+                            Visibility="Collapsed"
+                            Background="#FFF8E8"
+                            BorderBrush="#F0C36D"
+                            BorderThickness="1"
+                            CornerRadius="9"
+                            Padding="12,10"
+                            Margin="0,10,0,0">
+                        <TextBlock x:Name="DefaultPromptText"
+                                   TextWrapping="Wrap"
+                                   Foreground="#7A4B00"
+                                   FontSize="12" />
+                    </Border>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- 底部按钮 -->
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,18,0,0">
+            <Button x:Name="OpenAppButton"
+                    Content="打开鲸鲸阅读器"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Visibility="Collapsed"
+                    Margin="0,0,10,0"
+                    Click="OnOpenAppClick" />
+            <Button x:Name="SettingsButton"
+                    Content="打开「默认应用」设置"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Visibility="Collapsed"
+                    Margin="0,0,10,0"
+                    Click="OnOpenSettingsClick" />
+            <Button x:Name="FinishButton"
+                    Content="完成"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Visibility="Collapsed"
+                    Margin="0,0,10,0"
+                    Click="OnFinishClick" />
+            <Button x:Name="CancelButton"
+                    Content="取消"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Margin="0,0,10,0"
+                    Click="OnCancelClick" />
+            <Button x:Name="InstallButton"
+                    Content="安装"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Click="OnInstallClick" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -7,6 +7,12 @@ web/dist/
 web/node_modules/
 *.user
 
+# installer artifacts
+dist/
+installer/JingjingReaderSetup/payload.zip
+installer/**/bin/
+installer/**/obj/
+
 # local artifacts
 *.log
 *.pdf

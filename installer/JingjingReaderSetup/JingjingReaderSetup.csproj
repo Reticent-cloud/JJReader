@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>JingjingReader.Setup</RootNamespace>
+    <AssemblyName>JingjingReaderSetup</AssemblyName>
+    <Product>鲸鲸阅读器安装程序</Product>
+    <AssemblyTitle>鲸鲸阅读器安装程序</AssemblyTitle>
+    <Description>鲸鲸阅读器安装程序（框架依赖单文件）</Description>
+    <Version>0.1.0</Version>
+    <!-- 复用应用图标（16/32/48/256），不维护第二套品牌资产。 -->
+    <ApplicationIcon>..\..\src\Host\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 发布形态：框架依赖（目标机需 .NET 10 Desktop Runtime）+ 单文件。 -->
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(RuntimeIdentifier)' != ''">true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\src\Host\app.ico" Link="app.ico" />
+    <!-- payload.zip 由 scripts/build-installer.ps1 在构建前生成；缺失时构建直接失败，避免产出空安装包。 -->
+    <EmbeddedResource Include="payload.zip">
+      <LogicalName>JingjingReaderSetup.payload.zip</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

@@ -162,6 +162,26 @@
 - [ ] front matter 属性表保持卡片内两列键值排版：无通用表格外框/表头底色/斑马纹，不出现双边框。
 - [ ] 16 px 图标在资源管理器/任务栏可辨（蓝发 + 头饰特写）；48/256 为整幅圆形插画、无糊边；`python scripts/gen-icon.py` 可重复生成相同资产（两次字节一致），且图标/关于面板/前端内联图都不含水印。
 
+## 19. 安装包（`dist\JingjingReaderSetup.exe`）
+
+> 自动验收（`scripts/verify.ps1` 的 16 项）**不包含**安装器；本节为手测项。静默安装可用于自动化冒烟，但注册表/快捷方式/默认应用仍需人工核对。安装器与程序均为框架依赖，测试机需 .NET 10 Desktop Runtime。
+
+- [ ] `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1` 成功；`dist\JingjingReaderSetup.exe` 存在（当前约 2.25 MB，payload 约 1.61 MB）。
+- [ ] 双击安装器：窗口显示产品名「鲸鲸阅读器」、版本 0.1.0、图标；默认安装目录为 `%LOCALAPPDATA%\Programs\JingjingReader`；两个复选框默认勾选；「取消」可关闭；窗口在 100%/125%/200% DPI 下完整可见（内容可滚动）。
+- [ ] 「浏览…」可选择目录；安装过程中「安装」「取消」与输入控件被禁用，并显示「正在解压/注册打开方式/创建快捷方式/写入卸载信息/检查默认程序」进度文案。
+- [ ] 安装完成后显示结果与「打开鲸鲸阅读器」「完成」；需要确认默认应用时额外显示「打开「默认应用」设置」按钮。
+- [ ] 安装后开始菜单有「鲸鲸阅读器」快捷方式；勾选桌面时 `%USERPROFILE%\Desktop`（或 OneDrive 重定向桌面）有快捷方式；目标均指向安装目录的 `JingjingReader.exe`。
+- [ ] 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\JingjingReader` 存在，`DisplayName=鲸鲸阅读器`、`DisplayVersion=0.1.0`、`DisplayIcon=<installDir>\JingjingReader.exe`、`Publisher`、`InstallLocation`、`UninstallString`/`QuietUninstallString` 指向 `<installDir>\uninstall.ps1`。
+- [ ] `设置 → 应用 → 已安装的应用` 显示「鲸鲸阅读器 0.1.0」，可直接卸载；卸载后卸载项与开始菜单/桌面快捷方式消失、安装目录删除、用户数据保留。
+- [ ] 关联：`HKCU\Software\Classes\JingjingReader.md` 存在，`.md\OpenWithProgids` 含 `JingjingReader.md`；若 `.md` 已有其它默认程序，结果页明确提示并提供「打开「默认应用」设置」；在默认应用中为 `.md` 选择鲸鲸阅读器一次后双击 `.md` 能打开。
+- [ ] 重复运行安装器覆盖安装不报错；安装目录没有 `.staging-*` / `.old-*` 残留；旧版本程序文件被覆盖，用户数据（`%APPDATA%\JingjingReader`）保留。
+- [ ] 安装目录里的程序正在运行时再次安装 → 提示「请先关闭鲸鲸阅读器」，不留下半成品；权限不足目录（如 `Program Files`）或非空且非本程序安装目录 → 显示可读错误并拒绝。
+- [ ] 静默安装：`JingjingReaderSetup.exe --silent --install-dir <ASCII 临时目录> --no-shortcuts --no-launch` → 退出码 0；检查 `JingjingReader.exe`、`install.ps1`、`uninstall.ps1`、`README.md`、ProgID、`.md\OpenWithProgids`、卸载项；随后运行安装目录里的 `uninstall.ps1` → 安装目录、ProgID（安装前不存在时）、卸载项被删除，`.md` 其它值与 UserChoice 恢复/不变。
+- [ ] 静默参数错误：`--install-dir` 缺值或未知参数 → 退出码 2；安装失败（如目标目录不可写）→ 退出码 1 且输出原因。
+- [ ] `uninstall.ps1 -KeepFiles`：程序文件保留，但卸载项、开始菜单/桌面快捷方式与关联注册被清理（表现为「不再是已安装应用」）。
+- [ ] Windows 的 `UserChoice` 指向鲸鲸阅读器时卸载：只提示到「默认应用」重新选择，退出码仍为 0，不视为失败。
+- [ ] 未装 .NET 10 Desktop Runtime 的机器：.NET 宿主给出运行时安装提示（或安装器界面顶部显示下载链接），不崩溃；SmartScreen 提示可点「更多信息 → 仍要运行」绕过。
+
 ## 记录
 
 | 测试人 | 日期 | 系统 / WebView2 / .NET | 结果 | 备注 / 截图路径 |
