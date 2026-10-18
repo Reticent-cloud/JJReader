@@ -90,12 +90,15 @@
 ## 10. `.md` 关联安装/卸载前后一致
 
 - [ ] 记录安装前注册表（见前置），运行 `pwsh -NoProfile -File scripts/install.ps1`。
+- [ ] 安装脚本把程序复制到 `%LOCALAPPDATA%\Programs\JingjingReader`（或 `-InstallDir` 指定目录），并从该目录注册；从安装目录启动能正常阅读（不是从源码树 `out\` 启动）。
 - [ ] `reg query "HKCU\Software\Classes\JingjingReader.md"` 存在；`.md` 的 OpenWithProgids 含 `JingjingReader.md`。
 - [ ] 在「默认应用」中把 `.md` 设为鲸鲸阅读器，双击 `.md` 能打开。
-- [ ] 运行 `pwsh -NoProfile -File scripts/uninstall.ps1`（无需确认，直接执行并按退出码返回结果）。
+- [ ] 运行 `pwsh -NoProfile -File scripts/uninstall.ps1`（无需确认，直接执行并按退出码返回结果）；程序文件被删除，用户数据保留。
 - [ ] 再次 `reg query` 对比：`.md` 与 `JingjingReader.md` 的关键键值恢复安装前状态（或本程序新增项被删除）。
 - [ ] 备份文件缺失/损坏时执行卸载 → 明确提示且不破坏注册表（可先备份再手动改坏 `%APPDATA%\JingjingReader\assoc-backup.json` 测试）。
 - [ ] 重复安装/卸载不报错、不产生重复键值。
+- [ ] 未签名的 exe 首次运行时出现 SmartScreen 提示，选择「运行」后能启动（无网络时显示「无法访问 SmartScreen」属正常）。
+- [ ] （可选）把 exe 放到受限/同步目录直接运行，若出现 WebView2 `0x800700AA`，失败对话框的「重试」「清除缓存并重试」可恢复；WebView2 缓存目录被改名备份，文档与设置不受影响。
 
 ## 11. 长路径（> 255 字符）
 

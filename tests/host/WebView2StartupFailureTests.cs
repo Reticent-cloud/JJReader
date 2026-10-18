@@ -42,9 +42,29 @@ public class WebView2StartupFailureTests
         var model = WebView2StartupFailure.BuildDialogModel(new InvalidOperationException("HRESULT 0x80070005"));
 
         Assert.False(model.RuntimeMissing);
+        Assert.False(model.ResourceBusy);
         Assert.Contains("初始化失败", model.Summary);
         Assert.Contains("0x80070005", model.Detail);
         Assert.Equal(WebView2StartupFailure.DownloadUrl, model.DownloadUrl);
+        Assert.Equal("重试", model.RetryButtonText);
+        Assert.Equal("清除缓存并重试", model.ClearCacheButtonText);
+        Assert.False(string.IsNullOrWhiteSpace(model.UserDataFolder));
+    }
+
+    [Fact]
+    public void Busy_error_explains_lock_and_offers_cache_reset()
+    {
+        var exception = new System.Runtime.InteropServices.COMException(
+            "资源被占用", WebView2Recovery.ErrorBusy);
+
+        var model = WebView2StartupFailure.BuildDialogModel(exception);
+
+        Assert.True(model.ResourceBusy);
+        Assert.False(model.RuntimeMissing);
+        Assert.Contains("0x800700AA", model.Summary);
+        Assert.Contains("清除缓存并重试", model.Summary);
+        Assert.Equal("重试", model.RetryButtonText);
+        Assert.Equal("清除缓存并重试", model.ClearCacheButtonText);
     }
 
     [Fact]

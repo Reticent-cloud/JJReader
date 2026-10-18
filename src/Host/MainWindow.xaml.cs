@@ -50,6 +50,12 @@ public partial class MainWindow : Window
     /// <summary>WebView2 启动失败时只弹一次原生对话框（重试/重载不再重复打扰）。</summary>
     private bool _webViewFailureShown;
 
+    /// <summary>WebView2 失败后用户主动「重试/清除缓存并重试」的次数（0x800700AA 时最多重试一次）。</summary>
+    private int _webViewRetryCount;
+
+    /// <summary>解释页只插入一次（重试失败后再次显示时避免重复堆叠）。</summary>
+    private bool _explanationShown;
+
     /// <summary>
     /// 离屏自检窗口（--verify-render / --verify-pdf）不写回窗口几何：它们把窗口放到 -32000，
     /// 若照常保存会覆盖用户真实的窗口位置/大小。由 VerifyRender/VerifyPdf 在 Show 前设置。
@@ -238,9 +244,9 @@ public partial class MainWindow : Window
         {
             // 窗口初始化是 UI 顶层边界：WebView2 运行时缺失/初始化失败时记录并弹原生对话框，
             // 不让异常冒泡成未处理异常（I3 / spec §5.11）。
-            DebugLog.Write($"WebView2 初始化失败：{exception}");
+            DebugLog.Write($"WebView2 初始化失败：{exception}；用户数据目录={_webViewDataFolder}；资源被占用={WebView2Recovery.IsResourceBusy(exception)}");
             ConsoleHelper.WriteLine($"ERROR WebView2 初始化失败：{exception.Message}");
-            ShowWebView2StartupFailure(exception);
+            await ShowWebView2StartupFailureAsync(exception);
             if (SuppressFailureDialog)
             {
                 // 命令行自检：WebView2 无法初始化时没有可等待的 renderDone，直接以退出码 2 失败。
@@ -256,9 +262,9 @@ public partial class MainWindow : Window
     /// 关闭后显示 WPF 解释页并保持窗口可用（缺运行时连 NavigateToString 都无法渲染，所以用 WPF 控件承载说明）。
     /// 只弹一次：重试/重载失败不重复打扰。
     /// </summary>
-    private void ShowWebView2StartupFailure(Exception exception)
+    private async Task ShowWebView2StartupFailureAsync(Exception exception)
     {
-        if (_webViewFailureShown)
+        if (_webViewFailureShown && _webViewRetryCount > 0)
         {
             return;
         }
@@ -272,6 +278,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        var retry = false;
+        var clearCache = false;
         try
         {
             var dialog = new Window
@@ -282,7 +290,7 @@ public partial class MainWindow : Window
                 ResizeMode = ResizeMode.NoResize,
                 ShowInTaskbar = false,
                 SizeToContent = SizeToContent.Height,
-                Width = 560,
+                Width = 580,
                 Background = SystemColors.WindowBrush,
             };
 
@@ -300,6 +308,14 @@ public partial class MainWindow : Window
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
                 Foreground = SystemColors.GrayTextBrush,
+                Margin = new Thickness(0, 0, 0, 6),
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"用户数据目录：{model.UserDataFolder}",
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 11,
+                Foreground = SystemColors.GrayTextBrush,
                 Margin = new Thickness(0, 0, 0, 16),
             });
 
@@ -308,11 +324,22 @@ public partial class MainWindow : Window
                 Orientation = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right,
             };
+
+            if (!model.RuntimeMissing)
+            {
+                var retryButton = new Button { Content = model.RetryButtonText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
+                retryButton.Click += (_, _) => { retry = true; dialog.Close(); };
+                var clearButton = new Button { Content = model.ClearCacheButtonText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
+                clearButton.Click += (_, _) => { retry = true; clearCache = true; dialog.Close(); };
+                buttons.Children.Add(retryButton);
+                buttons.Children.Add(clearButton);
+            }
+
             var download = new Button { Content = model.DownloadButtonText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
             download.Click += (_, _) => TryOpenExternal(model.DownloadUrl);
             var openDataDir = new Button { Content = model.OpenDataDirButtonText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
             openDataDir.Click += (_, _) => TryOpenDirectory(model.DataDir);
-            var close = new Button { Content = model.CloseButtonText, Padding = new Thickness(12, 4, 12, 4), IsDefault = true, IsCancel = true };
+            var close = new Button { Content = model.CloseButtonText, Padding = new Thickness(12, 4, 12, 4), IsCancel = true };
             close.Click += (_, _) => dialog.Close();
             buttons.Children.Add(download);
             buttons.Children.Add(openDataDir);
@@ -328,7 +355,50 @@ public partial class MainWindow : Window
             MessageBox.Show(this, model.Summary + Environment.NewLine + model.DownloadUrl, model.Title);
         }
 
+        if (retry)
+        {
+            await TryRecoverWebViewAsync(clearCache, exception);
+            return;
+        }
+
         ShowWebView2ExplanationPage(model);
+    }
+
+    /// <summary>
+    /// 用户在失败对话框里点了「重试 / 清除缓存并重试」：可选把用户数据目录改名备份（不动文档与设置），
+    /// 然后重新初始化一次 WebView2；仍失败则显示解释页（不再弹第二个对话框）。
+    /// </summary>
+    private async Task TryRecoverWebViewAsync(bool clearCache, Exception original)
+    {
+        _webViewRetryCount++;
+        WebView.Visibility = Visibility.Visible;
+
+        if (clearCache)
+        {
+            var reset = WebView2Recovery.TryResetUserDataFolder(_webViewDataFolder, DateTimeOffset.Now, out var backupPath);
+            DebugLog.Write(reset
+                ? $"已重置 WebView2 用户数据目录（备份到 {backupPath}），准备重试初始化"
+                : $"重置 WebView2 用户数据目录失败：{_webViewDataFolder}");
+
+            if (!reset)
+            {
+                ShowWebView2ExplanationPage(WebView2StartupFailure.BuildDialogModel(original));
+                return;
+            }
+        }
+
+        _webViewInitialization = null;
+        try
+        {
+            await EnsureWebViewInitializedAsync();
+            DebugLog.Write("WebView2 重试初始化成功");
+            TryPushPendingDocument();
+        }
+        catch (Exception retryError)
+        {
+            DebugLog.Write($"WebView2 重试初始化仍失败：{retryError}");
+            ShowWebView2ExplanationPage(WebView2StartupFailure.BuildDialogModel(retryError));
+        }
     }
 
     /// <summary>I3：关闭对话框后的解释页（WebView2 不可用时用 WPF 控件承载，窗口继续可用）。</summary>
@@ -336,6 +406,12 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (_explanationShown)
+            {
+                return;
+            }
+
+            _explanationShown = true;
             WebView.Visibility = Visibility.Collapsed;
             if (Content is not Panel root)
             {
@@ -372,7 +448,9 @@ public partial class MainWindow : Window
             {
                 Text = model.RuntimeMissing
                     ? $"安装完成后重新启动本程序。数据目录：{model.DataDir}"
-                    : $"可尝试重新启动；若仍失败，请安装/修复 WebView2 Runtime。数据目录：{model.DataDir}",
+                    : model.ResourceBusy
+                        ? $"请先关闭其它鲸鲸阅读器窗口再重启；仍失败时在启动失败对话框里点「清除缓存并重试」。WebView2 缓存：{model.UserDataFolder}；数据目录：{model.DataDir}"
+                        : $"可尝试重新启动；若仍失败，请安装/修复 WebView2 Runtime。数据目录：{model.DataDir}",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = SystemColors.GrayTextBrush,
                 FontSize = 13,

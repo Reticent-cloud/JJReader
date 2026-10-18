@@ -255,3 +255,4 @@ Workspace: D:\dsh-work\MD阅读器\.worktrees\feat\jingjing-reader\.superpowers\
 - 最终微复核（c01e113..0af4231）：功能侧零 Critical/Important；唯一残留为文档数字，已由 5e05e83 同步
 - 收尾：本地合并 feat/jingjing-reader → master（merge commit 054f379），归档台账与报告（6f9ec4a）；分支与 worktree 已删除，工作区干净
 - 合并结果验证：同一提交在干净导出副本中 host 382/382 通过；主仓库内 `dotnet test` 因本会话沙箱无法打开父进程句柄（Win32 5）失败，属环境限制
+- 合并后修复（运行位置问题）：用户从 `out\` 直接运行时报 WebView2 `0x800700AA`（资源被占用）；根因是工作区目录的受限安全标签/位置，不是代码逻辑（同一 exe 复制到普通目录可正常渲染）。修复：`install.ps1` 改为先复制到 `%LOCALAPPDATA%\Programs\JingjingReader` 再注册（`-Portable` 保留就地模式），`uninstall.ps1` 默认删除安装目录（`-KeepFiles` 保留）；WebView2 失败对话框新增「重试」「清除缓存并重试」（重置缓存目录，不动文档/设置）；README/spec/清单同步；新增 `WebView2Recovery` 纯函数与 6 条单测（host 388）。

@@ -43,7 +43,7 @@ pwsh -NoProfile -File scripts/build.ps1 -SelfContained
 # 产物：out-selfcontained\（同样复制整个目录）
 ```
 
-### 2. 注册 `.md` 打开方式
+### 2. 安装（推荐）
 
 ```powershell
 pwsh -NoProfile -File scripts/install.ps1
@@ -51,15 +51,18 @@ pwsh -NoProfile -File scripts/install.ps1
 pwsh -NoProfile -File scripts/install.ps1 -OpenSettings
 ```
 
-安装脚本调用 `JingjingReader.exe --install`，只写当前用户的 `HKCU\Software\Classes`（不需要管理员权限）：注册 ProgID `JingjingReader.md` 并把它加入 `.md` 的「打开方式」。如果 `.md` 已有默认程序，Windows 不会允许程序静默抢占，需要到 **设置 → 应用 → 默认应用** 里为 `.md` 选择「鲸鲸阅读器」一次。
+安装脚本分两步：
 
-脚本默认使用 `out\JingjingReader.exe`（分发包里脚本与 exe 同目录，优先用同目录的 exe）；程序在其它位置时用 `-ExePath <路径>` 指定。
+1. 把 `out\` 里的程序文件复制到 `%LOCALAPPDATA%\Programs\JingjingReader`（可用 `-InstallDir` 换位置；`-Portable` 则不复制、只注册当前所在的 exe）。
+2. 调用 `JingjingReader.exe --install`，只写当前用户的 `HKCU\Software\Classes`（不需要管理员权限）：注册 ProgID `JingjingReader.md` 并把它加入 `.md` 的「打开方式」。如果 `.md` 已有默认程序，Windows 不会允许程序静默抢占，需要到 **设置 → 应用 → 默认应用** 里为 `.md` 选择「鲸鲸阅读器」一次。
 
-### 3. 直接运行
+> **为什么要复制到用户目录**：直接从源码树、沙箱/受限目录、OneDrive 或网络盘运行 `out\JingjingReader.exe` 时，Windows 的安全标签或同步机制可能导致 WebView2 初始化失败（`0x800700AA`，资源被占用）。安装到普通用户程序目录可避免这类问题。脚本默认优先用同目录的 exe，程序在别处时用 `-ExePath <路径>` 指定。
 
-```powershell
-.\out\JingjingReader.exe "D:\资料\笔记.md"
-```
+### 3. 运行
+
+安装后从 `%LOCALAPPDATA%\Programs\JingjingReader\JingjingReader.exe` 启动（安装时加 `-OpenInstallDir` 可直接打开该目录），或直接双击关联后的 `.md`。
+
+> 程序未做代码签名：首次运行可能出现 SmartScreen 提示「Windows 已保护你的电脑」；没有网络时会显示「无法访问 SmartScreen」，点「运行」即可。若系统仍拦截，可右键 exe → 属性 → 勾选「解除锁定」后重试。
 
 ## 使用
 
@@ -153,12 +156,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
 ## 卸载
 
 ```powershell
-pwsh -NoProfile -File scripts/uninstall.ps1
-# 程序不在 out\ 时：
-pwsh -NoProfile -File scripts/uninstall.ps1 -ExePath "D:\apps\JingjingReader\JingjingReader.exe"
+pwsh -NoProfile -File scripts/uninstall.ps1            # 移除 .md 打开方式，并删除默认安装目录里的程序文件
+pwsh -NoProfile -File scripts/uninstall.ps1 -KeepFiles # 只移除打开方式，保留程序文件
+pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 ```
 
-卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态（无需确认提示：脚本直接执行并按结果返回退出码）。**Classes 与「打开方式」可完整恢复；Windows `UserChoice` 由系统保护、程序无法改写**——若 `.md` 的默认应用仍指向鲸鲸阅读器，卸载会明确提示到「设置 → 应用 → 默认应用」重新选择（`ms-settings:defaultapps`），不视为卸载失败。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。卸载不会删除阅读偏好、最近文件与 WebView2 缓存；如需彻底清理，手动删除 `%APPDATA%\JingjingReader`（偏好/最近/位置/日志）与 `%LOCALAPPDATA%\JingjingReader\WebView2`（WebView2 缓存）；若曾设置 `JJ_DATA_DIR`（仅验收隔离），删除对应目录即可。
+卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态（无需确认提示：脚本直接执行并按结果返回退出码）。**Classes 与「打开方式」可完整恢复；Windows `UserChoice` 由系统保护、程序无法改写**——若 `.md` 的默认应用仍指向鲸鲸阅读器，卸载会明确提示到「设置 → 应用 → 默认应用」重新选择（`ms-settings:defaultapps`），不视为卸载失败。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。默认会删除安装目录里的程序文件（`-KeepFiles` 保留）；不会删除阅读偏好、最近文件与 WebView2 缓存，如需彻底清理，手动删除 `%APPDATA%\JingjingReader`（偏好/最近/位置/日志）与 `%LOCALAPPDATA%\JingjingReader\WebView2`（WebView2 缓存）；若曾设置 `JJ_DATA_DIR`（仅验收隔离），删除对应目录即可。
 
 ## 目录结构
 
@@ -212,6 +215,7 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -ExePath "D:\apps\JingjingReader\Jin
 - **图标与吉祥物为原创**：`src/Host/app.ico`（16/32/48/256）与 `src/Host/AboutMascot.png` 是 `scripts/gen-icon.py` 生成的「鲸鱼女仆娘」形象（16/32 为高对比剪影版，48/256 为细节版），前端 `web/src/mascot.js` 为同一形象的内联 SVG；不使用任何网络同人图。调整形象后重跑脚本即可复现。
 - **不支持**：数学公式 `$...$` / `$$...$$`、Mermaid、定义列表；内嵌 `<script>`/`<style>`/`<iframe>` 会被清洗移除；只读、无编辑、无多标签页、无全文搜索；不做笔记库级双链解析，`[[...]]` 只在当前文档目录及浅层子目录查找。
 - **长路径**：清单已声明 `longPathAware`，文件读取对超长路径做 `\\?\` 规范化；网络共享/权限受限目录仍受系统策略约束。
+- **运行位置与 `0x800700AA`**：把程序放在源码树、沙箱/受限目录、OneDrive 或网络盘上直接运行时，Windows 的安全标签或同步机制可能使 WebView2 初始化失败（`0x800700AA`，资源被占用）。推荐用 `scripts/install.ps1` 安装到 `%LOCALAPPDATA%\Programs\JingjingReader` 后从那里运行。失败对话框提供「重试」「清除缓存并重试」（只把 WebView2 缓存目录改名备份，不影响文档与设置）以及「下载 WebView2 运行时」「打开数据目录」。
 
 ## 许可
 

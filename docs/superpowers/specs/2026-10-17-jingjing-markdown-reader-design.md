@@ -282,7 +282,7 @@ MDReader/
 
 ### 5.9 文件关联与单实例
 
-- `install.ps1`：写 `HKCU\Software\Classes\JingjingReader.md`（含 `DefaultIcon`、`shell\open\command` 指向 `JingjingReader.exe "%1"`）、加入 `.md` 的 `OpenWithProgids`，并在「打开方式」中显示为**鲸鲸阅读器**。
+- `install.ps1`：先把程序文件复制到用户目录（默认 `%LOCALAPPDATA%\Programs\JingjingReader`，可用 `-InstallDir` 改、`-Portable` 跳过复制），再从安装目录的 `JingjingReader.exe --install` 写 `HKCU\Software\Classes\JingjingReader.md`（含 `DefaultIcon`、`shell\open\command` 指向 `JingjingReader.exe "%1"`）、加入 `.md` 的 `OpenWithProgids`，并在「打开方式」中显示为**鲸鲸阅读器**。复制的原因：直接从源码树/沙箱/受限目录、OneDrive 或网络盘运行可能触发 WebView2 `0x800700AA`（资源被占用）。
 - 「有效默认程序」按 Windows 的规则读取：`HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice\ProgId` 优先，没有 UserChoice 时才回退 `HKCU\Software\Classes\.md` 默认值。
 - 仅当有效默认程序不存在时才写入 `HKCU\Software\Classes\.md` 默认值；已有默认程序（含 UserChoice 指向别的程序）时只加入打开方式，并提示用户在「默认应用」中一键切换（提供按钮跳转 `ms-settings:defaultapps`）。
 - `uninstall.ps1`：删除本程序写入的注册表项、恢复安装前备份的原值（安装时先备份到 `%APPDATA%\JingjingReader\assoc-backup.json`）。**Classes 与打开方式可完整恢复；Windows `UserChoice` 由系统保护，需用户在「默认应用」中重新选择**——若 UserChoice 仍指向本程序，卸载输出明确警告并提示 `ms-settings:defaultapps`，但不视为失败。
@@ -307,6 +307,7 @@ MDReader/
 | 图片加载失败 | 固定 16:9 或按 `width/height` 的占位框 + alt 文本 |
 | 前端渲染异常 | try/catch → 降级为 `<pre>` 纯文本 + 错误条（不白屏） |
 | WebView2 运行时缺失 | 原生对话框说明 + 打开官方下载页按钮 |
+| WebView2 初始化失败（含 `0x800700AA` 资源被占用） | 原生对话框：说明 + 用户数据目录 + 「重试」/「清除缓存并重试」（仅把缓存目录改名备份，不动文档与设置）+ 下载运行时 + 打开数据目录；仍失败显示 WPF 解释页 |
 | 文件被外部修改（重新打开或 F5） | 按新内容渲染；若位置键变化则回到顶部并提示 |
 
 ### 5.12 文件夹浏览
@@ -378,7 +379,9 @@ MDReader/
 - 版本信息：产品名与文件说明（FileDescription）均为 `鲸鲸阅读器`，版本 `0.1.0`；关于面板显示版本、.NET、WebView2、
   OS、数据目录与 `.md` 关联状态。图标使用 `scripts/gen-icon.py` 生成的原创鲸鱼女仆娘多尺寸图标（16/32/48/256），关于面板显示同一形象的 256×256 透明 PNG（`AboutMascot.png`）。
 - 分发内容：`out\`（或 `out-selfcontained\`）整个目录即分发包，含 exe、`install.ps1`、`uninstall.ps1`、`README.md`；
-  install/uninstall 默认优先使用同目录的 exe（源码树中回退到 `..\out\JingjingReader.exe`）。`scripts/verify.ps1`
+  install/uninstall 默认优先使用同目录的 exe（源码树中回退到 `..\out\JingjingReader.exe`）。`install.ps1` 默认把分发包内容
+  复制到 `%LOCALAPPDATA%\Programs\JingjingReader` 再从该目录注册关联（`-Portable` 可保留「就地运行」模式）；
+  `uninstall.ps1` 默认在注销关联后删除安装目录（`-KeepFiles` 保留），用户数据目录保留。`scripts/verify.ps1`
   增加「分发包完整性」检查（四项均存在）。
 
 ---
