@@ -398,13 +398,7 @@ internal static class SetupEngine
                 }
             }
 
-            foreach (var required in new[]
-                     {
-                         SetupLogic.ExeFileName,
-                         SetupLogic.InstallScriptFileName,
-                         SetupLogic.UninstallScriptFileName,
-                         SetupLogic.ReadmeFileName,
-                     })
+            foreach (var required in SetupLogic.RequiredPayloadFileNames)
             {
                 if (!File.Exists(Path.Combine(stage, required)))
                 {

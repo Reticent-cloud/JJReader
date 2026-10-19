@@ -1,4 +1,5 @@
 using JingjingReader.Setup;
+using System.IO.Compression;
 using Xunit;
 
 namespace JingjingReader.Setup.Tests;
@@ -180,13 +181,29 @@ public class SetupLogicTests
     }
 
     [Fact]
-    public void BuildUninstallString_QuotesScriptPath()
+    public void BuildUninstallString_QuotesUninstallerExecutable()
     {
         var command = SetupLogic.BuildUninstallString(@"C:\Program Files\Jingjing Reader");
 
         Assert.Equal(
-            "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Program Files\\Jingjing Reader\\uninstall.ps1\"",
+            "\"C:\\Program Files\\Jingjing Reader\\卸载鲸鲸阅读器.exe\"",
             command);
+    }
+
+    [Fact]
+    public void BuildQuietUninstallString_AppendsSilent()
+    {
+        var command = SetupLogic.BuildQuietUninstallString(@"C:\Apps\鲸鲸 阅读器");
+
+        Assert.Equal("\"C:\\Apps\\鲸鲸 阅读器\\卸载鲸鲸阅读器.exe\" --silent", command);
+    }
+
+    [Fact]
+    public void GetUninstallerPath_UsesChineseFileNameInInstallDir()
+    {
+        Assert.Equal(
+            @"C:\Apps\JingjingReader\卸载鲸鲸阅读器.exe",
+            SetupLogic.GetUninstallerPath(@"C:\Apps\JingjingReader"));
     }
 
     [Fact]
@@ -200,9 +217,36 @@ public class SetupLogicTests
         Assert.Equal(@"C:\Apps\JingjingReader\JingjingReader.exe", values["DisplayIcon"]);
         Assert.Equal(@"C:\Apps\JingjingReader", values["InstallLocation"]);
         Assert.Equal(
-            "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Apps\\JingjingReader\\uninstall.ps1\"",
+            "\"C:\\Apps\\JingjingReader\\卸载鲸鲸阅读器.exe\"",
             values["UninstallString"]);
-        Assert.Equal(values["UninstallString"], values["QuietUninstallString"]);
+        Assert.Equal(
+            "\"C:\\Apps\\JingjingReader\\卸载鲸鲸阅读器.exe\" --silent",
+            values["QuietUninstallString"]);
+    }
+
+    [Fact]
+    public void RequiredPayloadFiles_IncludeChineseUninstaller()
+    {
+        Assert.Contains(SetupLogic.UninstallerFileName, SetupLogic.RequiredPayloadFileNames);
+        Assert.Contains("JingjingReader.exe", SetupLogic.RequiredPayloadFileNames);
+        Assert.Contains("uninstall.ps1", SetupLogic.RequiredPayloadFileNames);
+    }
+
+    [Fact]
+    public void PayloadZip_WhenPresent_ContainsChineseUninstaller()
+    {
+        // payload.zip 是构建产物（git 忽略）；干净源码树上没有时跳过实际 ZIP 检查，
+        // 仍由 RequiredPayloadFiles 断言安装器会校验卸载器。构建后（CI/本地冒烟）会真正解包检查。
+        var payload = FindPayloadZip();
+        if (payload is null)
+        {
+            return;
+        }
+
+        using var archive = ZipFile.OpenRead(payload);
+        Assert.Contains(
+            archive.Entries,
+            entry => entry.FullName.Equals(SetupLogic.UninstallerFileName, StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]
@@ -456,6 +500,27 @@ public class SetupLogicTests
         {
             TryDelete(root);
         }
+    }
+
+    private static string? FindPayloadZip()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(
+                directory.FullName,
+                "installer",
+                "JingjingReaderSetup",
+                "payload.zip");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return null;
     }
 
     private static string CreateTempDirectory()

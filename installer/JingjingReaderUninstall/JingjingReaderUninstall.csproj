@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>JingjingReader.Uninstall</RootNamespace>
+    <!-- 安装目录里直接可见的中文卸载器文件名（安装器 payload 也按这个文件名校验）。 -->
+    <AssemblyName>卸载鲸鲸阅读器</AssemblyName>
+    <Product>鲸鲸阅读器卸载程序</Product>
+    <AssemblyTitle>鲸鲸阅读器卸载程序</AssemblyTitle>
+    <Description>鲸鲸阅读器卸载程序（框架依赖单文件；调用安装目录里的 uninstall.ps1）</Description>
+    <Version>0.1.0</Version>
+    <!-- 复用应用图标（16/32/48/256），不维护第二套品牌资产。 -->
+    <ApplicationIcon>..\..\src\Host\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 发布形态：框架依赖（目标机需 .NET 10 Desktop Runtime）+ 单文件。 -->
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(RuntimeIdentifier)' != ''">true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\src\Host\app.ico" Link="app.ico" />
+  </ItemGroup>
+
+</Project>

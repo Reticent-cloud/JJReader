@@ -1,0 +1,236 @@
+<Window x:Class="JingjingReader.Uninstall.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="卸载鲸鲸阅读器"
+        Width="560"
+        Height="430"
+        MinWidth="520"
+        MinHeight="380"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="#F3F5F9"
+        Icon="app.ico"
+        FontFamily="Microsoft YaHei UI, Microsoft YaHei, Segoe UI"
+        FontSize="13"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <Window.Resources>
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Background" Value="#2F6FEB" />
+            <Setter Property="Padding" Value="20,10" />
+            <Setter Property="MinWidth" Value="88" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="9"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#2459C4" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#1D4AA8" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DangerButtonStyle" TargetType="Button"
+               BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Background" Value="#B42318" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="9"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#8F1B12" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#73150E" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="#1F2937" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="Padding" Value="16,9" />
+            <Setter Property="MinWidth" Value="80" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="#D6DDE8"
+                                BorderThickness="1"
+                                CornerRadius="9"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#F2F5FA" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#E8EDF5" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="26,22,26,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 标题区 -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <Border Width="56"
+                    Height="56"
+                    Background="White"
+                    BorderBrush="#E4E9F2"
+                    BorderThickness="1"
+                    CornerRadius="15">
+                <Image Source="app.ico" Width="40" Height="40" />
+            </Border>
+            <StackPanel Margin="14,2,0,0">
+                <TextBlock Text="卸载鲸鲸阅读器"
+                           FontSize="22"
+                           FontWeight="SemiBold"
+                           Foreground="#16202E" />
+                <TextBlock Text="版本 0.1.0 · 卸载程序"
+                           Foreground="#6B7688"
+                           Margin="0,5,0,0" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- 确认 / 进度 / 结果 -->
+        <Border Grid.Row="1"
+                Background="White"
+                BorderBrush="#E4E9F2"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="22,20"
+                Margin="0,18,0,0">
+            <Grid>
+                <StackPanel x:Name="ConfirmPanel">
+                    <TextBlock x:Name="ConfirmationText"
+                               Text="确定卸载鲸鲸阅读器？将移除程序与 .md 打开方式；设置/最近/阅读位置会保留。"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Foreground="#16202E"
+                               TextWrapping="Wrap" />
+                    <TextBlock x:Name="InstallDirText"
+                               Foreground="#6B7688"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Margin="0,10,0,0" />
+                    <Border Height="1" Background="#ECF0F6" Margin="0,16,0,14" />
+                    <TextBlock Text="卸载会注销 .md 打开方式、删除「设置 → 应用」里的卸载项与开始菜单/桌面快捷方式，并在本窗口关闭后删除安装目录。"
+                               Foreground="#4A5568"
+                               TextWrapping="Wrap"
+                               LineHeight="20" />
+                    <TextBlock Text="设置、最近文件与阅读位置保留在 %APPDATA%\JingjingReader，不会随程序删除。"
+                               Foreground="#6B7688"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               LineHeight="19"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+
+                <StackPanel x:Name="ProgressPanel" Visibility="Collapsed">
+                    <TextBlock x:Name="StatusText"
+                               Text="正在准备卸载…"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Foreground="#16202E" />
+                    <ProgressBar IsIndeterminate="True"
+                                 Height="6"
+                                 Margin="0,14,0,0"
+                                 Background="#E8EDF5"
+                                 Foreground="#2F6FEB" />
+                    <TextBlock Text="正在把卸载脚本复制到临时目录并启动；随后本窗口会关闭，脚本继续完成删除。"
+                               Foreground="#6B7688"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               LineHeight="19"
+                               Margin="0,12,0,0" />
+                </StackPanel>
+
+                <StackPanel x:Name="ResultPanel" Visibility="Collapsed">
+                    <TextBlock x:Name="ResultTitle"
+                               Text="卸载已开始"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               Foreground="#16794C" />
+                    <ScrollViewer MaxHeight="190"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Margin="0,8,0,0">
+                        <TextBlock x:Name="ResultDetail"
+                                   TextWrapping="Wrap"
+                                   Foreground="#4A5568"
+                                   LineHeight="20" />
+                    </ScrollViewer>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 底部按钮 -->
+        <StackPanel Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,18,0,0">
+            <Button x:Name="CancelButton"
+                    Content="取消"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Margin="0,0,10,0"
+                    Click="OnCancelClick" />
+            <Button x:Name="UninstallButton"
+                    Content="卸载"
+                    Style="{StaticResource DangerButtonStyle}"
+                    Click="OnUninstallClick" />
+            <Button x:Name="CloseButton"
+                    Content="关闭"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Visibility="Collapsed"
+                    Click="OnCloseClick" />
+        </StackPanel>
+    </Grid>
+</Window>

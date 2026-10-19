@@ -386,45 +386,55 @@ MDReader/
   不是单文件的一部分，分发时必须复制整个目录）；依赖系统 .NET 10 运行时。自包含形态在同样结构上再带 .NET 运行时 DLL。
 - 版本信息：产品名与文件说明（FileDescription）均为 `鲸鲸阅读器`，版本 `0.1.0`；关于面板显示版本、.NET、WebView2、
   OS、数据目录与 `.md` 关联状态。图标与插画来自 `assets/mascot-source.jpg`（用户提供的「鲸鱼女仆娘看书」插画），`scripts/gen-icon.py` 圆裁/去水印后生成 16/32/48/256 图标（16/32 用脸部特写）与关于面板 512×512 透明 PNG（`AboutMascot.png`），并导出前端内联 data URI（`web/src/mascot-photo.js`）。
-- 分发内容：`out\`（或 `out-selfcontained\`）整个目录即分发包，含 exe、`install.ps1`、`uninstall.ps1`、`README.md`；
+- 分发内容：`out\`（或 `out-selfcontained\`）整个目录即绿色分发包，含 exe、`install.ps1`、`uninstall.ps1`、`README.md`；
   install/uninstall 默认优先使用同目录的 exe（源码树中回退到 `..\out\JingjingReader.exe`）。`install.ps1` 默认把分发包内容
   复制到 `%LOCALAPPDATA%\Programs\JingjingReader` 再从该目录注册关联（`-Portable` 可保留「就地运行」模式）；
-  `uninstall.ps1` 默认在注销关联后删除安装目录（`-KeepFiles` 保留），用户数据目录保留。`scripts/verify.ps1`
-  增加「分发包完整性」检查（四项均存在）。
+  `uninstall.ps1` 默认在注销关联后删除安装目录（`-KeepFiles` 保留），用户数据目录保留。安装包 payload 额外含
+  图形卸载器 `卸载鲸鲸阅读器.exe`（绿色分发包不含）。`scripts/verify.ps1` 增加「分发包完整性」检查（四项均存在）。
 
 ### 8.1 安装包（新增，2026-10-18）
 
 - 产物：`installer/JingjingReaderSetup/`（WPF，`net10.0-windows`，**框架依赖**、`PublishSingleFile`）。
-  `scripts/build-installer.ps1` 先运行 `scripts/build.ps1` 保证 `out\` 最新，再用 `Compress-Archive` 把 `out\*`
-  打成 `installer/JingjingReaderSetup/payload.zip`（构建产物，git 忽略），随后
+  `scripts/build-installer.ps1` 先运行 `scripts/build.ps1` 保证 `out\` 最新，再发布
+  `installer/JingjingReaderUninstall/`（WPF，框架依赖单文件，产物文件名 `卸载鲸鲸阅读器.exe`，与安装器同图标），
+  把卸载器放进 `out\` 后用 `Compress-Archive` 把 `out\*` 打成 `installer/JingjingReaderSetup/payload.zip`
+  （构建产物，git 忽略），随后
   `dotnet publish ... -r win-x64 --self-contained false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true`
-  输出 `dist\JingjingReaderSetup.exe`。安装器把 `payload.zip` 作为 EmbeddedResource 嵌入 exe（本机实测 payload 1.61 MB，
-  单文件 exe 2.25 MB；比 5–8 MB 的预估小，因为框架依赖不打包 WPF 运行时）。
+  输出 `dist\JingjingReaderSetup.exe`，并把 `卸载鲸鲸阅读器.exe` 复制到 `dist\` 便于查看。安装器把 `payload.zip`
+  作为 EmbeddedResource 嵌入 exe（2026-10-19 实测 payload 2.29 MB、安装包 2.94 MB、卸载器 0.62 MB；
+  框架依赖不打包 WPF 运行时）。
 - 安装步骤（幂等，可重复运行覆盖旧版本）：
   1. 解压 payload 到安装目录：先写同级 `<installDir>.staging-<guid>`，校验 `JingjingReader.exe`/`install.ps1`/
-     `uninstall.ps1`/`README.md` 后用目录切换覆盖；旧目录备份为 `.old-<guid>`，失败恢复，成功删除；
+     `uninstall.ps1`/`卸载鲸鲸阅读器.exe`/`README.md` 后用目录切换覆盖；旧目录备份为 `.old-<guid>`，失败恢复，成功删除；
      目标程序被占用时提示「请先关闭鲸鲸阅读器」，权限不足时提示改用可写目录。
   2. 运行 `<installDir>\JingjingReader.exe --install`（只写 HKCU），失败时把退出码与输出展示给用户。
   3. 创建开始菜单快捷方式 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\鲸鲸阅读器.lnk`；
      桌面快捷方式可选（`%USERPROFILE%\Desktop`，实际使用 `SpecialFolder.DesktopDirectory` 以支持 OneDrive 重定向）。
   4. 写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\JingjingReader`：
      `DisplayName=鲸鲸阅读器`、`DisplayVersion=0.1.0`、`DisplayIcon=<installDir>\JingjingReader.exe`、
-     `Publisher`、`InstallLocation`、`UninstallString`/`QuietUninstallString=
-     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<installDir>\uninstall.ps1"`、`NoModify/NoRepair/EstimatedSize`。
+     `Publisher`、`InstallLocation`、`UninstallString="<installDir>\卸载鲸鲸阅读器.exe"`、
+     `QuietUninstallString="<installDir>\卸载鲸鲸阅读器.exe" --silent`、`NoModify/NoRepair/EstimatedSize`。
   5. 检查有效默认程序：`FileExts\.md\UserChoice` 的 `ProgId` 优先，回退 `Software\Classes\.md` 默认值；
      不是 `JingjingReader.md` 时结果页显示「需要确认」提示并提供 `ms-settings:defaultapps` 按钮（不静默失败）。
 - 静默模式：`JingjingReaderSetup.exe --silent --install-dir <目录> [--no-shortcuts] [--no-launch]`，
   不弹 UI，退出码 `0` 成功 / `1` 安装失败 / `2` 参数错误；失败输出原因。默认注册关联、创建快捷方式并启动程序；
   `--no-shortcuts`/`--no-launch` 分别关闭快捷方式与自动启动。`--help` 输出用法。
-- 卸载：复用 `uninstall.ps1`；该脚本在 `--uninstall` 成功后再删除安装器写入的卸载项与开始菜单/桌面快捷方式，
-  保留用户数据，并保持 `-KeepFiles` 语义（只保留程序文件，不再保留安装注册）。
-- 运行时：安装器与程序均为框架依赖，目标机需 .NET 10 Desktop Runtime；安装器在标准位置检测
+- 图形卸载器：安装目录里的 `卸载鲸鲸阅读器.exe`（WPF，`--silent` 不弹 UI、退出码 `0` = 已启动脚本、`1` = 启动失败、
+  `2` = 参数错误；`--install-dir` 可覆盖安装目录，默认自身所在目录）。确认窗口文案明确「设置/最近/阅读位置会保留」；
+  确认后把安装目录里的 `uninstall.ps1` 复制到 `%TEMP%\jj-uninstall-<guid>\`，以独立进程启动
+  `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <temp>\uninstall.ps1 -InstallDir "<installDir>"` 后立即退出。
+  卸载脚本在卸载器退出后删除安装目录（最多重试 5 秒，仍失败则提示手动删除并返回非 0）；成功后自清理临时目录，
+  失败保留 `uninstall.log` 供排查。
+- 卸载：运行图形卸载器、从「设置 → 应用」卸载（同一 `UninstallString`）或直接运行 `uninstall.ps1`；
+  该脚本在 `--uninstall` 成功后再删除安装器写入的卸载项与开始菜单/桌面快捷方式，保留用户数据，
+  并保持 `-KeepFiles` 语义（只保留程序文件，不再保留安装注册）。
+- 运行时：安装器、卸载器与程序均为框架依赖，目标机需 .NET 10 Desktop Runtime；安装器在标准位置检测
   `Microsoft.WindowsDesktop.App 10.x`，缺失时在界面顶部提示下载链接；运行时完全缺失时由 .NET 宿主给出安装提示。
-- UI：产品名/版本/图标、安装目录选择、关联与桌面快捷方式复选框、安装/取消按钮、进度文案、结果页
-  （打开鲸鲸阅读器 / 打开「默认应用」设置 / 完成）；圆角风格，不引入第三方 UI 依赖。
-- 验收：`scripts/verify.ps1` 的 16 项自动验收**不包含**安装器（安装器不写 verify 判据）；安装器逻辑由
+- UI：安装器产品名/版本/图标、安装目录选择、关联与桌面快捷方式复选框、安装/取消按钮、进度文案、结果页
+  （打开鲸鲸阅读器 / 打开「默认应用」设置 / 完成）；卸载器确认/进度/结果页。均圆角风格，不引入第三方 UI 依赖。
+- 验收：`scripts/verify.ps1` 的 16 项自动验收**不包含**安装器（安装器不写 verify 判据）；安装器/卸载器逻辑由
   `tests/installer` 的 xUnit 覆盖，安装/卸载/快捷方式/静默模式由手测清单 §19 与
-  `docs/sdd/installer-report.md` 的冒烟证据覆盖。
+  `docs/sdd/uninstaller-report.md`（及历史 `installer-report.md`）的冒烟证据覆盖。
 
 ---
 

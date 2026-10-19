@@ -19,8 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 直接链接安装器的纯逻辑文件，避免测试构建依赖 WPF 项目与 payload.zip。 -->
+    <!-- 直接链接安装器/卸载器的纯逻辑文件，避免测试构建依赖 WPF 项目、payload.zip 与发布产物。 -->
     <Compile Include="..\..\installer\JingjingReaderSetup\SetupLogic.cs" Link="SetupLogic.cs" />
+    <Compile Include="..\..\installer\JingjingReaderUninstall\UninstallLogic.cs" Link="UninstallLogic.cs" />
   </ItemGroup>
 
 </Project>

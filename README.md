@@ -30,20 +30,20 @@
 
 ```powershell
 pwsh -NoProfile -File scripts/build-installer.ps1
-# 产物：dist\JingjingReaderSetup.exe
+# 产物：dist\JingjingReaderSetup.exe（安装后安装目录里含「卸载鲸鲸阅读器.exe」）
 ```
 
-安装器是 WPF（.NET 10）的**框架依赖单文件** exe，内嵌由 `out\` 打包成的 `payload.zip`（构建脚本生成，git 忽略）。双击后选择安装目录（默认 `%LOCALAPPDATA%\Programs\JingjingReader`），勾选：
+安装器是 WPF（.NET 10）的**框架依赖单文件** exe，内嵌由 `out\` + 卸载器打包成的 `payload.zip`（构建脚本生成，git 忽略）。双击后选择安装目录（默认 `%LOCALAPPDATA%\Programs\JingjingReader`），勾选：
 
 - 「将 .md 打开方式设为鲸鲸阅读器」（默认勾选）；
 - 「创建桌面快捷方式」（默认勾选）；开始菜单快捷方式始终创建。
 
 安装步骤（幂等，可重复运行覆盖旧版本）：
 
-1. 把 payload 解压到安装目录（先写同级临时目录再整体替换；程序正在运行时提示「请先关闭鲸鲸阅读器」，失败尽量不留半成品）；
+1. 把 payload 解压到安装目录（含 `JingjingReader.exe`、`install.ps1`、`uninstall.ps1`、`卸载鲸鲸阅读器.exe`、README；先写同级临时目录再整体替换；程序正在运行时提示「请先关闭鲸鲸阅读器」，失败尽量不留半成品）；
 2. 运行 `<安装目录>\JingjingReader.exe --install` 注册当前用户的 `.md` 打开方式；
 3. 创建开始菜单 `鲸鲸阅读器.lnk`（桌面快捷方式可选）；
-4. 写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\JingjingReader` 卸载项（`设置 → 应用` 可卸载）；
+4. 写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\JingjingReader` 卸载项（`设置 → 应用` 可卸载，`UninstallString` 指向安装目录里的「卸载鲸鲸阅读器.exe」）；
 5. 检查 `.md` 的有效默认程序（`UserChoice` 优先、`HKCU\Software\Classes\.md` 回退）。若仍不是鲸鲸阅读器，结果页会明确提示并提供「打开「默认应用」设置」按钮；在 Windows 里选择一次即可永久生效，安装器不会、也无法静默改写 `UserChoice`。
 
 静默安装：
@@ -57,14 +57,14 @@ dist\JingjingReaderSetup.exe --silent --install-dir "D:\apps\JingjingReader" --n
 - `--no-launch`：安装完成后不自动启动程序；
 - `--help`：查看用法。静默退出码：`0` 成功、`1` 安装失败、`2` 参数错误。
 
-卸载：**设置 → 应用 → 已安装的应用 → 鲸鲸阅读器 → 卸载**，或运行安装目录里的 `uninstall.ps1`（`-KeepFiles` 只保留程序文件）。卸载会注销 `.md` 打开方式、删除安装器写入的卸载项与开始菜单/桌面快捷方式；用户数据（`%APPDATA%\JingjingReader`）保留。
+卸载：**设置 → 应用 → 已安装的应用 → 鲸鲸阅读器 → 卸载**，或双击安装目录里的「**卸载鲸鲸阅读器.exe**」（确认后启动 `uninstall.ps1`），也可以直接运行 `uninstall.ps1`（`-KeepFiles` 只保留程序文件）。卸载会注销 `.md` 打开方式、删除安装器写入的卸载项与开始菜单/桌面快捷方式；用户数据（`%APPDATA%\JingjingReader`）保留。图形卸载器在关闭结果窗口后由脚本删除安装目录；失败日志保留在 `%TEMP%\jj-uninstall-<guid>\uninstall.log`。
 
 限制与说明：
 
 - 未做代码签名，首次运行会触发 SmartScreen：「Windows 已保护你的电脑」→「更多信息」→「仍要运行」。无网络时显示「无法访问 SmartScreen」属正常。
-- 安装器与程序都是**框架依赖**，目标机需要 .NET 10 Desktop Runtime；缺失时 .NET 宿主会提示下载，安装器界面也会检测标准安装位置并提示下载链接（不会崩溃）。
+- 安装器、卸载器与程序都是**框架依赖**，目标机需要 .NET 10 Desktop Runtime；缺失时 .NET 宿主会提示下载，安装器界面也会检测标准安装位置并提示下载链接（不会崩溃）。
 - 默认应用受 Windows `UserChoice` 哈希保护，程序不能静默设置；安装后需在「默认应用」里确认一次。
-- 与绿色版 `out\` 的关系：安装包内容就是 `out\` 的完整副本（exe + WebView2 加载器 + `install.ps1`/`uninstall.ps1` + README）；安装后等价于运行 `install.ps1`，再额外创建快捷方式、写卸载项并检查默认应用。绿色版仍可继续用 `scripts/install.ps1` 手动安装。
+- 与绿色版 `out\` 的关系：安装包内容以 `out\` 为基础（exe + WebView2 加载器 + `install.ps1`/`uninstall.ps1` + README），构建安装包时额外把「卸载鲸鲸阅读器.exe」放进 payload；安装后等价于运行 `install.ps1`，再额外创建快捷方式、写卸载项并检查默认应用。绿色版仍可继续用 `scripts/install.ps1` 手动安装；单独运行 `build.ps1` 的 `out\` 不含图形卸载器。
 
 ### 1. 获取程序
 
@@ -74,7 +74,7 @@ dist\JingjingReaderSetup.exe --silent --install-dir "D:\apps\JingjingReader" --n
 pwsh -NoProfile -File scripts/build.ps1
 ```
 
-产物是 `out\` 目录（`JingjingReader.exe` 及 `WebView2Loader.dll`、`runtimes\` 等运行所需文件），并附带 `install.ps1`、`uninstall.ps1` 与 `README.md`。**分发时请复制整个 `out\` 目录**，不要只复制 exe：WebView2 的原生加载器不是单文件的一部分，安装/卸载脚本也依赖同目录的 exe。
+产物是 `out\` 目录（`JingjingReader.exe` 及 `WebView2Loader.dll`、`runtimes\` 等运行所需文件），并附带 `install.ps1`、`uninstall.ps1` 与 `README.md`。**分发时请复制整个 `out\` 目录**，不要只复制 exe：WebView2 的原生加载器不是单文件的一部分，安装/卸载脚本也依赖同目录的 exe。图形卸载器「卸载鲸鲸阅读器.exe」只随安装包 payload 安装，单独运行 `build.ps1` 的 `out\` 不含它。
 
 没有安装 .NET 10 运行时的电脑可以用 self-contained 构建（内置运行时，体积约 130–140 MB，首次构建可能需要 NuGet 访问运行时包）：
 
@@ -160,7 +160,7 @@ pwsh -NoProfile -File scripts/build-installer.ps1      # 安装包 → dist\Jing
 
 构建脚本依次执行：`web/` 下 `npm ci` 与 `npm run build`（esbuild → `web/dist/md-engine.js`，体积门禁 640 KB）→ 拷贝到 `src/Host/Resources/md-engine.js` → 清空目标目录 → `dotnet publish`（Release、win-x64、PublishSingleFile）→ 拷入 `install.ps1` / `uninstall.ps1` / `README.md`。自包含构建体积实测约 130–140 MB（首次需要 NuGet 运行时包缓存）。
 
-安装包构建脚本会先运行 `scripts/build.ps1` 生成最新 `out\`，再把 `out\*` 压缩成 `installer/JingjingReaderSetup/payload.zip`，最后以**框架依赖单文件**发布 WPF 安装器到 `dist\JingjingReaderSetup.exe`（当前约 2.25 MB；payload 约 1.61 MB）。`build.ps1` 不会自动构建安装包，需要时单独运行 `build-installer.ps1`。
+安装包构建脚本会先运行 `scripts/build.ps1` 生成最新 `out\`，再以**框架依赖单文件**发布 WPF 卸载器并把「卸载鲸鲸阅读器.exe」放进 `out\`，然后把 `out\*`（含卸载器）压缩成 `installer/JingjingReaderSetup/payload.zip`，最后发布安装器到 `dist\JingjingReaderSetup.exe` 并把卸载器复制到 `dist\卸载鲸鲸阅读器.exe` 便于查看（当前安装包约 2.94 MB、payload 约 2.29 MB、卸载器约 0.62 MB）。`build.ps1` 不会自动构建安装包，需要时单独运行 `build-installer.ps1`。
 
 > PowerShell 版本：构建/验收/安装脚本在 **Windows PowerShell 5.1 与 PowerShell 7 下均可运行**。PowerShell 7 用 `pwsh -NoProfile -File scripts/xxx.ps1`；Windows PowerShell 5.1 用 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/xxx.ps1`。推荐 PowerShell 7。
 
@@ -204,7 +204,13 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 
 卸载调用 `JingjingReader.exe --uninstall`：删除本程序写入的 `.md` 打开方式，并按 `%APPDATA%\JingjingReader\assoc-backup.json` 恢复安装前的状态（无需确认提示：脚本直接执行并按结果返回退出码）。**Classes 与「打开方式」可完整恢复；Windows `UserChoice` 由系统保护、程序无法改写**——若 `.md` 的默认应用仍指向鲸鲸阅读器，卸载会明确提示到「设置 → 应用 → 默认应用」重新选择（`ms-settings:defaultapps`），不视为卸载失败。卸载成功同样会调用 `SHChangeNotify` 刷新资源管理器；图标未刷新时重启资源管理器。备份缺失时尽力删除本程序写入的键值；备份损坏/版本不兼容时**不改注册表**并报错退出，避免破坏用户原有设置。默认会删除安装目录里的程序文件（`-KeepFiles` 保留）；不会删除阅读偏好、最近文件与 WebView2 缓存，如需彻底清理，手动删除 `%APPDATA%\JingjingReader`（偏好/最近/位置/日志）与 `%LOCALAPPDATA%\JingjingReader\WebView2`（WebView2 缓存）；若曾设置 `JJ_DATA_DIR`（仅验收隔离），删除对应目录即可。
 
-安装包用户也可以从 **设置 → 应用 → 已安装的应用 → 鲸鲸阅读器** 卸载：安装器写入的卸载项会调用安装目录里的同一份 `uninstall.ps1`。卸载成功后会删除该卸载项以及开始菜单/桌面快捷方式（`-KeepFiles` 只保留程序文件），关联恢复与用户数据保留策略与上面一致。
+安装包用户可以用三种方式卸载：
+
+1. **设置 → 应用 → 已安装的应用 → 鲸鲸阅读器 → 卸载**（`UninstallString` 指向安装目录里的「卸载鲸鲸阅读器.exe」）；
+2. 双击安装目录里的 **`卸载鲸鲸阅读器.exe`**：确认后把 `uninstall.ps1` 复制到 `%TEMP%\jj-uninstall-<guid>\`，以独立进程启动 Windows PowerShell；图形窗口关闭后脚本删除安装目录。卸载器支持 `--silent --install-dir <目录>`（退出码 `0` = 已启动脚本），失败日志在临时目录的 `uninstall.log`；
+3. 直接运行安装目录里的 `uninstall.ps1`（`-KeepFiles` 只保留程序文件）。
+
+无论哪种方式，卸载成功都会删除卸载项以及开始菜单/桌面快捷方式（`-KeepFiles` 只保留程序文件），关联恢复与用户数据保留策略与上面一致。安装目录在被占用时，脚本最多重试 5 秒；仍失败会提示手动删除并返回非 0。
 
 ## 目录结构
 
@@ -233,22 +239,23 @@ pwsh -NoProfile -File scripts/uninstall.ps1 -InstallDir "D:\apps\JingjingReader"
 │  └─ dist/                  本地构建产物（git 忽略）
 ├─ tests/web/                vitest 用例（含 perf.test.js 性能冒烟、copy-button.test.js）
 ├─ tests/host/               xUnit 用例
-├─ tests/installer/          安装器纯逻辑 xUnit 用例
+├─ tests/installer/          安装器/卸载器纯逻辑 xUnit 用例
 ├─ installer/JingjingReaderSetup/  WPF 安装器（框架依赖单文件；payload.zip 由构建脚本生成，git 忽略）
+├─ installer/JingjingReaderUninstall/  WPF 图形卸载器（输出文件名「卸载鲸鲸阅读器.exe」；调用安装目录的 uninstall.ps1）
 ├─ samples/                  验收样例：hello.md / full-syntax.md / huge-50k-lines.md
 ├─ scripts/
 │  ├─ build.ps1              构建（-SelfContained 可选；发布前清理并拷入分发文件）
-│  ├─ build-installer.ps1    构建 dist\JingjingReaderSetup.exe（out\ → payload.zip → 单文件发布）
+│  ├─ build-installer.ps1    构建安装包（out\ + 卸载器 → payload.zip → dist\JingjingReaderSetup.exe）
 │  ├─ verify.ps1             自动验收 + out/verify-report.md（-SelfTest 只跑脚本自测）
 │  ├─ gen-huge-sample.ps1    生成 5 万行样例（UTF-8 BOM 源码，PS 5.1 可解析）
 │  ├─ gen-icon.py            从 mascot-source.jpg 生成 app.ico / AboutMascot.png / mascot-photo.js
 │  ├─ install.ps1            注册 .md 关联
-│  └─ uninstall.ps1          注销并恢复（含卸载项与快捷方式清理）
+│  └─ uninstall.ps1          注销并恢复（含卸载项与快捷方式清理；从临时目录启动时等待卸载器退出后删目录）
 ├─ docs/verify-checklist.md  手测清单
 ├─ docs/acceptance-traceability.md  spec §2.3/§9.3 与自动化证据/人工项对照
 ├─ docs/verify-record.md     修复波 C 验收记录（historical；最终数字以 @0af4231 报告为准）
 ├─ out/                      构建产物与分发包（git 忽略；含 verify-report.md）
-├─ dist/                     安装包产物（git 忽略）
+├─ dist/                     安装包产物（git 忽略；含 JingjingReaderSetup.exe 与卸载器副本）
 ├─ docs/superpowers/         spec 与实施计划（记录，不参与运行）
 └─ README.md
 ```

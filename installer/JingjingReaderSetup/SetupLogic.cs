@@ -28,8 +28,24 @@ public static class SetupLogic
     /// <summary>卸载脚本文件名（随 payload 一起安装）。</summary>
     public const string UninstallScriptFileName = "uninstall.ps1";
 
+    /// <summary>安装目录里的中文卸载器文件名（随 payload 一起安装，UninstallString 指向它）。</summary>
+    public const string UninstallerFileName = "卸载鲸鲸阅读器.exe";
+
     /// <summary>分发包中的 README。</summary>
     public const string ReadmeFileName = "README.md";
+
+    /// <summary>
+    /// payload 必须包含的文件（按安装后的文件名）。安装器解压后逐项校验，缺任何一项都拒绝安装，
+    /// 避免出现「安装成功但设置→应用无法卸载」的半成品。
+    /// </summary>
+    public static readonly IReadOnlyList<string> RequiredPayloadFileNames = new[]
+    {
+        ExeFileName,
+        InstallScriptFileName,
+        UninstallScriptFileName,
+        UninstallerFileName,
+        ReadmeFileName,
+    };
 
     /// <summary>开始菜单/桌面快捷方式文件名。</summary>
     public const string ShortcutFileName = "鲸鲸阅读器.lnk";
@@ -120,22 +136,29 @@ public static class SetupLogic
         return Path.Combine(installDir, UninstallScriptFileName);
     }
 
+    /// <summary>安装目录里的中文卸载器路径。</summary>
+    public static string GetUninstallerPath(string installDir)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(installDir);
+        return Path.Combine(installDir, UninstallerFileName);
+    }
+
     /// <summary>
-    /// 卸载命令：<c>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "&lt;installDir&gt;\uninstall.ps1"</c>。
-    /// 与 <c>uninstall.ps1</c> 的默认目录/同目录 exe 解析配合，自定义安装目录也能正确卸载。
+    /// 卸载命令：<c>"&lt;installDir&gt;\卸载鲸鲸阅读器.exe"</c>。
+    /// 卸载器默认把自身所在目录当作安装目录，因此自定义安装目录也能正确卸载。
     /// </summary>
     public static string BuildUninstallString(string installDir)
-    {
-        var script = GetUninstallScriptPath(installDir);
-        return $"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{script}\"";
-    }
+        => $"\"{GetUninstallerPath(installDir)}\"";
+
+    /// <summary>静默卸载命令：<c>"&lt;installDir&gt;\卸载鲸鲸阅读器.exe" --silent</c>。</summary>
+    public static string BuildQuietUninstallString(string installDir)
+        => BuildUninstallString(installDir) + " --silent";
 
     /// <summary>写入 <c>HKCU\...\Uninstall\JingjingReader</c> 的字符串值（顺序稳定，便于阅读）。</summary>
     public static IReadOnlyDictionary<string, string> BuildUninstallEntryValues(string installDir)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(installDir);
         var exe = GetExePath(installDir);
-        var uninstall = BuildUninstallString(installDir);
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["DisplayName"] = ProductName,
@@ -143,8 +166,8 @@ public static class SetupLogic
             ["Publisher"] = Publisher,
             ["DisplayIcon"] = exe,
             ["InstallLocation"] = installDir,
-            ["UninstallString"] = uninstall,
-            ["QuietUninstallString"] = uninstall,
+            ["UninstallString"] = BuildUninstallString(installDir),
+            ["QuietUninstallString"] = BuildQuietUninstallString(installDir),
         };
     }
 

@@ -26,6 +26,37 @@ try {
 }
 
 $scriptDir = Split-Path -Parent $PSCommandPath
+
+# 安装目录里的「卸载鲸鲸阅读器.exe」会把脚本复制到 %TEMP%\jj-uninstall-<guid>\ 再启动；
+# 此时脚本不能立即删除安装目录（卸载器 exe 还在运行），要等调用者退出。
+$tempRoot = [System.IO.Path]::GetTempPath().TrimEnd('\', '/')
+$scriptParent = (Split-Path -Parent $scriptDir).TrimEnd('\', '/')
+$isFromTemp = [string]::Equals($scriptParent, $tempRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+    ((Split-Path -Leaf $scriptDir) -like 'jj-uninstall-*')
+
+# 从临时目录运行时写一份日志供排查；成功删除安装目录后临时目录会自清理（失败则保留）。
+$transcriptPath = $null
+if ($isFromTemp) {
+    $transcriptPath = Join-Path $scriptDir 'uninstall.log'
+    try {
+        Start-Transcript -Path $transcriptPath -Force | Out-Null
+    } catch {
+        $transcriptPath = $null
+        Write-Verbose "无法创建卸载日志：$($_.Exception.Message)"
+    }
+}
+
+function Stop-UninstallTranscript {
+    if ($script:transcriptPath) {
+        try {
+            Stop-Transcript | Out-Null
+        } catch {
+            Write-Verbose '停止卸载日志失败，已忽略'
+        }
+        $script:transcriptPath = $null
+    }
+}
+
 $defaultInstallDir = Join-Path $env:LOCALAPPDATA 'Programs\JingjingReader'
 $hasExplicitInstallDir = $PSBoundParameters.ContainsKey('InstallDir')
 if (-not $InstallDir) {
@@ -60,6 +91,7 @@ $ExePath = [System.IO.Path]::GetFullPath($ExePath)
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
     Write-Host "未找到程序：$ExePath"
     Write-Host '卸载需要运行 JingjingReader.exe --uninstall；请用 -ExePath 指定程序位置。'
+    Stop-UninstallTranscript
     exit 1
 }
 
@@ -67,6 +99,7 @@ if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
 $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0) {
     Write-Host "卸载文件关联失败（退出码 $exitCode）。"
+    Stop-UninstallTranscript
     exit $exitCode
 }
 
@@ -104,23 +137,82 @@ foreach ($shortcutPath in $shortcutPaths) {
     }
 }
 
+$deleteFailed = $false
+$deletedDirectory = $null
 if (-not $KeepFiles) {
-    $exeDir = Split-Path -Parent $ExePath
-    if ($exeDir -and (Test-Path -LiteralPath $exeDir -PathType Container) -and
-        (Test-Path -LiteralPath (Join-Path $exeDir 'JingjingReader.exe') -PathType Leaf)) {
-        try {
-            Remove-Item -LiteralPath $exeDir -Recurse -Force
-            Write-Host "已删除程序文件：$exeDir"
-        } catch {
-            Write-Host "无法自动删除程序文件：$exeDir"
-            Write-Host $_.Exception.Message
-            Write-Host '若程序仍在运行，请先关闭再手动删除该目录。'
+    # 从临时目录运行时删除 -InstallDir；否则沿用既有语义删除 exe 所在目录。
+    $deleteDir = if ($isFromTemp) { $InstallDir } else { Split-Path -Parent $ExePath }
+    if ($deleteDir -and (Test-Path -LiteralPath $deleteDir -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $deleteDir 'JingjingReader.exe') -PathType Leaf)) {
+        $deleted = $false
+        $lastError = $null
+
+        if ($isFromTemp) {
+            # 卸载器 exe 正在退出：最多等 5 秒（20 × 250ms），等文件占用释放后再删。
+            for ($attempt = 0; $attempt -lt 20; $attempt++) {
+                if (-not (Test-Path -LiteralPath $deleteDir -PathType Container)) {
+                    $deleted = $true
+                    break
+                }
+
+                try {
+                    Remove-Item -LiteralPath $deleteDir -Recurse -Force -ErrorAction Stop
+                    $deleted = $true
+                    break
+                } catch {
+                    $lastError = $_.Exception.Message
+                    if ($attempt -lt 19) {
+                        Start-Sleep -Milliseconds 250
+                    }
+                }
+            }
+        } else {
+            try {
+                Remove-Item -LiteralPath $deleteDir -Recurse -Force -ErrorAction Stop
+                $deleted = $true
+            } catch {
+                $lastError = $_.Exception.Message
+            }
+        }
+
+        if ($deleted) {
+            Write-Host "已删除程序文件：$deleteDir"
+            $deletedDirectory = $deleteDir
+        } else {
+            $deleteFailed = $true
+            Write-Host "无法自动删除程序文件：$deleteDir"
+            if ($lastError) {
+                Write-Host $lastError
+            }
+            Write-Host '请关闭仍在运行的程序后手动删除该目录。'
         }
     }
 }
 
+# 从临时目录运行时，成功删除安装目录后清理脚本自身；失败则保留日志供排查。
+if ($isFromTemp -and $deletedDirectory) {
+    Stop-UninstallTranscript
+    try {
+        if (Test-Path -LiteralPath $scriptDir -PathType Container) {
+            Remove-Item -LiteralPath $scriptDir -Recurse -Force -ErrorAction Stop
+        }
+    } catch {
+        Write-Host "无法清理临时目录：$scriptDir"
+        Write-Host $_.Exception.Message
+    }
+} else {
+    Stop-UninstallTranscript
+}
+
 Write-Host '卸载完成：已移除「鲸鲸阅读器」的 .md 打开方式（恢复结果见上）。'
 Write-Host '已删除「设置 → 应用」卸载项与开始菜单/桌面快捷方式（若存在）。'
+if ($deletedDirectory) {
+    Write-Host '程序文件已删除。'
+}
 Write-Host "用户数据保留在：$env:APPDATA\JingjingReader（设置/最近文件/阅读位置；不需要可手动删除）。"
 Write-Host '提示：若之前把鲸鲸阅读器设为 .md 默认程序，Windows 的「默认应用」关联需你在 设置→默认应用 里重新选择其它程序。'
+
+if ($deleteFailed) {
+    exit 1
+}
 exit 0

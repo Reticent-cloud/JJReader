@@ -137,7 +137,7 @@ public partial class App : Application
         ConsoleOutput.WriteLine(
             result.UninstallEntryWritten
                 ? "已写入卸载信息：设置 → 应用 → 已安装的应用 → 鲸鲸阅读器。"
-                : "警告：卸载信息写入失败，可通过安装目录里的 uninstall.ps1 卸载。");
+                : "警告：卸载信息写入失败，可通过安装目录里的「卸载鲸鲸阅读器.exe」或 uninstall.ps1 卸载。");
 
         if (result.Launched)
         {

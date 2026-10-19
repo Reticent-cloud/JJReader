@@ -2,12 +2,14 @@
 <#
 鲸鲸阅读器安装包构建脚本：
   1. 运行 scripts/build.ps1（确保 out\ 是最新的分发包）；
-  2. 用 Compress-Archive 把 out\* 打成 installer/JingjingReaderSetup/payload.zip；
-  3. dotnet publish installer/JingjingReaderSetup（Release、win-x64、框架依赖、单文件）；
-  4. 输出 dist\JingjingReaderSetup.exe，并打印产物大小。
+  2. dotnet publish installer/JingjingReaderUninstall（Release、win-x64、框架依赖、单文件），
+     把「卸载鲸鲸阅读器.exe」放进 out\；
+  3. 用 Compress-Archive 把 out\* 打成 installer/JingjingReaderSetup/payload.zip（含卸载器）；
+  4. dotnet publish installer/JingjingReaderSetup（Release、win-x64、框架依赖、单文件）；
+  5. 输出 dist\JingjingReaderSetup.exe，并复制一份「卸载鲸鲸阅读器.exe」到 dist\ 便于查看。
 
 安装器把 payload.zip 作为 EmbeddedResource 嵌进 exe；payload.zip 是构建产物（git 忽略），
-构建前必须存在（本脚本负责生成）。
+构建前必须存在（本脚本负责生成）。安装后卸载器位于 <安装目录>\卸载鲸鲸阅读器.exe。
 
 用法：
   pwsh -NoProfile -File scripts/build-installer.ps1
@@ -31,10 +33,15 @@ try {
 $Root = Split-Path -Parent $PSScriptRoot
 $BuildScript = Join-Path $PSScriptRoot 'build.ps1'
 $OutDir = Join-Path $Root 'out'
+$UninstallerProject = Join-Path $Root 'installer/JingjingReaderUninstall/JingjingReaderUninstall.csproj'
 $SetupProject = Join-Path $Root 'installer/JingjingReaderSetup/JingjingReaderSetup.csproj'
 $Payload = Join-Path $Root 'installer/JingjingReaderSetup/payload.zip'
 $DistDir = Join-Path $Root 'dist'
 $DistExe = Join-Path $DistDir 'JingjingReaderSetup.exe'
+$UninstallerFileName = '卸载鲸鲸阅读器.exe'
+$OutUninstaller = Join-Path $OutDir $UninstallerFileName
+$DistUninstaller = Join-Path $DistDir $UninstallerFileName
+$RequiredFiles = @('JingjingReader.exe', 'install.ps1', 'uninstall.ps1', $UninstallerFileName, 'README.md')
 
 function Invoke-Step {
     param([string]$Name, [scriptblock]$Action)
@@ -51,9 +58,26 @@ if (-not (Test-Path -LiteralPath $BuildScript -PathType Leaf)) {
 
 Invoke-Step '构建应用（scripts/build.ps1）' { & $BuildScript }
 
-foreach ($item in @('JingjingReader.exe', 'install.ps1', 'uninstall.ps1', 'README.md')) {
+Push-Location $Root
+try {
+    Invoke-Step 'dotnet publish 卸载器（单文件、框架依赖）' {
+        dotnet publish $UninstallerProject `
+            -c Release `
+            -r win-x64 `
+            --self-contained false `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -o $OutDir
+    }
+} finally {
+    Pop-Location
+}
+
+foreach ($item in $RequiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $OutDir $item) -PathType Leaf)) {
-        throw "分发包不完整：$OutDir\$item 缺失；请先检查 scripts/build.ps1"
+        throw "分发包不完整：$OutDir\$item 缺失；请检查 scripts/build.ps1 与卸载器构建步骤"
     }
 }
 
@@ -97,6 +121,14 @@ if (-not (Test-Path -LiteralPath $DistExe -PathType Leaf)) {
     throw "安装包产物缺失：$DistExe"
 }
 
+# 可选但便于直接查看/测试：dist\ 里也放一份卸载器（安装包内仍以 payload 中的为准）。
+Copy-Item -LiteralPath $OutUninstaller -Destination $DistUninstaller -Force
+if (-not (Test-Path -LiteralPath $DistUninstaller -PathType Leaf)) {
+    throw "卸载器产物缺失：$DistUninstaller"
+}
+
 $exeBytes = (Get-Item -LiteralPath $DistExe).Length
+$uninstallerBytes = (Get-Item -LiteralPath $DistUninstaller).Length
 Write-Host ('[installer] 产物：dist\JingjingReaderSetup.exe（{0:N2} MB，payload {1:N2} MB）' -f ($exeBytes / 1MB), ($payloadBytes / 1MB))
+Write-Host ('[installer] 产物：dist\卸载鲸鲸阅读器.exe（{0:N2} MB）' -f ($uninstallerBytes / 1MB))
 Write-Host 'BUILD INSTALLER OK dist\JingjingReaderSetup.exe'
