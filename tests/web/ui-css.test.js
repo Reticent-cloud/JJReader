@@ -333,53 +333,79 @@ describe('顶栏/目录栏 chrome 底色与配色维度（palette）', () => {
     expect(ruleBody(overridesCss, '#toolbar .tool.active')).toContain('background: var(--chrome-active-bg);');
   });
 
-  it('默认（鲸鱼蓝）两主题变量 + 首屏兜底值齐备', () => {
+  it('默认中性两主题变量 + 首屏兜底值齐备', () => {
     const lightVars = ruleBody(lightCss, ':root,');
-    expect(lightVars).toContain('--chrome-bg: #e6efff;');
-    expect(lightVars).toContain('--chrome-border: #c9d9f7;');
-    expect(lightVars).toContain('--chrome-hover-bg: #d9e6ff;');
-    expect(lightVars).toContain('--chrome-active-bg: #d4e3ff;');
-    expect(lightVars).toContain('--content-bg: #f3f8ff;');
-    expect(lightVars).toContain('--toc-active-bg: #d8e6ff;');
-    expect(lightVars).toContain('--code-bg: #e8f0fd;');
+    expect(lightVars).toContain('--chrome-bg: #f3f4f6;');
+    expect(lightVars).toContain('--chrome-border: #e2e4e8;');
+    expect(lightVars).toContain('--chrome-hover-bg: #eaedf1;');
+    expect(lightVars).toContain('--chrome-active-bg: #e0e5ec;');
+    expect(lightVars).toContain('--content-bg: #ffffff;');
+    expect(lightVars).toContain('--toc-active-bg: #eef0f4;');
+    expect(lightVars).toContain('--code-bg: #f6f8fa;');
 
     const darkVars = ruleBody(darkCss, "html[data-theme='dark']");
-    expect(darkVars).toContain('--chrome-bg: #101a2e;');
-    expect(darkVars).toContain('--chrome-border: #22304a;');
-    expect(darkVars).toContain('--chrome-hover-bg: #18243c;');
-    expect(darkVars).toContain('--chrome-active-bg: #1b2a4a;');
-    expect(darkVars).toContain('--content-bg: #0c1424;');
+    expect(darkVars).toContain('--chrome-bg: #16181d;');
+    expect(darkVars).toContain('--chrome-border: #2a2d34;');
+    expect(darkVars).toContain('--chrome-hover-bg: #1f222a;');
+    expect(darkVars).toContain('--chrome-active-bg: #282c35;');
+    expect(darkVars).toContain('--content-bg: #0d0f13;');
+    expect(darkVars).toContain('--toc-active-bg: #2b2f3a;');
 
     const baseVars = ruleBody(baseCss, ':root {');
-    expect(baseVars).toContain('--chrome-bg: #e6efff;');
-    expect(baseVars).toContain('--content-bg: #f3f8ff;');
+    expect(baseVars).toContain('--chrome-bg: #f3f4f6;');
+    expect(baseVars).toContain('--content-bg: #ffffff;');
   });
 
-  it('正文浅蓝白（不是纯白）：两套底色与代码块可见差异', () => {
+  it('鲸鱼蓝是可选项：在 overrides 里覆盖浅色/深色两套 chrome 与正文变量', () => {
+    const blueLight = ruleBody(overridesCss, "html[data-palette='blue']:not([data-theme='dark'])");
+    expect(blueLight).toContain('--chrome-bg: #e6efff;');
+    expect(blueLight).toContain('--chrome-border: #c9d9f7;');
+    expect(blueLight).toContain('--chrome-hover-bg: #d9e6ff;');
+    expect(blueLight).toContain('--chrome-active-bg: #d4e3ff;');
+    expect(blueLight).toContain('--content-bg: #f3f8ff;');
+    expect(blueLight).toContain('--toc-active-bg: #d8e6ff;');
+    expect(blueLight).toContain('--code-bg: #e8f0fd;');
+    expect(blueLight).toContain('--ui-table-head: #e8f0fd;');
+    expect(blueLight).toContain('--ui-inline-code: #e8f0fd;');
+
+    const blueDark = ruleBody(overridesCss, "html[data-theme='dark'][data-palette='blue']");
+    expect(blueDark).toContain('--chrome-bg: #101a2e;');
+    expect(blueDark).toContain('--chrome-border: #22304a;');
+    expect(blueDark).toContain('--chrome-hover-bg: #18243c;');
+    expect(blueDark).toContain('--chrome-active-bg: #1b2a4a;');
+    expect(blueDark).toContain('--content-bg: #0c1424;');
+    expect(blueDark).toContain('--toc-active-bg: #1b2a4a;');
+  });
+
+  it('正文默认纯白；鲸鱼蓝浅蓝白；代码块可见差异且对比度达标', () => {
     const lightVars = ruleBody(lightCss, ':root,');
-    expect(lightVars).toContain('--content-bg: #f3f8ff;'); // 鲸鱼蓝浅色正文
-    expect(lightVars).toContain('--code-bg: #e8f0fd;'); // 代码块比正文底更明显一档
+    expect(lightVars).toContain('--content-bg: #ffffff;'); // 默认浅色正文纯白
+    expect(lightVars).toContain('--code-bg: #f6f8fa;');
 
     const defaultLight = ruleBody(overridesCss, "html[data-palette='default'] {");
-    expect(defaultLight).toContain('--content-bg: #fafbfc;'); // 中性配色微灰
+    expect(defaultLight).toContain('--content-bg: #ffffff;');
     const defaultCode = ruleBody(overridesCss, "html[data-palette='default']:not([data-theme='dark'])");
     expect(defaultCode).toContain('--code-bg: #f6f8fa;');
-    const blueLightUi = ruleBody(overridesCss, "html[data-palette='blue']:not([data-theme='dark'])");
-    expect(blueLightUi).toContain('--ui-table-head: #e8f0fd;');
-    expect(blueLightUi).toContain('--ui-inline-code: #e8f0fd;');
+    const blueLight = ruleBody(overridesCss, "html[data-palette='blue']:not([data-theme='dark'])");
+    expect(blueLight).toContain('--content-bg: #f3f8ff;'); // 鲸鱼蓝浅色正文浅蓝白
+    expect(blueLight).toContain('--code-bg: #e8f0fd;'); // 代码块比正文底更明显一档
 
-    // WCAG 对比度：正文 ≥ 7:1、次要文字/代码文字 ≥ 4.5:1（浅色鲸鱼蓝底）。
+    // 首屏预置 data-palette=default，避免默认（白）配色下先闪一帧蓝色。
+    expect(indexHtml).toContain('data-palette="default"');
+
+    // WCAG 对比度：正文 ≥ 7:1、次要文字/代码文字 ≥ 4.5:1（默认白底与鲸鱼蓝浅蓝白）。
+    expect(contrastRatio('#1f2328', '#ffffff')).toBeGreaterThanOrEqual(7);
     expect(contrastRatio('#1f2328', '#f3f8ff')).toBeGreaterThanOrEqual(7);
+    expect(contrastRatio('#59636e', '#ffffff')).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio('#59636e', '#f3f8ff')).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio('#1f2328', '#e8f0fd')).toBeGreaterThanOrEqual(7);
-    expect(contrastRatio('#1f2328', '#fafbfc')).toBeGreaterThanOrEqual(7);
   });
 
   it('「默认」中性配色覆盖两套主题，且与 data-theme 正交组合', () => {
     const defaultLight = ruleBody(overridesCss, "html[data-palette='default'] {");
     expect(defaultLight).toContain('--chrome-bg: #f3f4f6;');
     expect(defaultLight).toContain('--chrome-border: #e2e4e8;');
-    expect(defaultLight).toContain('--content-bg: #fafbfc;');
+    expect(defaultLight).toContain('--content-bg: #ffffff;');
     expect(defaultLight).toContain('--toc-active-bg: #eef0f4;');
 
     const defaultDark = ruleBody(overridesCss, "html[data-theme='dark'][data-palette='default']");

@@ -69,14 +69,24 @@ public class SettingsPatchTests
     [InlineData("""{"palette":"ocean"}""")]
     [InlineData("""{"palette":"Blue"}""")]
     [InlineData("""{"palette":""}""")]
-    public void Apply_ignores_invalid_palette_value_and_keeps_default_blue(string patchJson)
+    public void Apply_ignores_invalid_palette_value_and_keeps_default(string patchJson)
     {
-        // 非法配色不写坏设置：默认设置保持 blue（前端 normalizePalette 对非法值同样回落 blue）。
+        // 非法配色不写坏设置：默认设置保持 default（前端 normalizePalette 对非法值同样回落 default）。
         var current = new AppSettings();
 
         var merged = SettingsPatch.Apply(current, patchJson);
 
-        Assert.Equal("blue", merged.Palette);
+        Assert.Equal("default", merged.Palette);
+    }
+
+    [Fact]
+    public void Apply_accepts_palette_default_from_blue()
+    {
+        var current = new AppSettings(Palette: "blue");
+
+        var merged = SettingsPatch.Apply(current, """{"palette":"default"}""");
+
+        Assert.Equal("default", merged.Palette);
     }
 
     [Fact]

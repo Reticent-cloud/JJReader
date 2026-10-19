@@ -228,7 +228,7 @@ body.jj-resizing * {
   scroll-padding-top: calc(var(--toolbar-height) + 40px);
   /* 行宽居中：用对称 padding 让所有顶层块（含标题，标题自带 margin 会覆盖 auto）都居中 */
   padding: calc(var(--toolbar-height) + 16px) max(28px, calc((100% - var(--content-width)) / 2)) 96px;
-  /* 正文区浅蓝白（鲸鱼蓝）/ 微灰（默认）/ 更深蓝黑（深色），与 chrome 顶栏/目录栏区分（palette 变量见 light/dark/overrides）。 */
+  /* 正文区纯白（默认）/ 浅蓝白（鲸鱼蓝）/ 更深蓝黑（深色），与 chrome 顶栏/目录栏区分（palette 变量见 light/dark/overrides）。 */
   background: var(--content-bg);
 }
 

@@ -69,8 +69,8 @@ public static class SettingsPatch
                 merged = merged with { MonoFont = monoFont };
             }
 
-            // palette 只接受白名单值（default/blue）：非法值不写坏设置，保持当前值（默认即 blue）；
-            // 前端 normalizePalette 对任何非法值同样回落 blue。
+            // palette 只接受白名单值（default/blue）：非法值不写坏设置，保持当前值（默认即 default）；
+            // 前端 normalizePalette 对任何非法值同样回落 default。
             if (TryPalette(root, "palette", out var palette))
             {
                 merged = merged with { Palette = palette };

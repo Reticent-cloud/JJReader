@@ -34,16 +34,16 @@ html[data-theme='dark'] {
   --ui-card-shadow: 0 8px 24px rgba(1, 4, 9, 0.55);
 }
 
-/* ── 配色维度（palette）：默认「鲸鱼蓝」的 chrome/正文色值在 light.css / dark.css（随 data-theme 生效）；
-   这里定义中性「默认」配色的覆盖。本文件在 light.css / dark.css 之后拼接，同一份主题选择器下后者生效；
-   dark 用双属性选择器保证优先级高于 light.css 的 :root 兜底与 dark.css 的单属性主题规则。
-   --toc-active-bg 同时用于目录当前项与文件树当前项；工具条的 hover/active 另有 --chrome-*-bg 保证对比。 ── */
+/* ── 配色维度（palette）：default = 中性（默认，浅色正文纯白）；blue = 鲸鱼蓝（可选）。
+   默认的中性 chrome/正文色值在 light.css / dark.css（随 data-theme 生效）；本文件在后拼接，
+   用更高优先级的属性选择器覆盖鲸鱼蓝（浅色 + 深色两套）。
+   --toc-active-bg 同时用于目录当前项与文件树当前项；工具条 hover/active 另有 --chrome-*-bg 保证对比。 ── */
 html[data-palette='default'] {
   --chrome-bg: #f3f4f6;
   --chrome-border: #e2e4e8;
   --chrome-hover-bg: #eaedf1;
   --chrome-active-bg: #e0e5ec;
-  --content-bg: #fafbfc;
+  --content-bg: #ffffff;
   --toc-active-bg: #eef0f4;
 }
 
@@ -56,9 +56,14 @@ html[data-theme='dark'][data-palette='default'] {
   --toc-active-bg: #2b2f3a;
 }
 
-/* 鲸鱼蓝浅色：正文是浅蓝白 #f3f8ff，代码块/表格/引用要有一档更明显的浅蓝底才看得出来
-   （--code-* 在 light.css，--ui-* 在 overrides.css 的 :root；这里用更高优先级覆盖）。 */
+/* 鲸鱼蓝浅色（可选）：chrome #e6efff、正文浅蓝白 #f3f8ff，代码块/表格/引用同档浅蓝底。 */
 html[data-palette='blue']:not([data-theme='dark']) {
+  --chrome-bg: #e6efff;
+  --chrome-border: #c9d9f7;
+  --chrome-hover-bg: #d9e6ff;
+  --chrome-active-bg: #d4e3ff;
+  --content-bg: #f3f8ff;
+  --toc-active-bg: #d8e6ff;
   --code-bg: #e8f0fd;
   --code-border: #d5e2f7;
   --ui-code-head: #e3edfc;
@@ -68,7 +73,17 @@ html[data-palette='blue']:not([data-theme='dark']) {
   --ui-inline-code: #e8f0fd;
 }
 
-/* 中性「默认」浅色：代码块回到中性浅灰（与微灰正文底 #fafbfc 有可见差异）。 */
+/* 鲸鱼蓝深色（可选）：chrome #101a2e、正文蓝黑 #0c1424。 */
+html[data-theme='dark'][data-palette='blue'] {
+  --chrome-bg: #101a2e;
+  --chrome-border: #22304a;
+  --chrome-hover-bg: #18243c;
+  --chrome-active-bg: #1b2a4a;
+  --content-bg: #0c1424;
+  --toc-active-bg: #1b2a4a;
+}
+
+/* 中性「默认」浅色：正文纯白，代码块浅灰（与正文底有可见差异）。 */
 html[data-palette='default']:not([data-theme='dark']) {
   --code-bg: #f6f8fa;
   --code-border: #d1d9e0;

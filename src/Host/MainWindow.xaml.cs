@@ -240,9 +240,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 自绘标题栏配色：palette 来自 settings.json（blue 鲸鱼蓝 / default 中性），明暗按前端主题设置
+    /// 自绘标题栏与分区底板配色：palette 来自 settings.json（default 中性 / blue 鲸鱼蓝），明暗按前端主题设置
     /// （light/dark 直接跟随；system 读系统 <c>AppsUseLightTheme</c>），色值与前端
     /// --chrome-bg/--chrome-border/--content-bg 完全一致。读取失败只记日志并保留上一次颜色（标题栏不能阻断阅读）。
+    /// 同时同步分区底板：WebView2 四周 6 DIP 边距中，左侧（目录栏宽度 + 边距 + 1px 分隔线）用 chrome 色，
+    /// 其余用正文色；目录折叠时左列宽度归 0。
     /// </summary>
     private void ApplyTitleBarTheme()
     {
@@ -252,11 +254,20 @@ public partial class MainWindow : Window
             var lightTheme = TitleBarTheme.ResolveLightTheme(settings.Theme, ReadAppsUseLightTheme());
             var colors = TitleBarTheme.Resolve(settings.Palette, lightTheme);
             var foreground = CreateBrush(colors.Foreground);
-            TitleBar.Background = CreateBrush(colors.Background);
-            TitleBar.BorderBrush = CreateBrush(colors.Border);
+            var chromeBrush = CreateBrush(colors.Background);
+            var chromeBorderBrush = CreateBrush(colors.Border);
+            var contentBrush = CreateBrush(colors.Content);
+            TitleBar.Background = chromeBrush;
+            TitleBar.BorderBrush = chromeBorderBrush;
             TitleText.Foreground = foreground;
-            RootGrid.Background = CreateBrush(colors.Content);
-            Background = CreateBrush(colors.Content);
+            RootGrid.Background = contentBrush;
+            Background = contentBrush;
+            // 分区底板：与 WebView2 的 6 DIP 边距对齐（左列 = 目录栏宽度（含分隔线）+ 6 DIP 边距；折叠时 0）。
+            ChromeBackdrop.Background = contentBrush;
+            ChromeBackdropToc.Background = chromeBrush;
+            ChromeBackdropToc.BorderBrush = chromeBorderBrush;
+            var tocWidth = TitleBarTheme.BackdropTocWidth(settings.TocVisible, settings.TocWidth);
+            ChromeBackdropTocColumn.Width = new GridLength(tocWidth);
             // 按钮模板用 DynamicResource 读取：替换资源即同步 hover/active/文字色（含关闭按钮外的普通按钮）。
             Resources["TitleBarForegroundBrush"] = foreground;
             Resources["TitleBarHoverBrush"] = CreateBrush(colors.Hover);
@@ -264,7 +275,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            DebugLog.Write($"应用标题栏配色失败：{exception}");
+            DebugLog.Write($"应用标题栏/底板配色失败：{exception}");
         }
     }
 

@@ -11,19 +11,20 @@ public class TitleBarThemeTests
     [Theory]
     [InlineData("default", "default")]
     [InlineData("blue", "blue")]
-    [InlineData("Blue", "blue")]
-    [InlineData("ocean", "blue")]
-    [InlineData("", "blue")]
-    [InlineData(null, "blue")]
-    public void NormalizePalette_falls_back_to_blue(string? palette, string expected)
+    [InlineData("Blue", "default")]
+    [InlineData("ocean", "default")]
+    [InlineData("", "default")]
+    [InlineData(null, "default")]
+    public void NormalizePalette_falls_back_to_default(string? palette, string expected)
     {
         Assert.Equal(expected, TitleBarTheme.NormalizePalette(palette));
     }
 
     [Fact]
-    public void NormalizePalette_keeps_default()
+    public void NormalizePalette_keeps_blue()
     {
-        Assert.Equal("default", TitleBarTheme.NormalizePalette("default"));
+        Assert.Equal("blue", TitleBarTheme.NormalizePalette("blue"));
+        Assert.Equal("default", TitleBarTheme.DefaultPalette);
     }
 
     [Fact]
@@ -61,7 +62,7 @@ public class TitleBarThemeTests
         Assert.Equal("#E2E4E8", colors.Border);
         Assert.Equal("#EAEDF1", colors.Hover);
         Assert.Equal("#E0E5EC", colors.Active);
-        Assert.Equal("#FAFBFC", colors.Content);
+        Assert.Equal("#FFFFFF", colors.Content);
         Assert.Equal("#1F2328", colors.Foreground);
     }
 
@@ -79,13 +80,13 @@ public class TitleBarThemeTests
     }
 
     [Fact]
-    public void Resolve_unknown_palette_falls_back_to_blue()
+    public void Resolve_unknown_palette_falls_back_to_default()
     {
         Assert.Equal(
-            TitleBarTheme.Resolve("blue", lightTheme: true),
+            TitleBarTheme.Resolve("default", lightTheme: true),
             TitleBarTheme.Resolve("ocean", lightTheme: true));
         Assert.Equal(
-            TitleBarTheme.Resolve("blue", lightTheme: false),
+            TitleBarTheme.Resolve("default", lightTheme: false),
             TitleBarTheme.Resolve(null, lightTheme: false));
     }
 
@@ -134,5 +135,17 @@ public class TitleBarThemeTests
         Assert.Equal("最大化", TitleBarTheme.MaximizeButtonTooltip(maximized: false));
         Assert.Equal("还原", TitleBarTheme.MaximizeButtonTooltip(maximized: true));
         Assert.Equal(32d, TitleBarTheme.CaptionHeight);
+    }
+
+    [Theory]
+    [InlineData(true, 240, 246d)] // 目录可见：TocWidth（含 1px 分隔线）+ 6 DIP 边距
+    [InlineData(true, 180, 186d)]
+    [InlineData(true, 0, 6d)]
+    [InlineData(false, 240, 0d)] // 折叠：左列归 0，底板整条正文色
+    [InlineData(false, 0, 0d)]
+    public void BackdropTocWidth_matches_toc_and_margin(bool tocVisible, int tocWidth, double expected)
+    {
+        Assert.Equal(expected, TitleBarTheme.BackdropTocWidth(tocVisible, tocWidth));
+        Assert.Equal(6d, TitleBarTheme.ContentMargin);
     }
 }

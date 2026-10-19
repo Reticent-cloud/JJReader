@@ -18,7 +18,7 @@ public class StoreTests
         var defaults = store.LoadSettings();
         Assert.Equal(new AppSettings(), defaults);
         Assert.Equal("system", defaults.Theme);
-        Assert.Equal("blue", defaults.Palette);
+        Assert.Equal("default", defaults.Palette);
 
         store.SaveSettings(defaults with
         {
@@ -177,7 +177,7 @@ public class StoreTests
         Assert.Contains("\"tocWidth\": 240", json);
         Assert.Contains("\"window\": null", json);
         Assert.Contains("\"monoFont\": \"consolas\"", json);
-        Assert.Contains("\"palette\": \"blue\"", json);
+        Assert.Contains("\"palette\": \"default\"", json);
         Assert.DoesNotContain("\"uiStyle\"", json); // whale 主题已删除：不再写界面风格字段
         Assert.False(File.Exists(target + ".tmp")); // 原子写完成后不留临时文件
     }
@@ -202,20 +202,20 @@ public class StoreTests
         var dir = TestDir();
         var store = new Store(dir);
 
-        // 默认配色 = 鲸鱼蓝（blue），来自 record 位置参数默认值。
-        Assert.Equal("blue", store.LoadSettings().Palette);
+        // 默认配色 = 中性「默认」（浅色正文纯白），来自 record 位置参数默认值。
+        Assert.Equal("default", store.LoadSettings().Palette);
 
-        store.SaveSettings(new AppSettings(Palette: "default"));
-        Assert.Equal("default", new Store(dir).LoadSettings().Palette);
+        store.SaveSettings(new AppSettings(Palette: "blue"));
+        Assert.Equal("blue", new Store(dir).LoadSettings().Palette);
 
         store.SaveSettings(new AppSettings());
-        Assert.Equal("blue", new Store(dir).LoadSettings().Palette);
+        Assert.Equal("default", new Store(dir).LoadSettings().Palette);
     }
 
     [Fact]
-    public void LoadSettings_old_file_without_palette_defaults_blue()
+    public void LoadSettings_old_file_without_palette_defaults_default()
     {
-        // 兼容旧 settings.json：升级前写出的文件没有 palette 字段，读取时必须取默认值 blue。
+        // 兼容旧 settings.json：升级前写出的文件没有 palette 字段，读取时必须取默认值 default（白色）。
         var dir = TestDir();
         File.WriteAllText(
             Path.Combine(dir, "settings.json"),
@@ -229,7 +229,7 @@ public class StoreTests
 
         var loaded = new Store(dir).LoadSettings();
 
-        Assert.Equal("blue", loaded.Palette);
+        Assert.Equal("default", loaded.Palette);
         Assert.Equal("light", loaded.Theme);
         Assert.Equal(17, loaded.FontSize);
     }

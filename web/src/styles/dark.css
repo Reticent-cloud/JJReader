@@ -34,15 +34,15 @@ html[data-theme='dark'] {
 
   --toc-fg: #9198a1;
   --toc-active-fg: #4493f8;
-  --toc-active-bg: #1b2a4a;
+  --toc-active-bg: #2b2f3a;
 
-  /* 界面 chrome 与正文区底色（默认「鲸鱼蓝」配色）：顶栏/目录栏深蓝底，正文更深的蓝黑。
-     中性「默认」配色由 overrides.css 的 html[data-theme='dark'][data-palette='default'] 覆盖。 */
-  --chrome-bg: #101a2e;
-  --chrome-border: #22304a;
-  --chrome-hover-bg: #18243c;
-  --chrome-active-bg: #1b2a4a;
-  --content-bg: #0c1424;
+  /* 界面 chrome 与正文区底色（默认「默认」中性配色）：顶栏/目录栏中性深灰，正文更深一档。
+     鲸鱼蓝由 overrides.css 的 html[data-theme='dark'][data-palette='blue'] 覆盖。 */
+  --chrome-bg: #16181d;
+  --chrome-border: #2a2d34;
+  --chrome-hover-bg: #1f222a;
+  --chrome-active-bg: #282c35;
+  --content-bg: #0d0f13;
 
   /* 兼容别名：工具条不再直接读取 --toolbar-bg，保留并指向 chrome 值（打印样式不引用这些变量）。 */
   --toolbar-bg: var(--chrome-bg);
@@ -91,11 +91,11 @@ html[data-theme='dark'] {
     --fg: #e6edf3;
     --bg-muted: #161b22;
     --border: #30363d;
-    --chrome-bg: #101a2e;
-    --chrome-border: #22304a;
-    --chrome-hover-bg: #18243c;
-    --chrome-active-bg: #1b2a4a;
-    --content-bg: #0c1424;
+    --chrome-bg: #16181d;
+    --chrome-border: #2a2d34;
+    --chrome-hover-bg: #1f222a;
+    --chrome-active-bg: #282c35;
+    --content-bg: #0d0f13;
     --toolbar-bg: var(--chrome-bg);
     --toolbar-border: var(--chrome-border);
     --panel-bg: #161b22;

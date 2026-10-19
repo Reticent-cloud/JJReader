@@ -21,8 +21,8 @@ public sealed record AppSettings(
     WindowGeometry? Window = null,
     // T2 Ruling：spec §5.5/§6.3 的 monoFont（代码字体）补在 record 末尾，位置参数带默认值保持向后兼容。
     string MonoFont = "consolas",
-    // 配色维度（palette）：default = 中性灰蓝 / blue = 鲸鱼蓝（默认）；同样补在末尾，旧 settings.json 缺字段时取默认值。
-    string Palette = "blue");
+    // 配色维度（palette）：default = 中性（默认，浅色正文纯白）/ blue = 鲸鱼蓝；同样补在末尾，旧 settings.json 缺字段时取默认值。
+    string Palette = "default");
 
 /// <summary>最近文件条目，持久化到 recent.json（最多 20 条，最新在前）。</summary>
 public sealed record RecentEntry(string Path, string OpenedAt, long Size);

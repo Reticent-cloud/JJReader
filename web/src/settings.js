@@ -22,15 +22,15 @@ export const TOC_WIDTH_MIN = 180;
 export const TOC_WIDTH_MAX = 360;
 export const TOC_WIDTH_DEFAULT = 240;
 
-/** 配色维度（palette）合法值：default = 中性灰蓝，blue = 鲸鱼蓝（默认）。 */
+/** 配色维度（palette）合法值：default = 中性（默认，正文纯白），blue = 鲸鱼蓝。 */
 export const PALETTES = ['default', 'blue'];
 
-/** 默认配色：鲸鱼蓝（用户需求；「默认」为中性灰蓝备选）。 */
-export const PALETTE_DEFAULT = 'blue';
+/** 默认配色：中性「默认」（用户要求首次打开/浅色主题为白色；鲸鱼蓝为可选项）。 */
+export const PALETTE_DEFAULT = 'default';
 
-/** 配色偏好：非法/缺省一律回落 blue（与宿主 AppSettings.Palette 默认值一致）。 */
+/** 配色偏好：缺省/非法一律回落 default（与宿主 AppSettings.Palette 默认值一致）。 */
 export function normalizePalette(palette) {
-  return palette === 'default' ? 'default' : PALETTE_DEFAULT;
+  return palette === 'blue' ? 'blue' : PALETTE_DEFAULT;
 }
 
 /** 系统默认中文字体栈（spec §5.5：Segoe UI + 微软雅黑）。 */

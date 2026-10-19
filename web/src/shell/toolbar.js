@@ -34,7 +34,7 @@ const MONO_FONT_OPTIONS = [
   { value: 'Cascadia Mono', label: 'Cascadia Mono' },
 ];
 
-// 配色维度（palette）：blue = 鲸鱼蓝（默认），default = 中性灰蓝。与浅色/深色主题正交组合。
+// 配色维度（palette）：default = 中性（默认，浅色正文纯白），blue = 鲸鱼蓝。与浅色/深色主题正交组合。
 const PALETTE_OPTIONS = [
   { value: 'default', label: '默认' },
   { value: 'blue', label: '鲸鱼蓝' },
@@ -99,7 +99,7 @@ export function buildAaPanel() {
     createSelectRow('行宽', 'contentWidth', WIDTH_OPTIONS, '780'),
     createSelectRow('中文字体', 'cjkFont', CJK_FONT_OPTIONS, 'system'),
     createSelectRow('代码字体', 'monoFont', MONO_FONT_OPTIONS, 'consolas'),
-    createSelectRow('配色', 'palette', PALETTE_OPTIONS, 'blue'),
+    createSelectRow('配色', 'palette', PALETTE_OPTIONS, 'default'),
   );
   return panel;
 }

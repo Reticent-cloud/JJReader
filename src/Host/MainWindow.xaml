@@ -11,7 +11,7 @@
         ResizeMode="CanResize"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
-        Background="#F3F8FF"
+        Background="#FFFFFF"
         AllowDrop="True"
         DragOver="OnDragOver"
         Drop="OnDrop">
@@ -27,10 +27,10 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <!-- 初始为浅色鲸鱼蓝；ApplyTitleBarTheme() 在构造/主题变化/palette 变化时替换这些画刷。 -->
+        <!-- 初始为默认中性浅色（白底）；ApplyTitleBarTheme() 在构造/主题变化/palette 变化时替换这些画刷。 -->
         <SolidColorBrush x:Key="TitleBarForegroundBrush" Color="#1F2328" />
-        <SolidColorBrush x:Key="TitleBarHoverBrush" Color="#D9E6FF" />
-        <SolidColorBrush x:Key="TitleBarActiveBrush" Color="#D4E3FF" />
+        <SolidColorBrush x:Key="TitleBarHoverBrush" Color="#EAEDF1" />
+        <SolidColorBrush x:Key="TitleBarActiveBrush" Color="#E0E5EC" />
 
         <Style x:Key="CaptionButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="46" />
@@ -94,8 +94,8 @@
         <!-- 自绘标题栏：图标 + 标题 + 最小化/最大化(还原)/关闭；底部 1px 分隔线（与前端 chrome-border 同色）。 -->
         <Border x:Name="TitleBar"
                 Grid.Row="0"
-                Background="#E6EFFF"
-                BorderBrush="#C9D9F7"
+                Background="#F3F4F6"
+                BorderBrush="#E2E4E8"
                 BorderThickness="0,0,0,1"
                 MouseRightButtonUp="OnTitleBarRightClick">
             <Grid>
@@ -149,10 +149,24 @@
             </Grid>
         </Border>
 
+        <!-- 分区底板：WebView2 是独立子 HWND，四周留 6 DIP（与 WindowChrome.ResizeBorderThickness 一致）保留缩放热区；
+             露出的边距由这层底板按「左侧 = 目录栏 chrome、其余 = 正文」填色，避免左侧/底部出现颜色不符的长条。
+             左列宽度 = TocWidth + 6 DIP 边距（TocWidth 已含 1px 分隔线）；目录折叠时为 0。颜色与宽度由 ApplyTitleBarTheme 同步。 -->
+        <Grid x:Name="ChromeBackdrop" Grid.Row="1" Background="#FFFFFF">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="ChromeBackdropTocColumn" Width="0" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="ChromeBackdropToc"
+                    Grid.Column="0"
+                    Background="#F3F4F6"
+                    BorderBrush="#E2E4E8"
+                    BorderThickness="0,0,1,0" />
+        </Grid>
+
         <!-- 极薄宿主：所有解析/排版/UI 都在 WebView2 里的前端完成。
              AllowExternalDrop=False：把文件拖放交还给 WPF 窗口（否则 WebView2 自己吃掉拖放，Window.Drop 不触发）。
-             左右/底部留出 6 DIP（与 WindowChrome.ResizeBorderThickness 一致）：WebView2 是独立子 HWND，
-             不铺满窗口边缘，WindowChrome 才能在四周命中缩放；露出的底色与正文同色，视觉上不可见。 -->
+             WebView2 不铺满窗口边缘，WindowChrome 才能在四周命中缩放；边距由上面的分区底板填色。 -->
         <Grid Grid.Row="1" Margin="6,0,6,6">
             <wv2:WebView2 x:Name="WebView" AllowExternalDrop="False" />
         </Grid>

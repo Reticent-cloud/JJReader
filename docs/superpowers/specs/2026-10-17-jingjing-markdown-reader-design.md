@@ -239,10 +239,10 @@ MDReader/
   - 参考常见 Markdown 阅读器的克制排版——标题层级、引用浅底、表格斑马纹、行内代码、代码块顶栏、TOC 当前项强调条、卡片 hover；面板/目录/卡片/代码块/表格/按钮统一略大的圆角；正文区不加背景装饰或水印。
   - 应用图标、关于面板与空状态使用用户提供的「鲸鱼女仆娘看书」插画（`assets/mascot-source.jpg`，由 `scripts/gen-icon.py` 圆裁去水印）；空状态为圆形小尺寸点缀，`src/Host/Resources/index.html` 不预置界面风格属性，`settings.json` 不写入 `uiStyle`（旧文件中的该字段作为未知字段忽略）。
   - 与 `light` / `dark` / `system` 组合生效；打印模式（PDF 导出）一律纯白背景并隐藏装饰与插画。
-- 界面 chrome 与正文分离（参考 WorkBuddy 的「chrome 有底色、正文白」）：顶栏为**直角**（`border-radius: 0`）、实色不透明，背景 `--chrome-bg` + 底部 1px `--chrome-border`；目录栏同一 chrome 底色并带右侧 1px 分隔线；正文区 `--content-bg` **浅蓝白（不是纯白，护眼）**，深色下为更深的蓝黑。窗口顶部的自绘标题栏与顶栏同色（见 §5.1）。通知条/浮层/toast 不受影响，打印模式仍纯白。
-- 配色维度（`palette`）：`blue` 鲸鱼蓝（**默认**）/ `default` 中性灰蓝；与 `light`/`dark`/`system` 正交组合，由 Aa 面板「配色」下拉切换并持久化为 `settings.json` 的 `palette` 字段（缺省/非法值回落 `blue`）。
-  - 浅色 blue：chrome `#e6efff`/边框 `#c9d9f7`、正文 `#f3f8ff`、TOC active `#d8e6ff`、hover `#d9e6ff`；浅色 default：chrome `#f3f4f6`/`#e2e4e8`、正文 `#fafbfc`、active `#eef0f4`。
-  - 深色 blue：chrome `#101a2e`/`#22304a`、正文 `#0c1424`、active `#1b2a4a`、hover `#18243c`；深色 default：chrome `#16181d`/`#2a2d34`、正文 `#0d0f13`。
+- 界面 chrome 与正文分离（参考 WorkBuddy 的「chrome 有底色、正文白」）：顶栏为**直角**（`border-radius: 0`）、实色不透明，背景 `--chrome-bg` + 底部 1px `--chrome-border`；目录栏同一 chrome 底色并带右侧 1px 分隔线；正文区 `--content-bg` 默认**纯白**，鲸鱼蓝下为浅蓝白，深色下为更深的蓝黑。窗口顶部的自绘标题栏与顶栏同色（见 §5.1），WebView2 四周 6 DIP 缩放边距由「分区底板」按目录栏 chrome/正文填色（四边无杂条）。通知条/浮层/toast 不受影响，打印模式仍纯白。
+- 配色维度（`palette`）：`default` 中性（**默认**，浅色正文纯白）/ `blue` 鲸鱼蓝（可选）；与 `light`/`dark`/`system` 正交组合，由 Aa 面板「配色」下拉切换并持久化为 `settings.json` 的 `palette` 字段（缺省/非法值回落 `default`；旧文件里 `palette=blue` 保留鲸鱼蓝）。
+  - 浅色 default：chrome `#f3f4f6`/边框 `#e2e4e8`、正文 `#ffffff`、TOC active `#eef0f4`、hover `#eaedf1`；浅色 blue：chrome `#e6efff`/`#c9d9f7`、正文 `#f3f8ff`、active `#d8e6ff`、hover `#d9e6ff`。
+  - 深色 default：chrome `#16181d`/`#2a2d34`、正文 `#0d0f13`、active `#2b2f3a`；深色 blue：chrome `#101a2e`/`#22304a`、正文 `#0c1424`、active `#1b2a4a`、hover `#18243c`。
   - 顶栏按钮的 hover/active 使用独立的 `--chrome-hover-bg`/`--chrome-active-bg`；目录当前项与工具条 active 文本对比度保持 ≥ 4.5:1（AA），正文文字对正文底 ≥ 7:1，代码块/表格底与正文底保持可见差异。
 - 代码块、行内代码、表格、引用块、任务清单各有专属配色，深色下对比度不低于 WCAG AA（正文对比 ≥ 4.5:1）。
 - 切换无白闪（先改 CSS 变量再重绘）。

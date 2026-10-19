@@ -22,15 +22,28 @@ public sealed record TitleBarColors(
 /// </summary>
 public static class TitleBarTheme
 {
-    /// <summary>默认配色（spec §5.4：鲸鱼蓝是默认；「默认」为中性灰蓝备选）。</summary>
-    public const string DefaultPalette = "blue";
+    /// <summary>默认配色（spec §5.4：首次打开为中性「默认」，浅色正文纯白；鲸鱼蓝是可选配色）。</summary>
+    public const string DefaultPalette = "default";
 
     /// <summary>自绘标题栏高度（DIP，与 MainWindow.xaml / WindowChrome.CaptionHeight 一致）。</summary>
     public const double CaptionHeight = 32d;
 
-    /// <summary>非法/缺省 palette 一律回落 blue（与前端 normalizePalette、宿主 SettingsPatch 白名单一致）。</summary>
+    /// <summary>
+    /// WebView2 四周为保留缩放热区留出的边距（DIP，与 WindowChrome.ResizeBorderThickness 一致）。
+    /// 分区底板据此把左侧 chrome 区域扩展到 WebView 之外，避免底部/左侧出现颜色不符的长条。
+    /// </summary>
+    public const double ContentMargin = 6d;
+
+    /// <summary>
+    /// 分区底板左侧 chrome 列的宽度（DIP）：目录可见时 = 目录栏宽度（已含 1px 分隔线）+ WebView 左边距；
+    /// 目录折叠时归 0（整条底板用正文色）。负宽度按 0 处理。
+    /// </summary>
+    public static double BackdropTocWidth(bool tocVisible, int tocWidth)
+        => tocVisible ? Math.Max(0, tocWidth) + ContentMargin : 0d;
+
+    /// <summary>非法/缺省 palette 一律回落 default（与前端 normalizePalette、宿主 SettingsPatch 白名单一致）。</summary>
     public static string NormalizePalette(string? palette)
-        => palette == "default" ? "default" : DefaultPalette;
+        => palette == "blue" ? "blue" : DefaultPalette;
 
     /// <summary>
     /// 解析系统「应用使用浅色主题」设置（HKCU\...\Themes\Personalize\AppsUseLightTheme）：
@@ -67,22 +80,22 @@ public static class TitleBarTheme
 
     /// <summary>
     /// 按 palette + 系统明暗解析标题栏色值（大写 #RRGGBB；与前端变量一一对应）：
-    /// 浅色 blue  #E6EFFF/#C9D9F7，浅色 default #F3F4F6/#E2E4E8；
-    /// 深色 blue  #101A2E/#22304A，深色 default #16181D/#2A2D34。
+    /// 浅色 default #F3F4F6/#E2E4E8（正文白），浅色 blue #E6EFFF/#C9D9F7（正文浅蓝白）；
+    /// 深色 default #16181D/#2A2D34，深色 blue #101A2E/#22304A。
     /// </summary>
     public static TitleBarColors Resolve(string? palette, bool lightTheme)
     {
         var normalized = NormalizePalette(palette);
         if (lightTheme)
         {
-            return normalized == "default"
-                ? new TitleBarColors("#F3F4F6", "#E2E4E8", "#EAEDF1", "#E0E5EC", "#FAFBFC", "#1F2328")
-                : new TitleBarColors("#E6EFFF", "#C9D9F7", "#D9E6FF", "#D4E3FF", "#F3F8FF", "#1F2328");
+            return normalized == "blue"
+                ? new TitleBarColors("#E6EFFF", "#C9D9F7", "#D9E6FF", "#D4E3FF", "#F3F8FF", "#1F2328")
+                : new TitleBarColors("#F3F4F6", "#E2E4E8", "#EAEDF1", "#E0E5EC", "#FFFFFF", "#1F2328");
         }
 
-        return normalized == "default"
-            ? new TitleBarColors("#16181D", "#2A2D34", "#1F222A", "#282C35", "#0D0F13", "#E6EDF3")
-            : new TitleBarColors("#101A2E", "#22304A", "#18243C", "#1B2A4A", "#0C1424", "#E6EDF3");
+        return normalized == "blue"
+            ? new TitleBarColors("#101A2E", "#22304A", "#18243C", "#1B2A4A", "#0C1424", "#E6EDF3")
+            : new TitleBarColors("#16181D", "#2A2D34", "#1F222A", "#282C35", "#0D0F13", "#E6EDF3");
     }
 
     /// <summary>窗口标题文案：文件名 + 产品名；无文件名（空白启动页）只显示产品名。</summary>
