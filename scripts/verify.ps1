@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 鲸鲸阅读器验收脚本（Task 17，spec §9.3；修复波 C/D 加固）。
 
@@ -2318,3 +2318,4 @@ try {
         Write-Host '无法恢复调用方原有的 JJ_DATA_DIR 环境变量。'
     }
 }
+

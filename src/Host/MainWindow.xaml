@@ -150,14 +150,29 @@
         </Border>
 
         <!-- 分区底板：WebView2 是独立子 HWND，四周留 6 DIP（与 WindowChrome.ResizeBorderThickness 一致）保留缩放热区；
-             露出的边距由这层底板按「左侧 = 目录栏 chrome、其余 = 正文」填色，避免左侧/底部出现颜色不符的长条。
+             露出的边距由这层底板按「顶部工具条行 = chrome、下方左列 = 目录栏 chrome、其余 = 正文」填色，
+             避免左侧/底部/右上出现颜色不符的长条。
+             顶部一行高度 = 前端工具条高度（CSS 变量 toolbar-height，40 DIP）+ 顶部边距（当前 0，标题栏在 WebView 之上）：
+             WebView2 顶部不缩进，顶栏右侧的 6 DIP 边距必须与顶栏同为 chrome 色（32 DIP 只是自绘标题栏高度，不覆盖这里）。
              左列宽度 = TocWidth + 6 DIP 边距（TocWidth 已含 1px 分隔线）；目录折叠时为 0。颜色与宽度由 ApplyTitleBarTheme 同步。 -->
         <Grid x:Name="ChromeBackdrop" Grid.Row="1" Background="#FFFFFF">
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="ChromeBackdropTopRow" Height="40" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="ChromeBackdropTocColumn" Width="0" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
+            <Border x:Name="ChromeBackdropTop"
+                    Grid.Row="0"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="2"
+                    Background="#F3F4F6"
+                    BorderBrush="#E2E4E8"
+                    BorderThickness="0,0,0,1" />
             <Border x:Name="ChromeBackdropToc"
+                    Grid.Row="1"
                     Grid.Column="0"
                     Background="#F3F4F6"
                     BorderBrush="#E2E4E8"

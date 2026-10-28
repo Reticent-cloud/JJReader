@@ -243,8 +243,8 @@ public partial class MainWindow : Window
     /// 自绘标题栏与分区底板配色：palette 来自 settings.json（default 中性 / blue 鲸鱼蓝），明暗按前端主题设置
     /// （light/dark 直接跟随；system 读系统 <c>AppsUseLightTheme</c>），色值与前端
     /// --chrome-bg/--chrome-border/--content-bg 完全一致。读取失败只记日志并保留上一次颜色（标题栏不能阻断阅读）。
-    /// 同时同步分区底板：WebView2 四周 6 DIP 边距中，左侧（目录栏宽度 + 边距 + 1px 分隔线）用 chrome 色，
-    /// 其余用正文色；目录折叠时左列宽度归 0。
+    /// 同时同步分区底板：WebView2 四周 6 DIP 边距中，顶部工具条行用 chrome 色横贯整宽，
+    /// 其下左侧（目录栏宽度 + 边距 + 1px 分隔线）用 chrome 色，其余用正文色；目录折叠时左列宽度归 0。
     /// </summary>
     private void ApplyTitleBarTheme()
     {
@@ -262,8 +262,11 @@ public partial class MainWindow : Window
             TitleText.Foreground = foreground;
             RootGrid.Background = contentBrush;
             Background = contentBrush;
-            // 分区底板：与 WebView2 的 6 DIP 边距对齐（左列 = 目录栏宽度（含分隔线）+ 6 DIP 边距；折叠时 0）。
+            // 分区底板：顶部横条覆盖顶栏高度（含右上 6 DIP 缩放边距），下方左列 = 目录栏宽度（含分隔线）+ 6 DIP；折叠时 0。
             ChromeBackdrop.Background = contentBrush;
+            ChromeBackdropTop.Background = chromeBrush;
+            ChromeBackdropTop.BorderBrush = chromeBorderBrush;
+            ChromeBackdropTopRow.Height = new GridLength(TitleBarTheme.BackdropTopHeight());
             ChromeBackdropToc.Background = chromeBrush;
             ChromeBackdropToc.BorderBrush = chromeBorderBrush;
             var tocWidth = TitleBarTheme.BackdropTocWidth(settings.TocVisible, settings.TocWidth);

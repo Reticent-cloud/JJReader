@@ -1,6 +1,6 @@
 // Task 12：最近文件面板、位置记忆与工具条交互（shell-ux）。
 // jsdom 没有真实布局/滚动：scrollTop / scrollHeight / clientHeight 一律用 Object.defineProperty 桩，
-// scrollTo 用函数替换；位置节流 500ms 与工具条 800ms 自动隐藏用 fake timers（vi.useFakeTimers）。
+// scrollTo 用函数替换；位置节流 500ms 用 fake timers（vi.useFakeTimers）。
 // 契约：最近文件 20 条、位置节流 500ms、回到顶部阈值 400px、工具条隐藏延迟 800ms。
 
 const mounted = [];
@@ -953,81 +953,68 @@ it('输入框内不触发 F5/Alt+←→/Ctrl+Shift+C', () => {
   expect(posted.filter((message) => ['reload', 'openRecent', 'showInFolder'].includes(message.type))).toHaveLength(0);
 });
 
-// ── 工具条悬浮 ──
+// ── 工具栏常显 ──
 
-it('工具条默认隐藏：鼠标进入顶部 40px 或按 Alt 显示，离开 800ms 隐藏', () => {
-  vi.useFakeTimers();
+it('工具栏始终可见：鼠标进入/移出、Alt、Esc 都不会隐藏或写 data-toolbar', () => {
   const { root } = mount();
-  expect(root.dataset.toolbar).toBe('hidden');
-  expect(root.querySelector('#toolbar')).toBeTruthy();
-  expect(root.querySelector('#progress')).toBeNull();
-  expect(root.querySelector('#back-to-top')).toBeTruthy();
+  expect(root.hasAttribute('data-toolbar')).toBe(false);
+  const toolbar = root.querySelector('#toolbar');
+  expect(toolbar).toBeTruthy();
+  expect(toolbar.hidden).toBe(false);
 
-  // 顶部 40px 内显示
   document.dispatchEvent(new MouseEvent('mousemove', { clientY: 20 }));
-  expect(root.dataset.toolbar).toBe('shown');
-
-  // 鼠标离开工具条：800ms 后隐藏
-  root.querySelector('#toolbar').dispatchEvent(new MouseEvent('mouseleave'));
-  vi.advanceTimersByTime(799);
-  expect(root.dataset.toolbar).toBe('shown');
-  vi.advanceTimersByTime(1);
-  expect(root.dataset.toolbar).toBe('hidden');
-
-  // 40px 之外不显示
   document.dispatchEvent(new MouseEvent('mousemove', { clientY: 41 }));
-  expect(root.dataset.toolbar).toBe('hidden');
-
-  // Alt 显示，同样 800ms 后自动隐藏
+  toolbar.dispatchEvent(new MouseEvent('mouseenter'));
+  toolbar.dispatchEvent(new MouseEvent('mouseleave'));
   press('Alt');
-  expect(root.dataset.toolbar).toBe('shown');
-  vi.advanceTimersByTime(800);
-  expect(root.dataset.toolbar).toBe('hidden');
-  vi.useRealTimers();
+  press('Escape');
+  expect(root.hasAttribute('data-toolbar')).toBe(false);
+  expect(toolbar.hidden).toBe(false);
 });
 
-it('工具条隐藏时键盘快捷键仍可用', () => {
+it('工具栏常显时键盘快捷键仍可用', () => {
   const { root } = mount();
-  expect(root.dataset.toolbar).toBe('hidden');
   press('b', { ctrlKey: true });
   expect(root.dataset.toc).toBe('hidden');
 });
 
-it('工具条 800ms 自动隐藏时最近菜单开着：先不隐藏，菜单关闭后再隐藏（Minor f）', () => {
+it('最近菜单打开/关闭不影响工具栏常显（不再有自动隐藏延迟）', () => {
   vi.useFakeTimers();
   const { root, shell } = mount();
   shell.onMessage({ type: 'recent', payload: { items: [recentItem('C:\\a.md', 'a.md')] } });
   const toggle = root.querySelector('#recent-toggle');
   const menu = root.querySelector('#recent-menu');
 
-  document.dispatchEvent(new MouseEvent('mousemove', { clientY: 20 }));
-  expect(root.dataset.toolbar).toBe('shown');
   toggle.click();
   expect(menu.hidden).toBe(false);
-
-  root.querySelector('#toolbar').dispatchEvent(new MouseEvent('mouseleave'));
-  vi.advanceTimersByTime(800);
-  expect(root.dataset.toolbar).toBe('shown'); // 菜单开着：不隐藏工具条
+  toolbarLeaveAndWait();
+  expect(root.hasAttribute('data-toolbar')).toBe(false);
 
   document.body.click(); // 点击外部关闭菜单
   expect(menu.hidden).toBe(true);
-  expect(root.dataset.toolbar).toBe('hidden'); // 菜单关闭后按规则隐藏
+  toolbarLeaveAndWait();
+  expect(root.hasAttribute('data-toolbar')).toBe(false);
   vi.useRealTimers();
+
+  function toolbarLeaveAndWait() {
+    root.querySelector('#toolbar').dispatchEvent(new MouseEvent('mouseleave'));
+    vi.advanceTimersByTime(800);
+    expect(root.querySelector('#toolbar').hidden).toBe(false);
+  }
 });
 
-it('Esc 在可编辑控件内不隐藏工具条（Minor g）', () => {
-  const { root, shell } = mount();
-  document.dispatchEvent(new MouseEvent('mousemove', { clientY: 20 }));
-  expect(root.dataset.toolbar).toBe('shown');
+it('Esc 不再隐藏工具栏（可编辑控件内外一致）', () => {
+  const { root } = mount();
+  const toolbar = root.querySelector('#toolbar');
 
   const input = document.createElement('input');
   document.body.append(input);
   input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  expect(root.dataset.toolbar).toBe('shown');
+  expect(toolbar.hidden).toBe(false);
 
-  // 非可编辑区域（document.body）上的 Esc 仍按原规则隐藏工具条
   press('Escape');
-  expect(root.dataset.toolbar).toBe('hidden');
+  expect(toolbar.hidden).toBe(false);
+  expect(root.hasAttribute('data-toolbar')).toBe(false);
 });
 
 // ── Aa 面板：落盘防抖与滑杆无障碍（Minor b / e） ──

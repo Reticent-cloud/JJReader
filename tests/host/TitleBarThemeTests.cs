@@ -137,6 +137,17 @@ public class TitleBarThemeTests
         Assert.Equal(32d, TitleBarTheme.CaptionHeight);
     }
 
+    [Fact]
+    public void BackdropTopHeight_covers_frontend_toolbar_and_top_margin()
+    {
+        // 顶部 chrome 横条必须盖住前端 --toolbar-height（40 DIP），否则 WebView 右上的 6 DIP 边距
+        // 会在顶栏高度内露出正文色；标题栏（32 DIP）独占根网格第一行，不属于内容行。
+        Assert.Equal(40d, TitleBarTheme.ToolbarHeight);
+        Assert.Equal(0d, TitleBarTheme.ContentTopMargin);
+        Assert.Equal(40d, TitleBarTheme.BackdropTopHeight());
+        Assert.Equal(32d, TitleBarTheme.CaptionHeight);
+    }
+
     [Theory]
     [InlineData(true, 240, 246d)] // 目录可见：TocWidth（含 1px 分隔线）+ 6 DIP 边距
     [InlineData(true, 180, 186d)]

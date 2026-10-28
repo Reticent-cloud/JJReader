@@ -1,4 +1,4 @@
-/* 布局（Task 10）：三栏网格（TOC + 正文滚动列）、侧栏折叠、顶部悬浮工具条、
+/* 布局（Task 10）：三栏网格（TOC + 正文滚动列）、侧栏折叠、顶部常显工具条、
    正文行宽居中、Aa 排版面板、内联 [TOC]、图片占位框、front matter 属性块、toast。
    只负责结构与间距，颜色全部走变量（light.css / dark.css）。 */
 
@@ -24,7 +24,7 @@
   display: none;
 }
 
-/* 顶部悬浮工具条：固定在视口顶部并浮在正文之上（显示/隐藏逻辑见 Task 12 的 shell，默认隐藏）。
+/* 顶部工具条：常显固定在视口顶部（不再随鼠标/Alt 显隐）。
    实色 chrome 底（与目录栏同色，参考 WorkBuddy 的「chrome 有底色、正文纯白」）；直角、底部 1px 分隔线。 */
 #toolbar {
   position: fixed;
@@ -444,12 +444,7 @@ nav.toc-inline li[data-level='6'] {
   overflow: hidden;
 }
 
-/* ── Task 12：悬浮工具条显隐、阅读进度条、回到顶部、最近文件面板、toast action ── */
-
-/* 工具条默认隐藏：鼠标进入窗口顶部 40px 或按 Alt 显示（shell 写 #app[data-toolbar]） */
-#app[data-toolbar='hidden'] #toolbar {
-  display: none;
-}
+/* ── Task 12：阅读进度条、回到顶部、最近文件面板、toast action ── */
 
 /* 回到顶部：滚离顶部 > 400px 时由 shell 去掉 hidden；图标按钮（上箭头 + 顶部横线），无文字 */
 #back-to-top {

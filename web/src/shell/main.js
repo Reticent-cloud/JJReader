@@ -1,7 +1,7 @@
 // shell 总装：固定 DOM 骨架、消息分发、正文渲染与 renderDone 回报。
 // 正文走 JJ.renderMarkdown（Task 5 起为 markdown-it 引擎），引擎缺失时降级 escapeHtml + <pre> 保证不白屏。
 // Task 10 起装配阅读体验：TOC 侧栏（标题 id 兜底 + 滚动联动 + 拖拽调宽）、主题三态、排版面板（Aa）与快捷键。
-// Task 12 起装配最近文件、位置记忆、阅读进度条/回到顶部、悬浮工具条与 F5/Alt+←→/Ctrl+Shift+C。
+// Task 12 起装配最近文件、位置记忆、阅读进度条/回到顶部、固定工具条与 F5/Alt+←→/Ctrl+Shift+C。
 // Task 13 起加打开入口（Ctrl+O/Ctrl+Shift+O、工具条按钮）与 wikilink/附件点击寻文件（openFile 消息）。
 // 模块拆分（T10 评审 carry-forward）：工具条与 Aa 面板 → toolbar.js；最近文件面板 → recent.js；
 // 位置追踪/进度条/回到顶部/toast → chrome.js；标题 id + TOC/滚动联动 → headings.js；正文渲染管线 → render.js；
@@ -39,12 +39,6 @@ import { createRenderer } from './render.js';
 import { createTocResizer } from './resizer.js';
 import { createSettingsSaver } from './settings-saver.js';
 import { buildAaPanel, createToolbar, themeLabel } from './toolbar.js';
-
-/** 工具条悬浮显示：鼠标进入窗口顶部 40px 区域（spec §5.1）。 */
-const TOOLBAR_HOVER_ZONE_PX = 40;
-
-/** 工具条自动隐藏延迟（spec §5.1：移出 800ms 后隐藏）。 */
-const TOOLBAR_HIDE_DELAY_MS = 800;
 
 /** 全局唯一的时间源：优先高精度计时，缺失时退回 Date.now。 */
 function now() {
@@ -188,8 +182,39 @@ export function mountShell({ root, post } = {}) {
     noticeStack,
   );
   setToastContainer(toast);
-  // 悬浮工具条默认隐藏：鼠标进顶部 40px 或按 Alt 才显示（隐藏时键盘快捷键照常可用）。
-  root.dataset.toolbar = 'hidden';
+
+  /**
+   * 选中正文（Ctrl+A）：只把 Range 放在 #content 上，工具栏、目录、通知条都不进入选区。
+   * 抽成可调用函数便于测试断言选区结构（jsdom 不计算文本，只断言 anchorNode/focusNode）。
+   * @returns {boolean} 是否成功建立选区（无 Selection API 的环境返回 false）
+   */
+  function selectArticleContent() {
+    const selection =
+      typeof window !== 'undefined' && typeof window.getSelection === 'function' ? window.getSelection() : null;
+    if (!selection || typeof document.createRange !== 'function') {
+      return false;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }
+
+  /** 焦点是否在 Aa 面板/最近菜单等弹层内：Ctrl+A 在这些浮层里保持原行为，不抢它的全选。 */
+  function isFocusInsidePopover() {
+    const active = typeof document.activeElement === 'object' ? document.activeElement : null;
+    if (!active) {
+      return false;
+    }
+    return (!aaPanel.hidden && aaPanel.contains(active)) || (!recentMenu.hidden && recentMenu.contains(active));
+  }
+
+  /** 打印模式（PDF 导出）下 Ctrl+A 保留浏览器默认，避免选中被打印样式隐藏的 chrome。 */
+  function isPrintMode() {
+    const body = document.body;
+    return Boolean(body && body.classList && body.classList.contains('print-mode'));
+  }
 
   /** 通知条容器随内容显隐：两条都隐藏时整行高度为 0（不再用 fixed 覆盖正文/TOC 顶部）。 */
   function syncNoticeStack() {
@@ -524,92 +549,6 @@ export function mountShell({ root, post } = {}) {
     updateSettings({ [key]: value }, { deferSave: event.type === 'input' });
   }
 
-  // ── 工具条悬浮（Task 12） ──
-  let toolbarHideTimer = null;
-  // Minor f：自动隐藏到点时最近菜单还开着 → 先不隐藏，等菜单关闭后再隐藏
-  let toolbarHidePendingForMenu = false;
-
-  /** 显示悬浮工具条（取消正在等待的自动隐藏）。 */
-  function showToolbar() {
-    root.dataset.toolbar = 'shown';
-    toolbarHidePendingForMenu = false;
-    if (toolbarHideTimer !== null) {
-      clearTimeout(toolbarHideTimer);
-      toolbarHideTimer = null;
-    }
-  }
-
-  /** 立即隐藏工具条并取消等待中的隐藏定时器。 */
-  function hideToolbar() {
-    toolbarHidePendingForMenu = false;
-    if (toolbarHideTimer !== null) {
-      clearTimeout(toolbarHideTimer);
-      toolbarHideTimer = null;
-    }
-    root.dataset.toolbar = 'hidden';
-  }
-
-  /**
-   * 焦点是否落在工具条/浮层面板内（修复波 B-键盘可达性）：键盘用户在工具条按钮/最近菜单/Aa 面板里
-   * 操作时不能因为鼠标离开就隐藏工具条，否则焦点元素不可见。
-   */
-  function isFocusInsideOverlays() {
-    const active = typeof document.activeElement === 'object' ? document.activeElement : null;
-    if (!active) {
-      return false;
-    }
-    return toolbar.contains(active) || aaPanel.contains(active) || recentMenu.contains(active);
-  }
-
-  /** 800ms 后自动隐藏（鼠标离开工具条时调用；期间再进入/移到顶部会取消）。 */
-  function scheduleToolbarHide() {
-    if (toolbarHideTimer !== null) {
-      clearTimeout(toolbarHideTimer);
-    }
-    toolbarHideTimer = setTimeout(() => {
-      toolbarHideTimer = null;
-      if (!recentMenu.hidden || isFocusInsideOverlays()) {
-        // 菜单开着或焦点仍在工具条/浮层内：工具条保持可见，等菜单关闭/焦点离开后再隐藏
-        toolbarHidePendingForMenu = true;
-        return;
-      }
-      root.dataset.toolbar = 'hidden';
-    }, TOOLBAR_HIDE_DELAY_MS);
-  }
-
-  /** focusin：焦点进入工具条/浮层时显示工具条（键盘 Tab 到隐藏工具条里的按钮也能看见）。 */
-  function onOverlayFocusIn() {
-    showToolbar();
-  }
-
-  /** focusout：焦点离开工具条/浮层后按常规延迟隐藏（工具条已显示时才需要）。 */
-  function onOverlayFocusOut(event) {
-    if (root.dataset.toolbar !== 'shown') {
-      return;
-    }
-    const next = event && event.relatedTarget;
-    if (next && (toolbar.contains(next) || aaPanel.contains(next) || recentMenu.contains(next))) {
-      return;
-    }
-    scheduleToolbarHide();
-  }
-
-  /** 鼠标进入窗口顶部 40px 区域：显示工具条（隐藏时也可唤出）。 */
-  function onMouseMove(event) {
-    const y = Number(event && event.clientY);
-    if (Number.isFinite(y) && y <= TOOLBAR_HOVER_ZONE_PX) {
-      showToolbar();
-    }
-  }
-
-  function onToolbarEnter() {
-    showToolbar();
-  }
-
-  function onToolbarLeave() {
-    scheduleToolbarHide();
-  }
-
   // ── 位置记忆与阅读 chrome（Task 12） ──
 
   /** 更新进度条宽度与回到顶部显隐（scroll 事件与 load 恢复位置后都调用）。 */
@@ -816,10 +755,6 @@ export function mountShell({ root, post } = {}) {
   function closeRecentMenu() {
     recentMenu.hidden = true;
     recentToggle.setAttribute('aria-expanded', 'false');
-    // Minor f：自动隐藏到点时因菜单开着被推迟的隐藏，现在补上
-    if (toolbarHidePendingForMenu) {
-      hideToolbar();
-    }
   }
 
   function toggleRecentMenu() {
@@ -840,9 +775,9 @@ export function mountShell({ root, post } = {}) {
 
   /**
    * 全局快捷键（输入框内不触发）：
-   * Esc 关浮层（Aa/最近面板/工具条）；Alt 显示工具条；Alt+←/→ 切换最近文件；Alt+T 主题循环、Alt+A 关于；F5 重载；
+   * Esc 关浮层（Aa/最近面板）；Alt（保留、无动作）；Alt+←/→ 切换最近文件；Alt+T 主题循环、Alt+A 关于；F5 重载；
    * Ctrl+O 打开文件、Ctrl+Shift+O 打开文件夹（宿主弹系统对话框）；
-   * Ctrl+B 侧栏显隐、Ctrl+= / Ctrl+- 字号 ±1、Ctrl+0 重置 16、Ctrl+, 排版面板、Ctrl+Shift+C 定位文件。
+   * Ctrl+A 只选正文；Ctrl+B 侧栏显隐、Ctrl+= / Ctrl+- 字号 ±1、Ctrl+0 重置 16、Ctrl+, 排版面板、Ctrl+Shift+C 定位文件。
    */
   function onKeyDown(event) {
     if (!event || event.defaultPrevented) {
@@ -850,8 +785,6 @@ export function mountShell({ root, post } = {}) {
     }
     const key = typeof event.key === 'string' ? event.key : '';
     if (key === 'Escape') {
-      // Minor g：Esc 在可编辑控件内属于控件自己（清空/取消输入），不能顺带隐藏工具条
-      const editable = isEditableTarget(event.target);
       if (!aaPanel.hidden) {
         closeAaPanel();
       } else if (!recentMenu.hidden) {
@@ -859,16 +792,13 @@ export function mountShell({ root, post } = {}) {
       } else if (!state.loaded && content.querySelector('.recent-panel')) {
         closeRecentPanel();
       }
-      if (!editable) {
-        hideToolbar();
-      }
       return;
     }
     if (isEditableTarget(event.target)) {
       return;
     }
 
-    // Alt 相关：Alt 显示工具条，Alt+←/→ 在最近文件列表里切换（不抢浏览器默认行为）；
+    // Alt 相关：Alt 现在保留为无动作（工具条常显）；Alt+←/→ 在最近文件列表里切换（不抢浏览器默认行为）；
     // 修复波 B-键盘可达性：Alt+T 主题三态循环、Alt+A 打开关于（README 快捷键表同步）。
     if (event.altKey && !event.ctrlKey && !event.metaKey) {
       if (key === 'ArrowLeft') {
@@ -893,8 +823,7 @@ export function mountShell({ root, post } = {}) {
       }
     }
     if (key === 'Alt') {
-      showToolbar();
-      scheduleToolbarHide();
+      // 工具条已常显：Alt 作为既有快捷键保留，不做任何事也不报错（不 preventDefault，交还系统菜单键）。
       return;
     }
     if (key === 'F5') {
@@ -905,6 +834,16 @@ export function mountShell({ root, post } = {}) {
 
     const ctrl = Boolean(event.ctrlKey || event.metaKey);
     if (!ctrl || event.altKey) {
+      return;
+    }
+
+    // Ctrl+A：只选正文（#content），不把工具栏/目录/通知条带进选区；打印模式与浮层内保持原行为。
+    if ((key === 'a' || key === 'A') && !event.shiftKey) {
+      if (isPrintMode() || isFocusInsidePopover()) {
+        return;
+      }
+      event.preventDefault();
+      selectArticleContent();
       return;
     }
 
@@ -1144,16 +1083,8 @@ export function mountShell({ root, post } = {}) {
   // 修复波 B-§5.11：错误条/大文件横幅可手动关闭（持久显示，不自动消失）。
   errorBarClose.addEventListener('click', hideErrorBar);
   hugeBannerClose.addEventListener('click', hideHugeBanner);
-  // 键盘可达性：焦点进入工具条/浮层时保持工具条可见；离开后再按 800ms 规则隐藏。
-  toolbar.addEventListener('focusin', onOverlayFocusIn);
-  aaPanel.addEventListener('focusin', onOverlayFocusIn);
-  recentMenu.addEventListener('focusin', onOverlayFocusIn);
-  document.addEventListener('focusout', onOverlayFocusOut);
-  // Task 12：滚动驱动进度条/回到顶部；鼠标进顶部 40px 显示工具条，离开工具条 800ms 隐藏
+  // Task 12：滚动驱动进度条/回到顶部；工具栏常显，不再订阅鼠标位置/移出隐藏（见布局 CSS 的 fixed #toolbar）
   content.addEventListener('scroll', onContentScroll, { passive: true });
-  document.addEventListener('mousemove', onMouseMove, { passive: true });
-  toolbar.addEventListener('mouseenter', onToolbarEnter);
-  toolbar.addEventListener('mouseleave', onToolbarLeave);
 
   // 图片异步加载成功 / 失败换占位都会让后续标题整体位移：error 事件不冒泡，必须在 #content 捕获阶段监听。
   function onContentResourceSettled(event) {
@@ -1190,19 +1121,12 @@ export function mountShell({ root, post } = {}) {
 
   /** 卸下全局监听、滚动联动、标题位置刷新与分隔条拖拽（测试/多实例装配用；WebView2 页面生命周期内不需要调用）。 */
   function destroy() {
-    if (toolbarHideTimer !== null) {
-      clearTimeout(toolbarHideTimer);
-      toolbarHideTimer = null;
-    }
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('click', onDocumentClick);
     toc.removeEventListener('click', onTocClick);
     content.removeEventListener('click', onContentClick);
     document.removeEventListener('jj:copy', onCopyResult);
     content.removeEventListener('scroll', onContentScroll);
-    document.removeEventListener('mousemove', onMouseMove);
-    toolbar.removeEventListener('mouseenter', onToolbarEnter);
-    toolbar.removeEventListener('mouseleave', onToolbarLeave);
     content.removeEventListener('load', onContentResourceSettled, true);
     content.removeEventListener('error', onContentResourceSettled, true);
     content.removeEventListener('toggle', onContentToggle, true);
@@ -1218,10 +1142,6 @@ export function mountShell({ root, post } = {}) {
     recentToggle.removeEventListener('click', toggleRecentMenu);
     errorBarClose.removeEventListener('click', hideErrorBar);
     hugeBannerClose.removeEventListener('click', hideHugeBanner);
-    toolbar.removeEventListener('focusin', onOverlayFocusIn);
-    aaPanel.removeEventListener('focusin', onOverlayFocusIn);
-    recentMenu.removeEventListener('focusin', onOverlayFocusIn);
-    document.removeEventListener('focusout', onOverlayFocusOut);
     // 浏览控制器的工具条监听（根名切回树 / 大纲返回）与内部状态一并清理
     browser.destroy();
     tocResizerControl.destroy();
@@ -1245,5 +1165,5 @@ export function mountShell({ root, post } = {}) {
   // 握手：shell 装配完成（监听器已就绪）→ 通知宿主可以推 load 了（只发一次）。
   send('shellReady', {});
 
-  return { root, onMessage, destroy };
+  return { root, onMessage, destroy, selectArticleContent };
 }

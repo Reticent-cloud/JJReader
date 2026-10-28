@@ -330,20 +330,89 @@ describe('分块 TOC 空 slug 死链', () => {
   });
 });
 
-describe('工具栏键盘可达性与新增快捷键', () => {
-  it('焦点进入工具条时显示工具条，且鼠标移出后不自动隐藏', () => {
-    vi.useFakeTimers();
+describe('工具栏常显与新增快捷键', () => {
+  it('工具栏始终显示：焦点进入/移出、鼠标移动、Alt 与 Esc 都不隐藏', () => {
     const { root } = mount();
-    expect(root.dataset.toolbar).toBe('hidden');
+    expect(root.hasAttribute('data-toolbar')).toBe(false);
+    const toolbar = root.querySelector('#toolbar');
+    expect(toolbar).toBeTruthy();
+    expect(toolbar.hidden).toBe(false);
 
     const openFile = root.querySelector('#open-file');
     openFile.focus();
-    expect(root.dataset.toolbar).toBe('shown');
+    expect(root.hasAttribute('data-toolbar')).toBe(false);
 
-    const toolbar = root.querySelector('#toolbar');
     toolbar.dispatchEvent(new MouseEvent('mouseleave', { bubbles: false }));
-    vi.advanceTimersByTime(900);
-    expect(root.dataset.toolbar).toBe('shown');
+    document.dispatchEvent(new MouseEvent('mousemove', { clientY: 20 }));
+    press('Alt');
+    press('Escape');
+    expect(root.hasAttribute('data-toolbar')).toBe(false);
+    expect(toolbar.hidden).toBe(false);
+  });
+
+  it('Ctrl+A 只选正文：defaultPrevented 且选区锚定 #content，不含目录/工具栏', () => {
+    const { root, shell } = mount();
+    load(shell);
+    const content = root.querySelector('#content');
+    const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    content.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    const selection = window.getSelection();
+    expect(selection.rangeCount).toBe(1);
+    const range = selection.getRangeAt(0);
+    expect(selection.anchorNode).toBe(content);
+    expect(selection.focusNode).toBe(content);
+    expect(range.startContainer).toBe(content);
+    expect(range.endContainer).toBe(content);
+    expect(content.contains(selection.anchorNode)).toBe(true);
+    expect(root.querySelector('#toc').contains(selection.anchorNode)).toBe(false);
+    expect(root.querySelector('#toolbar').contains(selection.anchorNode)).toBe(false);
+
+    // 导出的 API 同样可用（不依赖按键事件）
+    selection.removeAllRanges();
+    expect(shell.selectArticleContent()).toBe(true);
+    expect(window.getSelection().rangeCount).toBe(1);
+    expect(window.getSelection().anchorNode).toBe(content);
+  });
+
+  it('焦点在 Aa 面板/最近菜单内时 Ctrl+A 不拦截（保留浮层原行为）', () => {
+    const { root, shell } = mount();
+    shell.onMessage({
+      type: 'recent',
+      payload: { items: [{ path: 'C:\\a.md', name: 'a.md', dir: 'C:\\', openedAt: '' }] },
+    });
+    load(shell);
+
+    const panel = root.querySelector('#aa-panel');
+    root.querySelector('#aa-toggle').click();
+    panel.tabIndex = -1;
+    panel.focus();
+    const aaEvent = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    panel.dispatchEvent(aaEvent);
+    expect(aaEvent.defaultPrevented).toBe(false);
+
+    root.querySelector('#recent-toggle').click();
+    const item = root.querySelector('#recent-menu [data-path]');
+    expect(item).toBeTruthy();
+    item.focus();
+    const menuEvent = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    item.dispatchEvent(menuEvent);
+    expect(menuEvent.defaultPrevented).toBe(false);
+  });
+
+  it('打印模式下 Ctrl+A 保留浏览器默认行为', () => {
+    const { root, shell } = mount();
+    load(shell);
+    const content = root.querySelector('#content');
+    document.body.classList.add('print-mode');
+    try {
+      const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+      content.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    } finally {
+      document.body.classList.remove('print-mode');
+    }
   });
 
   it('Alt+T 循环主题，Alt+A 打开关于', () => {

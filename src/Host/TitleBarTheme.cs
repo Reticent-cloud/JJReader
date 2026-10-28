@@ -29,10 +29,25 @@ public static class TitleBarTheme
     public const double CaptionHeight = 32d;
 
     /// <summary>
+    /// 前端工具条高度（DIP，与 web/src/styles/base.css 的 <c>--toolbar-height: 40px</c> 一致）。
+    /// WebView2 在内容行顶部不缩进，右上 6 DIP 缩放边距正对这条工具条，底板顶部横条必须按它取高。
+    /// </summary>
+    public const double ToolbarHeight = 40d;
+
+    /// <summary>WebView2 内容行的顶部边距（DIP）：当前为 0，标题栏独占根网格第一行（<see cref="CaptionHeight"/>）。</summary>
+    public const double ContentTopMargin = 0d;
+
+    /// <summary>
     /// WebView2 四周为保留缩放热区留出的边距（DIP，与 WindowChrome.ResizeBorderThickness 一致）。
     /// 分区底板据此把左侧 chrome 区域扩展到 WebView 之外，避免底部/左侧出现颜色不符的长条。
     /// </summary>
     public const double ContentMargin = 6d;
+
+    /// <summary>
+    /// 分区底板顶部 chrome 横条的高度（DIP）：工具条高度 + 顶部边距，横贯整宽。
+    /// 这一行盖住 WebView 右上角的 6 DIP 缩放边距，避免其露出正文白色（与顶栏 chrome 断层）。
+    /// </summary>
+    public static double BackdropTopHeight() => ToolbarHeight + ContentTopMargin;
 
     /// <summary>
     /// 分区底板左侧 chrome 列的宽度（DIP）：目录可见时 = 目录栏宽度（已含 1px 分隔线）+ WebView 左边距；

@@ -333,6 +333,17 @@ describe('顶栏/目录栏 chrome 底色与配色维度（palette）', () => {
     expect(ruleBody(overridesCss, '#toolbar .tool.active')).toContain('background: var(--chrome-active-bg);');
   });
 
+  it('工具栏常显：不再有 data-toolbar 隐藏规则，固定在顶部且正文预留高度不重复', () => {
+    expect(layoutCss).not.toContain('data-toolbar');
+    const toolbarRule = ruleBody(layoutCss, '#toolbar {');
+    expect(toolbarRule).toContain('position: fixed;');
+    expect(toolbarRule).toContain('top: 0;');
+    // 正文只有顶部内边距 + scroll-padding-top 两处预留（各一处，避免重复叠加）
+    const contentRule = ruleBody(layoutCss, '\n#content {');
+    expect(contentRule).toContain('scroll-padding-top: calc(var(--toolbar-height) + 40px);');
+    expect((contentRule.match(/padding:\s*calc\(var\(--toolbar-height\)/g) || []).length).toBe(1);
+  });
+
   it('默认中性两主题变量 + 首屏兜底值齐备', () => {
     const lightVars = ruleBody(lightCss, ':root,');
     expect(lightVars).toContain('--chrome-bg: #f3f4f6;');
